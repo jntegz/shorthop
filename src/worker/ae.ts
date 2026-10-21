@@ -1,0 +1,276 @@
+// Analytics Engine SQL client and the queries behind rollups and live stats.
+// The SQL API has no bound parameters: the only values ever interpolated are
+// a slug that passed the slug regex, a domain that passed the hostname regex,
+// integer timestamps and the AE_DATASET name, which must be an identifier.
+// blob17 holds the short domain of each hit.
+
+import { HOSTNAME_RE } from "../shared/domains";
+import { IMPORT_SLUG_RE } from "../shared/slug";
+import { domainsOf } from "./domains";
+
+const ROW_LIMIT = 10000;
+const DATASET_RE = /^\w{1,64}$/;
+
+/** The dataset the CLICKS binding writes to (AE_DATASET). It goes into SQL, so it must be a plain identifier. */
+export function dataset(env: Env): string {
+  const name = env.AE_DATASET ?? "";
+  if (!DATASET_RE.test(name)) throw new Error("AE_DATASET must be 1-64 letters, digits or underscores");
+  return name;
+}
+
+export function aeAvailable(env: Env): boolean {
+  return Boolean(env.CF_ACCOUNT_ID && env.CF_ANALYTICS_TOKEN);
+}
+
+async function aeQuery<T extends Record<string, unknown>>(env: Env, sql: string): Promise<T[]> {
+  const res = await fetch(`https://api.cloudflare.com/client/v4/accounts/${env.CF_ACCOUNT_ID}/analytics_engine/sql`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${env.CF_ANALYTICS_TOKEN}`, "Content-Type": "text/plain" },
+    body: sql,
+  });
+  if (!res.ok) {
+    throw new Error(`Analytics Engine SQL failed (${res.status}): ${(await res.text()).slice(0, 300)}`);
+  }
+  const json = await res.json<{ data?: T[] }>();
+  const data = json.data ?? [];
+  if (data.length >= ROW_LIMIT) {
+    console.error(JSON.stringify({ message: "AE query hit row limit, results truncated", limit: ROW_LIMIT }));
+  }
+  return data;
+}
+
+function slugLiteral(slug: string): string {
+  if (!IMPORT_SLUG_RE.test(slug)) throw new Error("Refusing to query an invalid slug");
+  return `'${slug}'`;
+}
+
+export function domainLiteral(domain: string): string {
+  if (!HOSTNAME_RE.test(domain)) throw new Error("Refusing to query an invalid domain");
+  return `'${domain}'`;
+}
+
+/** Narrows a query to one domain, or to one link (domain and slug). */
+export interface LinkFilter {
+  domain?: string;
+  slug?: string;
+}
+
+function where(fromSec: number, toSec: number, filter: LinkFilter | undefined, extra: string): string {
+  const parts = [
+    `timestamp >= toDateTime(${Math.floor(fromSec)})`,
+    `timestamp < toDateTime(${Math.floor(toSec)})`,
+    extra,
+  ];
+  if (filter?.slug !== undefined) parts.push(`index1 = ${slugLiteral(filter.slug)}`);
+  if (filter?.domain !== undefined) parts.push(`blob17 = ${domainLiteral(filter.domain)}`);
+  return parts.filter(Boolean).join(" AND ");
+}
+
+const DAY = "toUnixTimestamp(toStartOfDay(timestamp))";
+const CLICKS = "sumIf(_sample_interval, blob1 = 'click')";
+const BOTS = "sumIf(_sample_interval, blob1 = 'bot')";
+
+/** Breakdown dimensions stored in daily_dims, with their AE columns. */
+export const AE_DIMS = {
+  city: ["blob4", "blob2"],
+  region: ["blob3", "blob2"],
+  os: ["blob9"],
+  browser: ["blob10"],
+  referrer: ["blob11"],
+  language: ["blob13"],
+  bot: ["blob14"],
+} as const;
+export type AeDim = keyof typeof AE_DIMS;
+
+/** "Paris, FR" for city and region; the plain value otherwise. */
+function formatDimValue(dim: AeDim, v0: string, v1: string): string {
+  if ((dim === "city" || dim === "region") && v0) return v1 ? `${v0}, ${v1}` : v0;
+  return v0;
+}
+
+export interface AeDimRow {
+  day: number;
+  domain: string;
+  slug: string;
+  value: string;
+  clicks: number;
+  bots: number;
+}
+
+export interface AeComboRow {
+  day: number;
+  domain: string;
+  slug: string;
+  country: string;
+  device: string;
+  source: string;
+  clicks: number;
+  bots: number;
+  uniques: number;
+}
+
+export interface AeTotalRow {
+  day: number;
+  domain: string;
+  slug: string;
+  uniques: number;
+}
+
+export interface AeMissRow {
+  day: number;
+  domain: string;
+  slug: string;
+  hits: number;
+  bots: number;
+}
+
+type Raw = Record<string, unknown>;
+const num = (v: unknown) => Number(v ?? 0) || 0;
+const str = (v: unknown) => (v === null || v === undefined ? "" : String(v));
+/** Every data point is written with a domain; an empty one counts as the primary. */
+const domainOf = (env: Env, v: unknown) => str(v) || domainsOf(env).primary;
+
+export async function queryDim(env: Env, dim: AeDim, fromSec: number, toSec: number, filter?: LinkFilter): Promise<AeDimRow[]> {
+  const cols = AE_DIMS[dim];
+  const select = cols.map((c, i) => `${c} AS v${i}`).join(", ");
+  const group = cols.map((_, i) => `v${i}`).join(", ");
+  const extra = dim === "bot" ? "blob1 = 'bot'" : "blob1 != 'miss'";
+  const sql = `SELECT ${DAY} AS day, blob17 AS domain, index1 AS slug, ${select}, ${CLICKS} AS clicks, ${BOTS} AS bots
+FROM ${dataset(env)} WHERE ${where(fromSec, toSec, filter, extra)}
+GROUP BY day, domain, slug, ${group} ORDER BY clicks DESC LIMIT ${ROW_LIMIT} FORMAT JSON`;
+  const rows = await aeQuery<Raw>(env, sql);
+  return rows.map((r) => ({
+    day: num(r.day),
+    domain: domainOf(env, r.domain),
+    slug: str(r.slug),
+    value: formatDimValue(dim, str(r.v0), str(r.v1)),
+    clicks: num(r.clicks),
+    bots: num(r.bots),
+  }));
+}
+
+/** Country × device × source combinations, the daily_stats shape. */
+export async function queryCombos(env: Env, fromSec: number, toSec: number, filter?: LinkFilter): Promise<AeComboRow[]> {
+  const base = `${DAY} AS day, blob17 AS domain, index1 AS slug, blob2 AS country, blob8 AS device, blob12 AS source`;
+  const group = "GROUP BY day, domain, slug, country, device, source";
+  const [counts, uniques] = await Promise.all([
+    aeQuery<Raw>(
+      env,
+      `SELECT ${base}, ${CLICKS} AS clicks, ${BOTS} AS bots FROM ${dataset(env)}
+WHERE ${where(fromSec, toSec, filter, "blob1 != 'miss'")} ${group} LIMIT ${ROW_LIMIT} FORMAT JSON`,
+    ),
+    aeQuery<Raw>(
+      env,
+      `SELECT ${base}, count(DISTINCT blob15) AS uniques FROM ${dataset(env)}
+WHERE ${where(fromSec, toSec, filter, "blob1 = 'click'")} ${group} LIMIT ${ROW_LIMIT} FORMAT JSON`,
+    ),
+  ]);
+  const key = (r: Raw) => `${num(r.day)}|${domainOf(env, r.domain)}|${str(r.slug)}|${str(r.country)}|${str(r.device)}|${str(r.source)}`;
+  const uniqueMap = new Map(uniques.map((r) => [key(r), num(r.uniques)]));
+  return counts.map((r) => ({
+    day: num(r.day),
+    domain: domainOf(env, r.domain),
+    slug: str(r.slug),
+    country: str(r.country),
+    device: str(r.device),
+    source: str(r.source),
+    clicks: num(r.clicks),
+    bots: num(r.bots),
+    uniques: uniqueMap.get(key(r)) ?? 0,
+  }));
+}
+
+/** True per-day uniques per link (visitor hashes are per day). */
+export async function queryUniques(env: Env, fromSec: number, toSec: number, filter?: LinkFilter): Promise<AeTotalRow[]> {
+  const rows = await aeQuery<Raw>(
+    env,
+    `SELECT ${DAY} AS day, blob17 AS domain, index1 AS slug, count(DISTINCT blob15) AS uniques FROM ${dataset(env)}
+WHERE ${where(fromSec, toSec, filter, "blob1 = 'click'")} GROUP BY day, domain, slug LIMIT ${ROW_LIMIT} FORMAT JSON`,
+  );
+  return rows.map((r) => ({ day: num(r.day), domain: domainOf(env, r.domain), slug: str(r.slug), uniques: num(r.uniques) }));
+}
+
+/** Misses cleared by the owner: hits up to these unix seconds are left out. */
+export interface MissCutoffs {
+  /** The last "clear all". */
+  all: number | null;
+  /** Links cleared one by one (only those isQueryableMiss accepts). */
+  links: { domain: string; slug: string; sec: number }[];
+}
+
+/** A missed path that can be named in an AE query: index1 holds at most 96 bytes. */
+export function isQueryableMiss(domain: string, slug: string): boolean {
+  return HOSTNAME_RE.test(domain) && IMPORT_SLUG_RE.test(slug) && slug.length <= 96;
+}
+
+export async function queryMisses(env: Env, fromSec: number, toSec: number, cutoffs?: MissCutoffs): Promise<AeMissRow[]> {
+  const from = cutoffs?.all != null ? Math.max(fromSec, cutoffs.all + 1) : fromSec;
+  if (from >= toSec) return [];
+  const extra = [
+    "blob1 = 'miss'",
+    ...(cutoffs?.links ?? [])
+      // A clear after the window hides all of the window's days by date (and the pruner deletes them).
+      .filter((l) => l.sec >= from && l.sec < toSec)
+      .map((l) => `NOT (blob17 = ${domainLiteral(l.domain)} AND index1 = ${slugLiteral(l.slug)} AND timestamp < toDateTime(${l.sec + 1}))`),
+  ].join(" AND ");
+  const rows = await aeQuery<Raw>(
+    env,
+    `SELECT ${DAY} AS day, blob17 AS domain, index1 AS slug, sumIf(_sample_interval, double2 = 0) AS hits, sumIf(_sample_interval, double2 = 1) AS bots
+FROM ${dataset(env)} WHERE ${where(from, toSec, undefined, extra)}
+GROUP BY day, domain, slug ORDER BY hits DESC LIMIT ${ROW_LIMIT} FORMAT JSON`,
+  );
+  return rows.map((r) => ({ day: num(r.day), domain: domainOf(env, r.domain), slug: str(r.slug), hits: num(r.hits), bots: num(r.bots) }));
+}
+
+/** Clicks and bots per link in a window (cheap, for list views). */
+export async function queryTotalsByLink(
+  env: Env,
+  fromSec: number,
+  toSec: number,
+): Promise<{ domain: string; slug: string; clicks: number; bots: number }[]> {
+  const rows = await aeQuery<Raw>(
+    env,
+    `SELECT blob17 AS domain, index1 AS slug, ${CLICKS} AS clicks, ${BOTS} AS bots FROM ${dataset(env)}
+WHERE ${where(fromSec, toSec, undefined, "blob1 != 'miss'")} GROUP BY domain, slug LIMIT ${ROW_LIMIT} FORMAT JSON`,
+  );
+  return rows.map((r) => ({ domain: domainOf(env, r.domain), slug: str(r.slug), clicks: num(r.clicks), bots: num(r.bots) }));
+}
+
+export interface AeRecentRow {
+  time: string;
+  domain: string;
+  slug: string;
+  event: string;
+  country: string;
+  city: string;
+  device: string;
+  os: string;
+  browser: string;
+  referrer: string;
+  source: string;
+  botName: string;
+}
+
+export async function queryRecent(env: Env, sinceSec: number, filter?: LinkFilter, limit = 50): Promise<AeRecentRow[]> {
+  const rows = await aeQuery<Raw>(
+    env,
+    `SELECT toUnixTimestamp(timestamp) AS ts, blob17 AS domain, index1 AS slug, blob1 AS event, blob2 AS country, blob4 AS city,
+blob8 AS device, blob9 AS os, blob10 AS browser, blob11 AS referrer, blob12 AS source, blob14 AS bot
+FROM ${dataset(env)} WHERE ${where(sinceSec, Date.now() / 1000 + 60, filter, "")}
+ORDER BY timestamp DESC LIMIT ${Math.min(Math.max(1, Math.floor(limit)), 200)} FORMAT JSON`,
+  );
+  return rows.map((r) => ({
+    time: new Date(num(r.ts) * 1000).toISOString(),
+    domain: domainOf(env, r.domain),
+    slug: str(r.slug),
+    event: str(r.event),
+    country: str(r.country),
+    city: str(r.city),
+    device: str(r.device),
+    os: str(r.os),
+    browser: str(r.browser),
+    referrer: str(r.referrer),
+    source: str(r.source),
+    botName: str(r.bot),
+  }));
+}

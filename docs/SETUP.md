@@ -1,0 +1,353 @@
+# Setting up Shorthop on Cloudflare
+
+This guide takes you from nothing to a running Shorthop. Shorthop is built primarily for Cloudflare: it runs on one Worker and uses Workers KV, D1, Analytics Engine, Cloudflare Access and Cloudflare Email Service. `npm run setup` does most of the work; this manual explains each step, the Cloudflare dashboard parts the wizard can't do for you, and what to do when something goes wrong.
+
+Contents: [What you need](#what-you-need) · [Put your domain on Cloudflare](#zone) · [Free or Paid](#plan) · [Run the setup](#run-the-setup) · [Domains](#domains) · [Cloudflare Access](#access) · [Password-only sign-in](#password-only) · [Admin password](#password) · [Storage and analytics](#analytics) · [Email](#email) · [Secrets](#secrets) · [Deploy](#deploy) · [Troubleshooting](#troubleshooting) · [Updating](#updating) · [Moving from another shortener](#import) · [Uninstalling](#uninstalling)
+
+<a id="what-you-need"></a>
+## What you need
+
+- **Node.js 22.12 or newer** and git.
+- **A Cloudflare account.** The free plan is enough to start.
+- **A domain on Cloudflare**, or one you can move there. Short links need a hostname you control, such as `go.example.com` or a short domain of its own. A subdomain of a domain you already use is fine.
+- **About 20 minutes**, most of it in the Cloudflare dashboard for Access and email.
+
+```sh
+git clone https://github.com/jntegz/shorthop.git
+cd shorthop
+npm ci
+npx wrangler login        # opens the browser; allow the requested permissions
+```
+
+`npx wrangler whoami` shows which account you're logged in to. If you use several Cloudflare accounts, the setup asks which one to use.
+
+<a id="zone"></a>
+## Put your domain on Cloudflare
+
+Every short domain, and the admin host if you use a separate one, must be in a **zone in the same Cloudflare account** as the Worker. Skip this if the domain is already there.
+
+1. Dashboard → **Add a domain** → enter the domain (not a subdomain) → the Free plan is fine.
+2. Cloudflare imports your existing DNS records. Check them against your current DNS provider, especially MX and TXT records for email.
+3. At your registrar, replace the nameservers with the two Cloudflare shows you.
+4. Wait until the zone shows **Active** (minutes to a few hours). The setup refuses domains that aren't zones in the account.
+
+You don't need to create any DNS record for the short links: the deploy attaches each hostname to the Worker as a **custom domain**, which creates the DNS record and the certificate.
+
+<a id="plan"></a>
+## Free or Paid
+
+| | Workers Free | Workers Paid ($5/month) |
+|---|---|---|
+| Requests | 100,000 a day, account-wide | 10 million a month included |
+| CPU per request | 10 ms | 30 s |
+| KV writes | 1,000 a day (one per link save or republish) | 1 million a month included |
+| Admin password hash | 25,000 PBKDF2 iterations | 100,000 iterations |
+
+A personal shortener usually fits Free. The setup asks which plan you're on and picks the password hash cost to match, because PBKDF2 at 100,000 iterations can exceed Free's 10 ms CPU limit and make logins fail. You can switch later: change the plan in Cloudflare, then run `npm run setup`, pick the new plan and choose a new password. [CLOUDFLARE-FREE-TIER.md](CLOUDFLARE-FREE-TIER.md) lists every service's allowance.
+
+On Free, the 100,000 requests are a hard daily cap: once they're used up, every short link fails until midnight UTC. Add the rate-limiting rule from [SECURITY.md](../SECURITY.md#daily-cap); choose Paid if your links must not go down.
+
+## Run the setup
+
+```sh
+npm run setup
+```
+
+It walks through these steps. Each is explained in the sections below.
+
+1. **Account:** checks the Wrangler login and picks the account.
+2. **Worker:** its name (default `shorthop`), the Analytics Engine dataset name, and your plan.
+3. **Domains:** short domains, an optional admin host, and the fallback URL. It checks each hostname is in one of your zones and isn't attached to another Worker.
+4. **Admin sign-in:** Cloudflare Access plus a password (recommended), password only, or decide later.
+5. **Admin password:** generated or typed; hashed for your plan.
+6. **Analytics token:** optional, checked against the Analytics Engine API.
+7. **Email:** provider, sender and recipient.
+8. **Storage:** finds or creates the KV namespace and the D1 database.
+9. **Config:** shows the changes to `wrangler.jsonc` and writes it after you confirm.
+10. **Secrets:** generates the API token, session secret and visitor salt, and uploads every secret in one request through stdin. Nothing is written to disk.
+11. **Deploy:** builds, applies the database migrations, deploys.
+12. **Checks:** `/health`, that the admin is protected, that the API accepts the token, and an optional test email.
+13. **Summary:** the admin URL, and the API token and generated password, **shown once**. Save them in your password manager.
+
+The setup is **re-runnable**: it reads its earlier answers back from `wrangler.jsonc` and keeps existing secrets unless you choose to replace them. To change one part later:
+
+| Command | Changes |
+|---|---|
+| `npm run setup -- domains` | Short domains, admin host, fallback URL |
+| `npm run setup -- access` | Cloudflare Access settings, or switch to password-only |
+| `npm run setup -- password` | A new admin password |
+| `npm run setup -- analytics` | The Analytics Engine token |
+| `npm run setup -- email` | Email provider, sender, recipient, keys |
+| `npm run setup -- secrets --rotate` | New API token and session secret (`--salt`: the visitor salt too) |
+| `npm run setup -- deploy` | Build, migrate, deploy, check |
+| `npm run setup -- check` | Test the live deployment |
+| `npm run setup -- local` | Write `.dev.vars` for local development |
+| `npm run setup -- upgrade` | After updating the code: re-render the config, migrate, deploy |
+
+Add `--dry-run` to any of them to print the commands and the config it would write, without changing your account.
+
+<a id="configuration"></a>
+### The fallback URL
+
+`FALLBACK_URL` is where visitors land when they open a short domain's root (`/`), and where a click goes if the link store can't be read. Usually it's your website. Referrals from that site (and its subdomains) show up as the source "site" in the stats. It must be `https://`.
+
+<a id="domains"></a>
+## Domains
+
+- **Short domains** (`SHORT_DOMAINS`) are listed primary first. Each one has its own slugs: `go.example.com/guide` and `go.example.net/guide` can lead to different places. New links default to the primary domain.
+- **The admin host** (`ADMIN_HOST`) is optional. Without it, the admin and the API live on the primary short domain under `/_admin` and `/api`. With it (for example `admin.example.com`), they live there instead, and that host serves no short links.
+
+During the setup, each hostname is checked:
+
+- **It must be in a zone of this account.** If not, see [Put your domain on Cloudflare](#zone).
+- **It must not belong to another Worker.** Deploying would move it, so the setup stops and tells you which Worker has it. Detach it there (Workers & Pages → that Worker → Settings → Domains & Routes), or pick another hostname.
+- **Existing DNS records are listed.** A, AAAA and CNAME records on the hostname itself conflict with the custom domain. During the deploy Wrangler asks before replacing them: answer yes only for hostnames you expect. MX and TXT records, and records on other names such as `www`, are not affected.
+
+**Adding a domain later:** run `npm run setup -- domains`, add it to the list, and deploy. The admin's Settings → Short domains has a live check that shows whether the nameservers, DNS and certificate are ready.
+
+**Removing a domain:** in Settings → Short domains, choose **Remove** next to it and type the domain name to confirm. This permanently deletes the domain's links (from KV and D1), its click stats and its missed paths; export your links first (Links → Export CSV) if you might want them back. Clicks already in Analytics Engine are hidden, so a later rollup can't bring them back. Then run `npm run setup -- domains`, take the domain off the list, and deploy: until then it still reaches the Worker and answers with the not-found page. To retire the primary domain, put another one first in the list.
+
+**Demo data:** `npm run seed:dev` marks the sample links it creates in your local database. Settings → Short domains shows them with a **Remove demo data** button, and they're removed automatically once `SHORT_DOMAINS` holds a real domain besides the seeded one.
+
+**Turn on Always Use HTTPS** for each zone (SSL/TLS → Edge Certificates) so `http://` links upgrade before they reach the Worker.
+
+<a id="access"></a>
+## Cloudflare Access (recommended)
+
+With Access, nobody reaches the admin's login page without first proving they own your email address, and the Worker verifies Access's signed token on every admin request. The admin password is then a second lock. Access is free for up to 50 users.
+
+The setup prints these steps and asks for the values at the end.
+
+1. Open the **Zero Trust** dashboard: <https://one.dash.cloudflare.com>. The first time, pick a **team name** (it becomes `yourteam.cloudflareaccess.com`) and the Free plan.
+2. **Settings → Authentication → Login methods → Add new → One-time PIN.** Access then emails you a code to sign in. You can add Google, GitHub or another identity provider instead.
+3. **Access → Applications → Add an application → Self-hosted.**
+   - Application name: anything, such as "Shorthop admin".
+   - Add **two** public hostnames on your admin host (the primary short domain if you have no separate admin host):
+     - domain `admin.example.com`, path `_admin`
+     - domain `admin.example.com`, path `_admin/*`
+
+     Access treats `_admin` and `_admin/*` as different paths, so add both. **Don't protect the whole domain, not even a separate admin host:** short links must stay public, and `/api` uses its own token. With Access in front of `/api`, scripts and the iOS Shortcut get Access's sign-in page instead of an answer.
+   - Session duration: 24 hours is a good default.
+4. **Policies → Add a policy:** Action **Allow**, Include → **Emails** → your email address. Save the application.
+5. Under the application's advanced settings, keep the cookie **SameSite** at **Lax** and **HttpOnly** on. (The admin's own session cookie is the strict one.)
+6. Open the application's overview and copy the **Application Audience (AUD) Tag**, a 64-character hex string.
+
+Then give the setup:
+
+- **Team domain:** `yourteam` or `yourteam.cloudflareaccess.com`. The setup checks that it serves Access signing keys.
+- **AUD tag:** from step 6.
+- **Allowed emails:** the address(es) from step 4 (`ADMIN_EMAIL`). The Worker refuses any other Access identity, even one your policy lets through.
+
+To set it up later: `npm run setup -- access`. Until then, with Access selected but not configured, the admin stays closed (it "fails closed").
+
+<a id="password-only"></a>
+## Password-only sign-in
+
+If you don't want Access, choose **Password only** in the setup (`ADMIN_AUTH="password"`). The admin is then protected by the password alone. Only that exact value turns Access off: empty Access settings without it keep the admin closed, and a typo such as `"Password"` locks the admin.
+
+What changes:
+
+- **The login page is public.** Anyone who finds `/_admin/login` can try passwords. They're slowed by the lockout (5 wrong passwords within 15 minutes lock a network for a minute, doubling up to 24 hours; 30 failures an hour pause every login for 15 minutes), but nothing stops them from trying.
+- **Someone can keep you from signing in.** That global pause applies to you too: by failing from a few networks every 15 minutes, an attacker can block new logins. Sessions you already have keep working. Access avoids this, because nobody reaches the login page without your email.
+- **Use a long random password.** The setup accepts any password of at least 9 characters, but the generated one (32 characters) is the right choice.
+- **Add a rate-limiting rule** for `/_admin/login` in the Cloudflare WAF. See [SECURITY.md](../SECURITY.md).
+- The admin shows a "Cloudflare Access off" warning in Settings → Security and in System status. It isn't emailed as an alert, unless Access settings are left filled in (then it's a configuration warning).
+
+Switching to Access later is `npm run setup -- access`. Existing password-only sessions stop working when Access is on, so you'll sign in again.
+
+<a id="password"></a>
+## Admin password
+
+A typed password needs at least 9 characters; the generated one is 32 random characters and is the better choice. The password is stored only as a PBKDF2-SHA256 hash (`ADMIN_PASSWORD_HASH`), with 25,000 iterations on Workers Free or 100,000 on Paid. A login lasts 12 hours. Settings → Security → **Log out everywhere** ends every session.
+
+- **New password:** `npm run setup -- password`. It takes effect right away and signs out existing sessions.
+- **Forgot it:** the same command; you don't need the old one.
+- **Locked out by wrong passwords:** wait (the lock doubles from 1 minute up to 24 hours), or clear all locks:
+
+  ```sh
+  npx wrangler d1 execute DB --remote --command "DELETE FROM auth_failures"
+  ```
+
+<a id="analytics"></a>
+## Storage and analytics
+
+The setup creates these for you:
+
+| Resource | Name | Holds |
+|---|---|---|
+| Workers KV namespace | `<worker>-links` | The read copy of every link, used by redirects |
+| D1 database | `<worker>` | Links (the source of truth), daily stats, settings, login state |
+| Analytics Engine dataset | `AE_DATASET` (default `<worker>_clicks`) | One data point per click; created on the first write |
+
+It reads the KV and D1 ids back from Wrangler's list commands and writes them into `wrangler.jsonc`. A config without them can't be deployed: `npm run deploy` refuses it, because Wrangler would otherwise create new, empty resources.
+
+### The analytics token
+
+Clicks are always recorded. To **read** them (the stats pages, and the nightly rollup that saves each day into D1), the Worker needs an API token:
+
+1. <https://dash.cloudflare.com/profile/api-tokens> → **Create Token** → **Create Custom Token**.
+2. Permissions: **Account → Account Analytics → Read**.
+3. Account Resources: **Include → your account** only.
+4. Create it and copy the token.
+
+Give it to the setup when asked, or later with `npm run setup -- analytics`. The setup tests it against the Analytics Engine SQL API before saving it as the `CF_ANALYTICS_TOKEN` secret. Without it, System status shows "Analytics Engine" as a warning and stats stay empty. Analytics Engine keeps raw clicks for about 90 days, but the first rollup saves only the last 7 days into D1: add the token within a week of deploying to keep the full history.
+
+<a id="email"></a>
+## Email: the weekly digest and alerts
+
+Every Monday at 07:00 UTC, Shorthop emails a summary of the past week. When a check on the System status page starts failing (for example the nightly rollup), it emails an alert, and again once everything is OK. Email always goes to the single address in `DIGEST_TO`; nothing in the admin or the API can change the recipient.
+
+Choose a provider in the setup or with `npm run setup -- email`:
+
+### Cloudflare Email Service (`cloudflare`)
+
+No extra account. The sender must be on a domain in your Cloudflare account.
+
+- The setup runs `wrangler email sending enable <sender domain>`, which adds the SPF and DKIM records to the zone.
+- It adds `DIGEST_TO` as a **destination address** under Email Routing and waits while you click the verification link Cloudflare emails you. Sending to verified addresses in your own account is free on all plans.
+- The config gets a `send_email` binding restricted to that one address.
+
+If the digest fails with `E_SENDER_NOT_VERIFIED`, the DNS records may still be propagating; try again later. Check Email → Email Routing → Destination addresses for the verification state.
+
+### Resend, Postmark, SendGrid or Mailgun
+
+1. Verify your sender's domain with the provider (they give you DNS records to add; add them in the Cloudflare zone).
+2. Create an API key that can only send email.
+3. Give the setup the sender, recipient and key. The key is stored as the `DIGEST_API_KEY` secret.
+
+Mailgun also needs its sending domain (`DIGEST_MAILGUN_DOMAIN`) and region (`us` or `eu`); the setup asks.
+
+<a id="webhook"></a>
+### Signed webhook (`webhook`)
+
+For n8n, Zapier, Make or your own relay. The Worker POSTs each email (the digest and alerts alike) as JSON to your HTTPS endpoint:
+
+```json
+{ "type": "shorthop.digest", "from": { "email": "...", "name": "Shorthop" }, "to": "...", "subject": "...", "html": "...", "text": "..." }
+```
+
+The URL is stored as a secret (hook URLs often work as passwords). The setup generates `DIGEST_WEBHOOK_SECRET` and shows it once. Every request carries:
+
+```
+X-Shorthop-Signature: t=<unix seconds>,v1=<hex HMAC-SHA256 of "<t>.<raw body>">
+```
+
+Your receiver should recompute the HMAC, compare it in constant time, and reject a `t` more than 5 minutes old:
+
+```js
+import crypto from "node:crypto";
+
+function verify(rawBody, header, secret) {
+  const m = /^t=(\d+),v1=([0-9a-f]{64})$/.exec(header ?? "");
+  if (!m || Math.abs(Date.now() / 1000 - Number(m[1])) > 300) return false;
+  const expected = crypto.createHmac("sha256", secret).update(`${m[1]}.${rawBody}`).digest();
+  return crypto.timingSafeEqual(Buffer.from(m[2], "hex"), expected);
+}
+```
+
+### Off (`off`)
+
+No email. Problems only show on the dashboard.
+
+### How keys are protected
+
+API keys, the webhook URL and its secret are Wrangler secrets; the admin shows only the provider's name and whether it's ready. Provider hosts are fixed in the code (the config picks a provider, never a URL), redirects are refused so credentials can't follow one, and requests time out after 10 seconds.
+
+Test it from the admin (Settings → Weekly digest → **Send test**) or at the end of the setup.
+
+<a id="secrets"></a>
+## Secrets
+
+| Secret | Created by | Rotate with |
+|---|---|---|
+| `API_TOKEN` | the setup (40 random characters) | `npm run setup -- secrets --rotate`, then update scripts and the iOS Shortcut |
+| `SESSION_SECRET` | the setup | `npm run setup -- secrets --rotate` (logs everyone out) |
+| `VISITOR_SALT` | the setup | `npm run setup -- secrets --rotate --salt` (visitors already counted today may be counted again) |
+| `ADMIN_PASSWORD_HASH` | the setup | `npm run setup -- password` |
+| `CF_ANALYTICS_TOKEN` | you, in the dashboard | `npm run setup -- analytics` |
+| `DIGEST_API_KEY`, `DIGEST_WEBHOOK_URL`, `DIGEST_WEBHOOK_SECRET` | you / the setup | `npm run setup -- email` |
+
+The setup uploads secrets with one `wrangler secret bulk` call, passing them through stdin, so they never touch the disk or your shell history. Secret changes take effect immediately. To set one by hand: `npx wrangler secret put <NAME>`.
+
+The API token and a generated password are printed **once**, at the end of the setup. If you lose the API token, rotate it.
+
+<a id="deploy"></a>
+## Deploy
+
+The setup deploys for you. Later, after changing code or config:
+
+```sh
+npm run setup -- deploy     # build, migrate, deploy, check
+# or, step by step:
+npm run db:migrate:remote
+npm run deploy              # refuses wrangler.jsonc if ids are missing or domains are placeholders
+```
+
+On the first deploy, Cloudflare attaches each hostname and issues its certificate; this can take a few minutes. Wrangler shows its own prompts in your terminal, for example before replacing a DNS record.
+
+Afterwards, open `https://<admin host>/_admin/`. Dashboard → **System status** lists anything still missing, each with the command that fixes it.
+
+<a id="troubleshooting"></a>
+## Troubleshooting
+
+| Symptom | Cause and fix |
+|---|---|
+| `https://<domain>/health` doesn't answer | DNS or the certificate is still on its way (wait a few minutes), or the zone isn't Active yet. Workers & Pages → your Worker → Settings → Domains & Routes shows each custom domain's state |
+| "Hostname already has externally managed DNS records" during deploy | An A/AAAA/CNAME record exists on the hostname. Let Wrangler replace it, or delete it in the zone's DNS settings |
+| The setup says a hostname belongs to another Worker | Detach it from that Worker first, or pick another hostname |
+| Admin shows "Access denied: Admin access is not configured" | Access is on but `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD` or `ADMIN_EMAIL` is empty: `npm run setup -- access` |
+| Admin shows "This account is not allowed" | You signed in to Access with an email that isn't in `ADMIN_EMAIL` |
+| The API or the iOS Shortcut gets a sign-in page or `HTTP 302` | Cloudflare Access covers `/api`. Edit the Access application so it protects only the paths `_admin` and `_admin/*`, not the whole domain ([Cloudflare Access](#access)) |
+| Admin shows "Admin password is not configured" | `npm run setup -- password` |
+| `ADMIN_AUTH must be empty, "access+password" or "password"` | A typo in `ADMIN_AUTH` in `wrangler.jsonc`; fix it and deploy |
+| Logins fail or time out on Workers Free | The password hash is too expensive for 10 ms CPU: set the plan to Free in the setup, then `npm run setup -- password` |
+| Stats are empty | No analytics token (`npm run setup -- analytics`), or no clicks yet. "Today" is never shown in local dev |
+| The digest isn't sent | Dashboard → System status names the problem. With Cloudflare Email Service, check the destination address is verified |
+| "Missing required secrets" on deploy | A secret upload failed: `npm run setup` re-uploads what's missing |
+| Locked out by wrong passwords | See [Admin password](#password) |
+
+Logs: Workers & Pages → your Worker → **Logs** (structured JSON). Failed logins are logged as `admin login failed` with a keyed hash of the network, never the IP address.
+
+<a id="updating"></a>
+## Updating
+
+```sh
+git pull
+npm ci
+npm test
+npm run setup -- upgrade
+```
+
+`upgrade` re-renders `wrangler.jsonc` with the new version's template (your values are kept, and you see the diff before it's written), applies new database migrations and deploys.
+
+<a id="import"></a>
+## Moving from another shortener
+
+Imported links keep `http://` destinations and get no UTM tags, so they behave as before; their old click counts are shown as "Clicks before import". Mind the KV write allowance on Workers Free: 1,000 links a day.
+
+**1. Rehearse locally.** Save your links as a JSON array of `{ "domain", "slug", "target" }` (see `ExportRow` in `scripts/lib.ts`), then import them into the local dev server and compare every slug with the old service:
+
+```sh
+npm run setup -- local && npm run db:migrate:local && npm run dev     # in one terminal
+SHORTHOP_TOKEN=<API_TOKEN from .dev.vars> npx tsx scripts/import.ts --base http://localhost:5173 --data data/links.json
+npx tsx scripts/check-slugs.ts --base http://localhost:5173 --data data/links.json --live --probe
+```
+
+`--live` asks the old service for each slug, and `--probe` shows how it treats letter case, trailing slashes and query strings. The import skips slugs that already exist; `--overwrite` replaces their targets instead, which the API token may only do with `API_TOKEN_SCOPE="full"` (or use Admin → **Import links**).
+
+**2. Move production.** The short domains switch to Shorthop when you deploy (Wrangler asks before it replaces the old service's DNS records), so have the import ready and run it straight after:
+
+1. Run the setup and deploy.
+2. Import right away: `SHORTHOP_TOKEN=<API token> npx tsx scripts/import.ts --base https://<admin host> --data data/links.json` takes seconds for a few hundred links. Until it finishes, visitors see the not-found page. (Or upload the old service's CSV export in Admin → **Import links**, mapping its columns.)
+3. Check every slug on its live domain: `npx tsx scripts/check-slugs.ts --per-domain --data data/links.json`.
+
+<a id="uninstalling"></a>
+## Uninstalling
+
+```sh
+npx wrangler delete <worker name>                       # the Worker and its custom domains
+npx wrangler d1 delete <worker name>                    # the database (links and stats are gone for good)
+npx wrangler kv namespace delete --namespace-id <id>    # the id is in wrangler.jsonc
+```
+
+Then delete the Access application in Zero Trust, the analytics API token in your profile, and, if you used Cloudflare Email Service, the destination address under Email Routing. Analytics Engine data expires on its own after about 90 days.

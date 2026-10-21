@@ -1,0 +1,152 @@
+import { z } from "zod";
+import { HOSTNAME_RE } from "./domains";
+import { HEX_COLOR_RE } from "./not-found";
+import { IMPORT_SLUG_RE } from "./slug";
+import { LIST_PERIODS, MISS_RETENTION_DAYS, NOISE_LIMITS, RANGES, REAL_MISS_LIMITS } from "./types";
+
+/** A short domain as typed: trimmed and lowercased; membership is checked by the API. */
+const domain = z.string().trim().toLowerCase().max(253);
+
+const tags = z
+  .union([z.array(z.string()), z.string()])
+  .transform((v) => normalizeTags(Array.isArray(v) ? v : v.split(",")));
+
+/** Unix seconds, an ISO date string, or null. */
+const expiry = z
+  .union([z.number().int().positive(), z.iso.datetime({ offset: true }), z.iso.date(), z.null()])
+  .transform((v) => (typeof v === "string" ? Math.floor(Date.parse(v) / 1000) : v));
+
+export const createLinkSchema = z
+  .object({
+    /** Defaults to the primary short domain. */
+    domain: domain.optional(),
+    slug: z.string().trim().max(96).optional(),
+    target: z.string().max(4096).optional(),
+    /** Alias for target, for iOS Shortcuts and scripts. */
+    url: z.string().max(4096).optional(),
+    title: z.string().trim().max(300).nullish(),
+    tags: tags.optional(),
+    notes: z.string().max(5000).optional(),
+    expiresAt: expiry.optional(),
+    active: z.boolean().optional(),
+    utm: z.boolean().optional(),
+    utmTemplate: z.string().trim().max(512).nullish(),
+    passQuery: z.boolean().optional(),
+  })
+  .refine((v) => v.target || v.url, { message: "target is required", path: ["target"] });
+
+export const updateLinkSchema = z.object({
+  target: z.string().max(4096).optional(),
+  title: z.string().trim().max(300).nullish(),
+  tags: tags.optional(),
+  notes: z.string().max(5000).optional(),
+  expiresAt: expiry.optional(),
+  active: z.boolean().optional(),
+  utm: z.boolean().optional(),
+  utmTemplate: z.string().trim().max(512).nullish(),
+  passQuery: z.boolean().optional(),
+});
+
+const importRowSchema = z.object({
+  /** Falls back to the batch's defaultDomain, then the primary domain. */
+  domain: domain.nullish(),
+  slug: z.string().trim().min(1).max(96),
+  target: z.string().trim().min(1).max(4096),
+  title: z.string().trim().max(300).nullish(),
+  tags: tags.optional(),
+  clicks: z.number().int().nonnegative().nullish(),
+  createdAt: z.number().int().positive().nullish(),
+});
+
+export const importSchema = z.object({
+  rows: z.array(importRowSchema).min(1).max(100),
+  mode: z.enum(["skip", "overwrite"]).default("skip"),
+  dryRun: z.boolean().default(false),
+  defaultDomain: domain.optional(),
+});
+
+export const listQuerySchema = z.object({
+  domain: domain.optional(),
+  q: z.string().max(200).optional(),
+  tag: z.string().max(100).optional(),
+  status: z.enum(["all", "active", "disabled", "expired"]).default("all"),
+  sort: z.enum(["created", "updated", "slug", "clicks"]).default("created"),
+  period: z.enum(LIST_PERIODS).default("7d"),
+});
+
+/** :domain/:slug route params. Format only: links on a retired domain stay manageable. */
+export const linkParamSchema = z.object({
+  domain: z.string().regex(HOSTNAME_RE),
+  slug: z.string().regex(IMPORT_SLUG_RE),
+});
+
+export const resyncQuerySchema = z.object({
+  /** Cursor from the previous page: "domain/slug". */
+  after: z.string().max(400).optional(),
+  /** "default-utm" republishes only links that follow the default UTM template. */
+  scope: z.enum(["all", "default-utm"]).default("all"),
+});
+
+export const clearMissesSchema = z.object({
+  /** The misses to clear; all of them when omitted. */
+  links: z
+    .array(z.object({ domain: z.string().regex(HOSTNAME_RE), slug: z.string().min(1).max(512) }))
+    .min(1)
+    .max(500)
+    .optional(),
+});
+
+export const missPolicySchema = z.object({
+  trackNoise: z.boolean(),
+  noiseLimit: z.literal(NOISE_LIMITS),
+  retentionDays: z.literal(MISS_RETENTION_DAYS),
+  realLimit: z.literal(REAL_MISS_LIMITS),
+});
+
+export const missExportQuerySchema = z.object({
+  range: z.enum(RANGES).default("30d"),
+  /** Include scanner probes / bot-only misses (when tracked). */
+  probes: z.enum(["0", "1"]).default("0"),
+  bots: z.enum(["0", "1"]).default("0"),
+});
+
+export const rangeQuerySchema = z.object({
+  range: z.enum(RANGES).default("30d"),
+});
+
+export const settingsSchema = z.object({
+  defaultUtm: z.string().trim().min(1).max(512),
+});
+
+const hexColor = z.string().regex(HEX_COLOR_RE, "Use a color such as #6554c0");
+
+/** The not-found page (its image is uploaded separately). */
+export const purgeDomainSchema = z
+  .object({
+    domain: z.string().trim().toLowerCase().regex(HOSTNAME_RE, "Enter a domain such as links.example.com"),
+    /** The domain typed again: deleting a domain's data can't be undone. */
+    confirm: z.string().trim().toLowerCase(),
+  })
+  .refine((v) => v.confirm === v.domain, { message: "Type the domain name to confirm", path: ["confirm"] });
+
+export const notFoundSchema = z.object({
+  heading: z.string().trim().min(1, "Add a heading").max(120),
+  message: z.string().trim().max(600),
+  buttonLabel: z.string().trim().max(60),
+  buttonUrl: z.union([z.literal(""), z.url({ protocol: /^https?$/, error: "Use a full https:// address" }).max(2048)]),
+  background: hexColor,
+  card: hexColor,
+  text: hexColor,
+  accent: hexColor,
+});
+
+export function normalizeTags(input: readonly string[]): string[] {
+  const seen = new Set<string>();
+  for (const raw of input) {
+    const tag = raw.trim().toLowerCase().replace(/\s+/g, "-").slice(0, 40);
+    if (tag && !tag.includes(",")) seen.add(tag);
+  }
+  return [...seen].slice(0, 20);
+}
+
+export type ImportRowInput = z.input<typeof importRowSchema>;

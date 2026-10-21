@@ -1,0 +1,288 @@
+// Response shapes of the admin API, shared by the Worker and the SPA.
+
+export type LinkSource = "native" | "import";
+
+export interface LinkDTO {
+  /** The short domain the link lives on; slugs are unique per domain. */
+  domain: string;
+  slug: string;
+  shortUrl: string;
+  target: string;
+  active: boolean;
+  /** Unix seconds, or null for never. */
+  expiresAt: number | null;
+  utm: boolean;
+  /** Per-link template; null means the default template applies. */
+  utmTemplate: string | null;
+  passQuery: boolean;
+  title: string | null;
+  tags: string[];
+  notes: string;
+  source: LinkSource;
+  importedClicks: number | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** Periods the links list can count recent clicks over. */
+export const LIST_PERIODS = ["7d", "14d", "30d", "90d", "180d", "365d", "all"] as const;
+export type ListPeriod = (typeof LIST_PERIODS)[number];
+
+export interface LinkListItem extends LinkDTO {
+  /** Human clicks in the requested period (rollups plus today). */
+  clicksPeriod: number;
+  /** All-time human clicks tracked here (the previous shortener's are in importedClicks). */
+  clicksTotal: number;
+}
+
+export interface ImportRowResult {
+  domain: string;
+  slug: string;
+  status: "created" | "updated" | "skipped" | "error";
+  message?: string;
+}
+
+export interface ImportResult {
+  dryRun: boolean;
+  created: number;
+  updated: number;
+  skipped: number;
+  errors: number;
+  rows: ImportRowResult[];
+}
+
+export const RANGES = ["today", "7d", "14d", "30d", "90d", "180d", "365d", "all"] as const;
+export type Range = (typeof RANGES)[number];
+
+/** Breakdown dimensions shown on stats pages. */
+export const DIMS = [
+  "country",
+  "device",
+  "source",
+  "city",
+  "region",
+  "os",
+  "browser",
+  "referrer",
+  "language",
+  "bot",
+] as const;
+export type Dim = (typeof DIMS)[number];
+
+export interface Totals {
+  clicks: number;
+  /** Sum of daily unique visitors (the visitor hash rotates daily). */
+  uniques: number;
+  bots: number;
+}
+
+export interface SeriesPoint extends Totals {
+  date: string;
+}
+
+export interface BreakdownRow {
+  value: string;
+  clicks: number;
+  bots: number;
+}
+
+export interface LinkStatsDTO {
+  domain: string;
+  slug: string;
+  range: Range;
+  from: string;
+  to: string;
+  aeAvailable: boolean;
+  totals: Totals;
+  series: SeriesPoint[];
+  dims: Record<Dim, BreakdownRow[]>;
+}
+
+export interface TopLink extends Totals {
+  domain: string;
+  slug: string;
+  target: string | null;
+}
+
+export interface OverviewDTO {
+  range: Range;
+  from: string;
+  to: string;
+  aeAvailable: boolean;
+  totals: Totals;
+  series: SeriesPoint[];
+  topLinks: TopLink[];
+  countries: BreakdownRow[];
+  sources: BreakdownRow[];
+  devices: BreakdownRow[];
+}
+
+/** How much of the misses report is kept. Scanner probes and bot-only misses are "noise". */
+export interface MissPolicy {
+  /** Record noise at all. Off by default: it isn't even written to Analytics Engine. */
+  trackNoise: boolean;
+  /** Most recent noise paths kept when tracked. */
+  noiseLimit: (typeof NOISE_LIMITS)[number];
+  /** Days real misses are kept. */
+  retentionDays: (typeof MISS_RETENTION_DAYS)[number];
+  /** Most recent real missed paths kept; 0 means no limit. */
+  realLimit: (typeof REAL_MISS_LIMITS)[number];
+}
+
+export const NOISE_LIMITS = [100, 250, 500] as const;
+export const MISS_RETENTION_DAYS = [90, 180] as const;
+export const REAL_MISS_LIMITS = [100, 250, 500, 1000, 0] as const;
+
+export const DEFAULT_MISS_POLICY: MissPolicy = { trackNoise: false, noiseLimit: 100, retentionDays: 90, realLimit: 1000 };
+
+export interface MissRow {
+  domain: string;
+  slug: string;
+  hits: number;
+  bots: number;
+  /** Last UTC day it was requested. */
+  lastSeen: string;
+  /** State of a link with exactly this slug, if one exists. */
+  link: "none" | "active" | "disabled" | "expired";
+  /** An existing slug that differs only in letter case. */
+  suggestion: string | null;
+  /** Looks like a vulnerability scanner request (".env", ".php", "wp-…"), not a mistyped link. */
+  probe: boolean;
+}
+
+export interface RecentHit {
+  time: string;
+  domain: string;
+  slug: string;
+  event: "click" | "bot" | "miss";
+  country: string;
+  city: string;
+  device: string;
+  os: string;
+  browser: string;
+  referrer: string;
+  source: string;
+  botName: string;
+}
+
+export interface DomainRecord {
+  type: "A" | "AAAA" | "CNAME";
+  value: string;
+}
+
+/** Live setup state of a short domain (Settings → Short domains → Check setup). */
+export interface DomainCheckDTO {
+  domain: string;
+  /** Listed in SHORT_DOMAINS. */
+  configured: boolean;
+  /** False when DNS says the name doesn't exist (not registered, or a typo). */
+  exists: boolean;
+  /** The name whose nameservers were found (the domain itself or its parent). */
+  zone: string | null;
+  nameservers: string[];
+  /** Every nameserver is *.ns.cloudflare.com. */
+  onCloudflare: boolean;
+  /** A, AAAA and CNAME records on the name itself. */
+  records: DomainRecord[];
+  /** Whether https://<domain>/health is answered by this Worker. */
+  serving: "yes" | "no";
+  servingDetail: string;
+  error: string | null;
+  checkedAt: number;
+}
+
+export interface SecurityDTO {
+  /** The Access identity of this session ("admin" without Access, "api-token" for the Bearer API). */
+  email: string;
+  /** ADMIN_AUTH: Cloudflare Access plus the password, or the password alone. */
+  mode: "access+password" | "password";
+  /** ACCESS_TEAM_DOMAIN, ACCESS_AUD and ADMIN_EMAIL are all set. */
+  accessConfigured: boolean;
+  /** False only on localhost without ADMIN_PASSWORD_HASH. */
+  passwordConfigured: boolean;
+  /** Unix seconds; null without a password session. */
+  sessionExpiresAt: number | null;
+  failedLogins24h: number;
+  lockedNetworks: number;
+  /** Unix seconds while every login is paused, otherwise null. */
+  globalLockedUntil: number | null;
+  /** Newest first. */
+  recent: { at: number; ok: boolean; country: string }[];
+}
+
+export interface SettingsDTO {
+  defaultUtm: string;
+  publicOrigin: string;
+  aeAvailable: boolean;
+  lastRolled: string | null;
+  /** Finished days the next rollup would summarize; null when up to date. */
+  rollupPending: { from: string; to: string; days: number } | null;
+  lastDigestWeek: string | null;
+  digestTo: string;
+  /** Display name of the delivery provider (DIGEST_PROVIDER). */
+  digestProvider: string;
+  /** Why the digest can't be sent, or null when it's ready. */
+  digestProblem: string | null;
+  /** Short domains, primary first. */
+  domains: string[];
+  primaryDomain: string;
+  /** Where the admin and the API are served (ADMIN_HOST or the primary domain). */
+  adminHost: string;
+  /** Links per domain, including domains no longer in SHORT_DOMAINS. */
+  linksPerDomain: Record<string, number>;
+  /** Sample data from `npm run seed:dev`, or null. */
+  demo: DemoDTO | null;
+  security: SecurityDTO;
+}
+
+export interface DemoDTO {
+  domain: string;
+  links: number;
+}
+
+export interface PurgeDomainDTO {
+  domain: string;
+  /** Links removed by this call. */
+  deleted: number;
+  /** False while links are left: call again. */
+  done: boolean;
+}
+
+export interface ApiError {
+  error: string;
+  details?: unknown;
+}
+
+export type HealthStatus = "ok" | "warn" | "error";
+
+/** One line of Dashboard → System status. */
+export interface HealthCheck {
+  id: string;
+  label: string;
+  status: HealthStatus;
+  detail: string;
+  /** A command that fixes it, e.g. "npm run setup -- email". */
+  fix?: string;
+  /** Where the manual explains it, e.g. "docs/SETUP.md#email". */
+  docs?: string;
+  /** A warning about a deliberate setup choice: shown here, never emailed. */
+  advisory?: boolean;
+}
+
+/** The outcome of a scheduled job, as last recorded. */
+export interface JobRun {
+  ok: boolean;
+  /** Unix seconds. */
+  at: number;
+  error?: string;
+}
+
+export interface SystemHealthDTO {
+  checks: HealthCheck[];
+  /** Worst status across the checks that aren't advisory. */
+  status: HealthStatus;
+  checkedAt: number;
+  /** Where alerts go, or null when email can't be sent. */
+  alertsTo: string | null;
+  lastAlert: JobRun | null;
+}

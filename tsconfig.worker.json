@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.worker.tsbuildinfo",
+    // Declarations only: the admin SPA imports the typed API client from here.
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "outDir": "./node_modules/.tmp/worker-dts",
+    "lib": ["ES2023"],
+    "types": ["@cloudflare/vitest-plugin/types"]
+  },
+  "references": [{ "path": "./tsconfig.shared.json" }],
+  "include": ["worker-configuration.d.ts", "src/worker", "test"],
+  "exclude": ["test/node"]
+}

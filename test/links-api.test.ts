@@ -1,0 +1,262 @@
+import { env } from "cloudflare:test";
+import { beforeEach, describe, expect, it } from "vitest";
+import type { ImportResult, LinkDTO, LinkListItem } from "../src/shared/types";
+import { API, bearer, call, json, ORIGIN, resetData } from "./helpers";
+
+beforeEach(resetData);
+
+async function create(body: Record<string, unknown>) {
+  const res = await call(`${API}/links`, json(body));
+  return { res, data: (await res.json()) as { link: LinkDTO; error?: string } };
+}
+
+const kv = (slug: string, domain = "sh.example") => env.LINKS.get(`${domain}/${slug}`, "json") as Promise<Record<string, unknown> | null>;
+
+describe("create", () => {
+  it("creates an auto-slug link, publishes it to KV and redirects with UTM", async () => {
+    const { res, data } = await create({ url: "https://example.com/guide" });
+    expect(res.status).toBe(201);
+    expect(data.link.slug).toMatch(/^[0-9A-Za-z]{6}$/);
+    expect(data.link.shortUrl).toBe(`${ORIGIN}/${data.link.slug}`);
+    expect(await kv(data.link.slug)).toEqual({
+      u: "https://example.com/guide",
+      a: 1,
+      e: null,
+      utm: 1,
+      qp: 0,
+      t: "utm_source={domain}&utm_medium=shortlink&utm_campaign={slug}",
+    });
+    const redirect = await call(`${ORIGIN}/${data.link.slug}`);
+    expect(redirect.headers.get("Location")).toBe(
+      `https://example.com/guide?utm_source=sh.example&utm_medium=shortlink&utm_campaign=${data.link.slug}`,
+    );
+  });
+
+  it("supports custom slugs, tags, expiry and the plain-text response for Shortcuts", async () => {
+    const res = await call(`${API}/links?format=text`, json({ slug: "Talk-2026", target: "https://example.com/talk", tags: "Talks, 2026", expiresAt: "2030-01-01T00:00:00Z" }));
+    expect(res.status).toBe(201);
+    expect(await res.text()).toBe(`${ORIGIN}/Talk-2026`);
+    const got = (await (await call(`${API}/links/sh.example/Talk-2026`, { headers: bearer })).json()) as { link: LinkDTO };
+    expect(got.link.tags).toEqual(["talks", "2026"]);
+    expect(got.link.expiresAt).toBe(1893456000);
+  });
+
+  it("rejects duplicates, reserved slugs, bad slugs and unsafe targets", async () => {
+    await create({ slug: "dup", target: "https://example.com/" });
+    expect((await create({ slug: "dup", target: "https://example.com/" })).res.status).toBe(409);
+    expect((await create({ slug: "health", target: "https://example.com/" })).res.status).toBe(400);
+    expect((await create({ slug: "a.b", target: "https://example.com/" })).res.status).toBe(400);
+    expect((await create({ target: "http://example.com/" })).res.status).toBe(400);
+    expect((await create({ target: "javascript:alert(1)" })).res.status).toBe(400);
+    expect((await create({ target: "https://sh.example/loop" })).res.status).toBe(400);
+    expect((await create({})).res.status).toBe(400);
+    expect((await create({ target: "https://example.com/", utmTemplate: "bad template" })).res.status).toBe(400);
+  });
+});
+
+describe("update and delete", () => {
+  it("edits, disables and re-enables a link", async () => {
+    await create({ slug: "edit-me", target: "https://example.com/a", utm: false });
+    let res = await call(`${API}/links/sh.example/edit-me`, { ...json({ target: "https://example.com/b", passQuery: true }), method: "PATCH" });
+    expect(res.status).toBe(200);
+    expect(await kv("edit-me")).toMatchObject({ u: "https://example.com/b", qp: 1, utm: 0 });
+    expect((await call(`${ORIGIN}/edit-me?x=1`)).headers.get("Location")).toBe("https://example.com/b?x=1");
+
+    res = await call(`${API}/links/sh.example/edit-me`, { ...json({ active: false }), method: "PATCH" });
+    expect(((await res.json()) as { link: LinkDTO }).link.active).toBe(false);
+    expect((await call(`${ORIGIN}/edit-me`)).status).toBe(404);
+
+    await call(`${API}/links/sh.example/edit-me`, { ...json({ active: true }), method: "PATCH" });
+    expect((await call(`${ORIGIN}/edit-me`)).status).toBe(302);
+  });
+
+  it("deletes from D1 and KV", async () => {
+    await create({ slug: "gone", target: "https://example.com/" });
+    const res = await call(`${API}/links/sh.example/gone`, { method: "DELETE", headers: bearer });
+    expect(res.status).toBe(200);
+    expect(await kv("gone")).toBeNull();
+    expect((await call(`${API}/links/sh.example/gone`, { headers: bearer })).status).toBe(404);
+  });
+});
+
+describe("list and search", () => {
+  it("filters by text, tag and status", async () => {
+    await create({ slug: "resume", target: "https://example.com/resume", tags: ["career"] });
+    await create({ slug: "ebook", target: "https://example.com/ebook", tags: ["books"], active: false });
+    const list = async (q: string) =>
+      ((await (await call(`${API}/links${q}`, { headers: bearer })).json()) as { links: LinkListItem[] }).links.map((l) => l.slug);
+    expect(await list("?q=resume")).toEqual(["resume"]);
+    expect(await list("?tag=books")).toEqual(["ebook"]);
+    expect(await list("?status=disabled")).toEqual(["ebook"]);
+    expect(await list("?q=100%25")).toEqual([]);
+  });
+});
+
+describe("import", () => {
+  const rows = [
+    { slug: "Guide", target: "https://example.com/guide", clicks: 120 },
+    { slug: "old-http", target: "http://example.com/x" },
+    { slug: "api", target: "https://example.com/" },
+    { slug: "bad target", target: "https://example.com/" },
+    { slug: "Guide", target: "https://example.com/dupe" },
+  ];
+
+  it("validates on dry run without writing", async () => {
+    const res = await call(`${API}/import`, json({ rows, dryRun: true }));
+    const result = (await res.json()) as ImportResult;
+    expect(result).toMatchObject({ dryRun: true, created: 2, errors: 3 });
+    expect(await kv("Guide")).toBeNull();
+  });
+
+  it("imports links verbatim (http allowed, no UTM) and skips existing ones", async () => {
+    let result = (await (await call(`${API}/import`, json({ rows }))).json()) as ImportResult;
+    expect(result.created).toBe(2);
+    expect(await kv("Guide")).toEqual({ u: "https://example.com/guide", a: 1, e: null, utm: 0, qp: 0 });
+    expect((await call(`${ORIGIN}/old-http`)).headers.get("Location")).toBe("http://example.com/x");
+    const link = ((await (await call(`${API}/links/sh.example/Guide`, { headers: bearer })).json()) as { link: LinkDTO }).link;
+    expect(link).toMatchObject({ source: "import", importedClicks: 120, utm: false });
+
+    result = (await (await call(`${API}/import`, json({ rows: [{ slug: "Guide", target: "https://example.com/new" }] }))).json()) as ImportResult;
+    expect(result.skipped).toBe(1);
+    result = (await (await call(`${API}/import`, json({ rows: [{ slug: "Guide", target: "https://example.com/new" }], mode: "overwrite" }))).json()) as ImportResult;
+    expect(result.updated).toBe(1);
+    expect(await kv("Guide")).toMatchObject({ u: "https://example.com/new" });
+  });
+
+  it("warns about slugs that differ only in case", async () => {
+    await create({ slug: "casey", target: "https://example.com/" });
+    const result = (await (await call(`${API}/import`, json({ rows: [{ slug: "Casey", target: "https://example.com/" }] }))).json()) as ImportResult;
+    expect(result.rows[0]?.message).toMatch(/case/);
+  });
+
+  it("warns about case-only duplicates within one import", async () => {
+    const rows = [
+      { slug: "Webinar", target: "https://example.com/a" },
+      { slug: "webinar", target: "https://example.com/b" },
+    ];
+    const result = (await (await call(`${API}/import`, json({ rows, dryRun: true }))).json()) as ImportResult;
+    expect(result.created).toBe(2);
+    expect(result.rows[1]?.message).toMatch(/in this import/);
+  });
+});
+
+describe("resync, export and settings", () => {
+  it("republishes every link to KV in pages", async () => {
+    await create({ slug: "r1", target: "https://example.com/1" });
+    await env.LINKS.delete("sh.example/r1");
+    const res = await call(`${API}/resync`, { method: "POST", headers: bearer });
+    expect(((await res.json()) as { published: number }).published).toBeGreaterThan(0);
+    expect(await kv("r1")).not.toBeNull();
+  });
+
+  it("exports links as CSV", async () => {
+    await create({ slug: "csv1", target: "https://example.com/1", notes: "=cmd" });
+    const res = await call(`${API}/export/links.csv`, { headers: bearer });
+    expect(res.headers.get("Content-Type")).toContain("text/csv");
+    const text = await res.text();
+    expect(text.split("\r\n")[0]).toContain("domain,slug,short_url,target");
+    expect(text).toContain("'=cmd");
+  });
+
+  it("changes the default UTM template, applied after resync", async () => {
+    await create({ slug: "u1", target: "https://example.com/" });
+    const put = await call(`${API}/settings`, { ...json({ defaultUtm: "utm_source=tl&utm_campaign={slug}" }), method: "PUT" });
+    expect(put.status).toBe(200);
+    await call(`${API}/resync`, { method: "POST", headers: bearer });
+    expect((await call(`${ORIGIN}/u1`)).headers.get("Location")).toBe("https://example.com/?utm_source=tl&utm_campaign=u1");
+    const bad = await call(`${API}/settings`, { ...json({ defaultUtm: "nope" }), method: "PUT" });
+    expect(bad.status).toBe(400);
+  });
+});
+
+describe("short domains", () => {
+  const TWO = { SHORT_DOMAINS: "sh.example,alt.example" };
+  const post = (body: Record<string, unknown>) => call(`${API}/links`, json(body), TWO);
+  const list = async (q = "") =>
+    ((await (await call(`${API}/links${q}`, { headers: bearer }, TWO)).json()) as { links: LinkListItem[] }).links.map((l) => `${l.domain}/${l.slug}`);
+
+  it("keeps slugs separate per domain", async () => {
+    expect((await post({ slug: "same", target: "https://example.com/a" })).status).toBe(201);
+    const res = await post({ domain: "Alt.example", slug: "same", target: "https://example.com/b" });
+    expect(res.status).toBe(201);
+    expect(((await res.json()) as { link: LinkDTO }).link).toMatchObject({ domain: "alt.example", slug: "same", shortUrl: "https://alt.example/same" });
+    expect(await kv("same")).toMatchObject({ u: "https://example.com/a" });
+    expect(await kv("same", "alt.example")).toMatchObject({ u: "https://example.com/b" });
+
+    expect((await post({ domain: "alt.example", slug: "same", target: "https://example.com/c" })).status).toBe(409);
+    expect((await post({ domain: "other.link", target: "https://example.com/" })).status).toBe(400);
+    expect((await post({ target: "https://alt.example/loop" })).status).toBe(400);
+  });
+
+  it("lists, edits and deletes one domain's link without touching the other", async () => {
+    await post({ slug: "same", target: "https://example.com/a" });
+    await post({ domain: "alt.example", slug: "same", target: "https://example.com/b" });
+    expect((await list()).sort()).toEqual(["alt.example/same", "sh.example/same"]);
+    expect(await list("?domain=alt.example")).toEqual(["alt.example/same"]);
+
+    const patch = await call(`${API}/links/alt.example/same`, { ...json({ target: "https://example.com/b2" }), method: "PATCH" }, TWO);
+    expect(patch.status).toBe(200);
+    expect(await kv("same", "alt.example")).toMatchObject({ u: "https://example.com/b2" });
+    expect(await kv("same")).toMatchObject({ u: "https://example.com/a" });
+
+    expect((await call(`${API}/links/alt.example/same`, { method: "DELETE", headers: bearer }, TWO)).status).toBe(200);
+    expect(await kv("same", "alt.example")).toBeNull();
+    expect(await list()).toEqual(["sh.example/same"]);
+    expect((await call(`${API}/links/not_a_domain/same`, { headers: bearer }, TWO)).status).toBe(400);
+  });
+
+  it("imports rows onto their own domains", async () => {
+    const rows = [
+      { domain: "alt.example", slug: "p", target: "https://example.com/alt" },
+      { slug: "p", target: "https://example.com/default" },
+      { domain: "nope.link", slug: "q", target: "https://example.com/" },
+      { domain: "alt.example", slug: "P", target: "https://example.com/case" },
+    ];
+    const res = await call(`${API}/import`, json({ rows, defaultDomain: "sh.example" }), TWO);
+    const result = (await res.json()) as ImportResult;
+    expect(result).toMatchObject({ created: 3, errors: 1 });
+    expect(result.rows.find((r) => r.domain === "nope.link")?.status).toBe("error");
+    expect(result.rows.find((r) => r.slug === "P")?.message).toMatch(/in this import/);
+    expect(await kv("p", "alt.example")).toMatchObject({ u: "https://example.com/alt" });
+    expect(await kv("p")).toMatchObject({ u: "https://example.com/default" });
+
+    // Rows without a domain follow defaultDomain.
+    await call(`${API}/import`, json({ rows: [{ slug: "d", target: "https://example.com/d" }], defaultDomain: "alt.example" }), TWO);
+    expect(await kv("d", "alt.example")).not.toBeNull();
+    expect(await kv("d")).toBeNull();
+  });
+
+  it("republishes across domains page by page, or only links on the default template", async () => {
+    const insert = env.DB.prepare(
+      "INSERT INTO links (domain, slug, target, utm, utm_template, created_at, updated_at) VALUES (?, ?, 'https://example.com/', ?, ?, 1, 1)",
+    );
+    await env.DB.batch(
+      Array.from({ length: 205 }, (_, i) => insert.bind(i % 2 ? "alt.example" : "sh.example", `s${i}`, i % 3 ? 1 : 0, i % 5 ? null : "utm_source=x")),
+    );
+    const first = (await (await call(`${API}/resync`, { method: "POST", headers: bearer }, TWO)).json()) as { published: number; next: string | null };
+    expect(first.published).toBe(200);
+    expect(first.next).toMatch(/^sh\.example\//);
+    const second = (await (await call(`${API}/resync?after=${encodeURIComponent(first.next!)}`, { method: "POST", headers: bearer }, TWO)).json()) as {
+      published: number;
+      next: string | null;
+    };
+    expect(second).toEqual({ published: 5, next: null });
+    expect(await kv("s1", "alt.example")).not.toBeNull();
+
+    const scoped = (await (await call(`${API}/resync?scope=default-utm`, { method: "POST", headers: bearer }, TWO)).json()) as { published: number };
+    const expected = Array.from({ length: 205 }, (_, i) => i).filter((i) => i % 3 && i % 5).length;
+    expect(scoped.published).toBe(expected);
+  });
+
+  it("reports the configured domains and their link counts in settings", async () => {
+    await post({ slug: "a", target: "https://example.com/a" });
+    await post({ slug: "b", target: "https://example.com/b" });
+    await post({ domain: "alt.example", slug: "a", target: "https://example.com/c" });
+    const s = (await (await call(`${API}/settings`, { headers: bearer }, TWO)).json()) as {
+      domains: string[];
+      primaryDomain: string;
+      linksPerDomain: Record<string, number>;
+    };
+    expect(s).toMatchObject({ domains: ["sh.example", "alt.example"], primaryDomain: "sh.example", linksPerDomain: { "sh.example": 2, "alt.example": 1 } });
+  });
+});

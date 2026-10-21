@@ -1,0 +1,14 @@
+{
+  // Environment-agnostic code used by the Worker, the admin SPA and scripts.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.shared.tsbuildinfo",
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "outDir": "./node_modules/.tmp/shared-dts",
+    "lib": ["ES2023", "DOM"],
+    "types": []
+  },
+  "include": ["src/shared"]
+}

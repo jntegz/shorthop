@@ -1,0 +1,67 @@
+{
+  "name": "shorthop",
+  "version": "1.0.0",
+  "description": "A personal URL shortener on one Cloudflare Worker: edge redirects, click analytics, a private admin.",
+  "license": "MIT",
+  "author": "Jan Tegze (https://jantegze.com)",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jntegz/shorthop.git"
+  },
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "setup": "tsx scripts/setup/index.ts",
+    "dev": "vite dev",
+    "build": "vite build",
+    "preview": "npm run build && vite preview",
+    "deploy": "tsx scripts/setup/check-deploy.ts && npm run build && wrangler deploy",
+    "types": "wrangler types --strict-vars=false -c wrangler.example.jsonc",
+    "config:example": "tsx scripts/setup/example.ts",
+    "typecheck": "tsc -b",
+    "test": "vitest run && tsx --test test/node/*.test.ts",
+    "db:migrate:local": "tsx scripts/setup/wrangler-local.ts d1 migrations apply DB --local",
+    "db:migrate:remote": "wrangler d1 migrations apply DB --remote",
+    "seed:dev": "tsx scripts/seed-dev.ts"
+  },
+  "dependencies": {
+    "@hono/zod-validator": "^0.9.1",
+    "@tanstack/react-query": "^5.104.4",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "hono": "^4.13.13",
+    "jose": "^6.2.12",
+    "lucide-react": "^1.59.0",
+    "papaparse": "^5.7.0",
+    "qrcode": "^1.5.4",
+    "radix-ui": "^1.8.1",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "react-router": "^7.18.4",
+    "recharts": "^3.10.1",
+    "sonner": "^2.0.8",
+    "tailwind-merge": "^3.7.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.64.0",
+    "@cloudflare/vitest-plugin": "^1.4.5",
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/node": "^22.20.5",
+    "@types/papaparse": "^5.5.2",
+    "@types/qrcode": "^1.5.6",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "jsonc-parser": "^3.3.1",
+    "tailwindcss": "^4.3.3",
+    "tsx": "^4.23.15",
+    "typescript": "~6.0.3",
+    "vite": "^8.3.4",
+    "vitest": "~4.1.12",
+    "wrangler": "^4.151.2"
+  }
+}

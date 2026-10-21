@@ -1,0 +1,8 @@
+# Vite's content-hashed bundles can be reused without another network request.
+/_admin/assets/*.js
+  Cache-Control: public, max-age=31536000, immutable
+  X-Content-Type-Options: nosniff
+
+/_admin/assets/*.css
+  Cache-Control: public, max-age=31536000, immutable
+  X-Content-Type-Options: nosniff

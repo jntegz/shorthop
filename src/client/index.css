@@ -1,0 +1,89 @@
+@import "tailwindcss";
+
+/* A single light palette keeps every workspace surface consistent. */
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-line: var(--line);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-subtle: var(--subtle);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-soft: var(--accent-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-good: var(--good);
+  --color-good-soft: var(--good-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-series-1: var(--series-1);
+  --color-series-2: var(--series-2);
+  --color-grid: var(--grid);
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+}
+
+:root {
+  color-scheme: light;
+  --bg: #f8f9fc;
+  --surface: #ffffff;
+  --surface-2: #f3f4f8;
+  --line: #e6e8ef;
+  --fg: #222438;
+  --muted: #656b80;
+  --subtle: #73798c;
+  --accent: #6554c0;
+  --accent-fg: #ffffff;
+  --accent-soft: #f0edfc;
+  --danger: #b93845;
+  --danger-soft: #fff0f1;
+  --good: #23765a;
+  --good-soft: #edf8f2;
+  --warn: #8c621b;
+  --warn-soft: #fff8e9;
+  --series-1: #7864ce;
+  --series-2: #bd7a3b;
+  --grid: #eef0f5;
+}
+
+html,
+body {
+  background: var(--bg);
+  color: var(--fg);
+}
+
+body {
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: var(--accent-soft);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+body { margin: 0; }
+button, a, input, select, textarea { -webkit-tap-highlight-color: transparent; }
+button:not(:disabled), summary { cursor: pointer; }
+button, a, input, select, textarea { touch-action: manipulation; }
+button:disabled { cursor: not-allowed; }
+.card { box-shadow: 0 2px 4px -3px rgb(27 31 53 / 12%); }
+.page-enter { animation: enter 220ms ease-out; }
+@keyframes enter { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}
+@media (max-width: 767px) {
+  .mobile-nav { padding-bottom: env(safe-area-inset-bottom); }
+  main { padding-bottom: calc(6rem + env(safe-area-inset-bottom)); }
+}
