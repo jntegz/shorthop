@@ -4,7 +4,7 @@ import { addDays, dayStartSec, utcDate } from "../src/shared/dates";
 import type { LinkStatsDTO, MissRow, OverviewDTO, SettingsDTO } from "../src/shared/types";
 import { dataset } from "../src/worker/ae";
 import { digestData, renderDigest, runDigest } from "../src/worker/digest";
-import { jsonChunks } from "../src/worker/db";
+import { jsonChunks, setSettingStmt } from "../src/worker/db";
 import { capDims, runRollup } from "../src/worker/rollup";
 import { aePoint, mockAeSql, type StoredPoint } from "./ae-mock";
 import { API, bearer, call, captureClicks, json, ORIGIN, putLink, resetData } from "./helpers";
@@ -282,6 +282,37 @@ describe("misses cleanup", () => {
     expect((await report()).map((r) => r.slug).sort()).toEqual(["gg", "nope"]);
     await runRollup({ ...env, ...AE_ENV }, NOW);
     expect((await report()).map((r) => r.slug).sort()).toEqual(["gg", "nope"]);
+  });
+
+  it.each([
+    ["everything", {}],
+    ["one path", { links: [{ domain: "sh.example", slug: "nope" }] }],
+  ])("clearing %s hides misses up to its second and keeps later ones through that day's rollup and prune", async (_, body) => {
+    expect((await clear(body)).status).toBe(200);
+    const stored = JSON.parse(String((await rows("SELECT value FROM settings WHERE key = 'misses_cleared'"))[0]!.value));
+    const sec = "links" in body ? stored.links["sh.example/nope"] : stored.all;
+    expect(typeof sec).toBe("number");
+    await hits(store, sec - 1, [{ path: "/nope" }]); // hidden
+    await hits(store, sec + 1, [{ path: "/nope" }]); // shown
+    expect((await report()).find((r) => r.slug === "nope")).toMatchObject({ hits: 1 });
+
+    // The nightly run after the clearing day: rollup with the cutoffs, then the pruner.
+    const day = utcDate(new Date(sec * 1000));
+    await runRollup({ ...env, ...AE_ENV }, new Date((dayStartSec(addDays(day, 1)) + 4500) * 1000));
+    expect(await rows("SELECT clicks FROM daily_dims WHERE dim = 'miss' AND slug = 'nope' AND date = ?", day)).toEqual([{ clicks: 1 }]);
+    expect((await report()).find((r) => r.slug === "nope")).toMatchObject({ hits: 1 });
+  });
+
+  it("still hides misses through the end of a day stored by older versions", async () => {
+    const legacy = { all: YESTERDAY, links: { "sh.example/nope": TODAY } };
+    await setSettingStmt(env.DB, "misses_cleared", JSON.stringify(legacy)).run();
+    const sec = Math.floor(Date.now() / 1000);
+    await hits(store, sec + 5, [{ path: "/nope" }, { path: "/fresh" }]);
+    expect((await report()).map((r) => r.slug)).toEqual(["fresh"]);
+
+    await runRollup({ ...env, ...AE_ENV }, new Date((dayStartSec(addDays(TODAY, 1)) + 4500) * 1000));
+    expect(await rows("SELECT slug FROM daily_dims WHERE dim = 'miss' ORDER BY slug")).toEqual([{ slug: "fresh" }]);
+    expect((await report()).map((r) => r.slug)).toEqual(["fresh"]);
   });
 
   it("records a probe-looking typo of a real link, and doesn't log the 404 preview", async () => {
