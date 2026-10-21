@@ -1,6 +1,5 @@
 # Shorthop
 
-[![CI](https://github.com/jntegz/shorthop/actions/workflows/ci.yml/badge.svg)](https://github.com/jntegz/shorthop/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node 22.12+](https://img.shields.io/badge/node-%E2%89%A522.12-brightgreen.svg)](package.json)
 [![Runs on Cloudflare Workers](https://img.shields.io/badge/runs%20on-Cloudflare%20Workers-f38020.svg)](https://workers.cloudflare.com/)
