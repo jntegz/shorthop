@@ -1,6 +1,6 @@
 {
   "name": "shorthop",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "A personal URL shortener on one Cloudflare Worker: edge redirects, click analytics, a private admin.",
   "license": "MIT",
   "author": "Jan Tegze (https://jantegze.com)",
