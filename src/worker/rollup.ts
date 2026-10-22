@@ -3,7 +3,7 @@
 // and each day is replaced atomically, so re-running is always safe.
 
 import { addDays, dateFromDaySec, dayStartSec, daysBetween, utcDate } from "../shared/dates";
-import { AE_DIMS, aeAvailable, queryCombos, queryDim, queryMisses, queryUniques, type AeDim, type LinkFilter, type MissCutoffs } from "./ae";
+import { AE_DIMS, AeRowLimitError, aeAvailable, queryCombos, queryDim, queryMisses, queryUniques, type AeDim, type LinkFilter, type MissCutoffs } from "./ae";
 import { getSetting, jsonChunks, setSettingStmt } from "./db";
 import { purgedDomains } from "./domain-purge";
 import { isNoise, missesCleared, pruneMisses, savedMissPolicy } from "./misses";
@@ -48,6 +48,8 @@ export interface CollectOptions {
   misses?: boolean;
   /** Leave out misses the owner cleared. */
   missCutoffs?: MissCutoffs;
+  /** Throw AeRowLimitError instead of returning clicks, uniques or breakdowns cut off at the row limit. */
+  strict?: boolean;
 }
 
 /** Reads one window from Analytics Engine in the D1 rollup shape. */
@@ -57,16 +59,16 @@ export async function collectFromAE(
   toSec: number,
   opts: CollectOptions = {},
 ): Promise<{ stats: StatsRow[]; dims: DimRow[] }> {
-  const { link, dims: withDims = true, misses: withMisses = link === undefined, missCutoffs } = opts;
+  const { link, dims: withDims = true, misses: withMisses = link === undefined, missCutoffs, strict = false } = opts;
   const dimNames = withDims ? (Object.keys(AE_DIMS) as AeDim[]) : [];
 
   const [[combos, uniques, misses], dimResults, purged] = await Promise.all([
     Promise.all([
-      queryCombos(env, fromSec, toSec, link),
-      queryUniques(env, fromSec, toSec, link),
+      queryCombos(env, fromSec, toSec, link, strict),
+      queryUniques(env, fromSec, toSec, link, strict),
       withMisses ? queryMisses(env, fromSec, toSec, missCutoffs) : Promise.resolve([]),
     ]),
-    Promise.all(dimNames.map((d) => queryDim(env, d, fromSec, toSec, link))),
+    Promise.all(dimNames.map((d) => queryDim(env, d, fromSec, toSec, link, strict))),
     purgedDomains(env.DB),
   ]);
   // A removed domain's AE rows stay until they expire; hide them through its purge day.
@@ -145,15 +147,21 @@ export function capDims(rows: DimRow[]): DimRow[] {
       continue;
     }
     list.sort((a, b) => b.clicks + b.bots - (a.clicks + a.bots));
-    out.push(...list.slice(0, max));
-    if (first.dim === "miss") continue;
-    const rest = list.slice(max);
-    const other: DimRow = { date: first.date, domain: first.domain, slug: first.slug, dim: first.dim, value: OTHER, clicks: 0, uniques: 0, bots: 0 };
-    for (const r of rest) {
+    const top = list.slice(0, max);
+    if (first.dim === "miss") {
+      out.push(...top);
+      continue;
+    }
+    // A kept value that is itself "(other)" takes the fold: two rows with one value would break the day's insert.
+    const named = top.find((r) => r.value === OTHER);
+    const other: DimRow = named
+      ? { ...named }
+      : { date: first.date, domain: first.domain, slug: first.slug, dim: first.dim, value: OTHER, clicks: 0, uniques: 0, bots: 0 };
+    for (const r of list.slice(max)) {
       other.clicks += r.clicks;
       other.bots += r.bots;
     }
-    out.push(other);
+    out.push(...top.filter((r) => r !== named), other);
   }
   return out;
 }
@@ -214,11 +222,25 @@ export async function runRollup(env: Env, now: Date = new Date()): Promise<Rollu
   const rolled: string[] = [];
   if (pending) {
     const { cutoffs } = await missesCleared(env.DB);
+    const collect = (from: string, to: string) =>
+      collectFromAE(env, dayStartSec(from), dayStartSec(addDays(to, 1)), { missCutoffs: cutoffs, strict: true });
+    let chunkDays = MAX_CHUNK_DAYS;
     let start = pending.from;
     while (start <= pending.to) {
-      let end = addDays(start, MAX_CHUNK_DAYS - 1);
+      let end = addDays(start, chunkDays - 1);
       if (end > pending.to) end = pending.to;
-      const { stats, dims } = await collectFromAE(env, dayStartSec(start), dayStartSec(addDays(end, 1)), { missCutoffs: cutoffs });
+      let chunk: Awaited<ReturnType<typeof collect>>;
+      try {
+        chunk = await collect(start, end);
+      } catch (err) {
+        // Too many rows for one query: go a day at a time for the rest of this run. A single day
+        // that still doesn't fit throws, so last_rolled stays put rather than saving a partial day.
+        if (!(err instanceof AeRowLimitError) || start === end) throw err;
+        chunkDays = 1;
+        end = start;
+        chunk = await collect(start, end);
+      }
+      const { stats, dims } = chunk;
       for (let d = start; d <= end; d = addDays(d, 1)) {
         await writeDay(
           env.DB,
@@ -231,11 +253,11 @@ export async function runRollup(env: Env, now: Date = new Date()): Promise<Rollu
       start = addDays(end, 1);
     }
   }
-  // Keep the misses report within the owner's limits and retention, once they've chosen them.
+  // Apply the clears to what was just rolled up, and keep the misses report
+  // within the owner's limits and retention once they've chosen them.
   let prunedMisses = 0;
   try {
-    const policy = await savedMissPolicy(env.DB);
-    if (policy) prunedMisses = await pruneMisses(env, policy, now);
+    prunedMisses = await pruneMisses(env, await savedMissPolicy(env.DB), now);
   } catch (err) {
     console.error(JSON.stringify({ message: "miss pruning failed", error: String(err) }));
   }

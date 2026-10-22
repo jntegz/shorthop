@@ -1,11 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { LogOut, Mail, RefreshCw } from "lucide-react";
+import { LogOut, Mail, RefreshCw, Settings2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { validateUtmTemplate } from "../../shared/target";
 import { api, call, keys } from "../api";
 import { CloudflareFeatures } from "../components/CloudflareFeatures";
 import { DownloadButton } from "../components/DownloadButton";
+import { MailSetup } from "../components/MailSetup";
 import { NotFoundEditor } from "../components/NotFoundEditor";
 import { ShortDomains } from "../components/ShortDomains";
 import { Badge, Button, Card, CardHeader, Dialog, Field, Input, Notice, PageHeader, Spinner } from "../components/ui";
@@ -37,6 +38,7 @@ export function Settings() {
   const [resyncing, setResyncing] = useState<number | null>(null);
   const [preview, setPreview] = useState<{ subject: string; html: string } | null>(null);
   const [confirmRevoke, setConfirmRevoke] = useState(false);
+  const [mailSetup, setMailSetup] = useState(false);
 
   // Follow the saved template only when it changes, so a refetch doesn't discard an unsaved edit.
   const savedUtm = settings.data?.defaultUtm;
@@ -57,7 +59,7 @@ export function Settings() {
       const n = await resyncAll(setResyncing, scope);
       toast.success(`Republished ${num(n)} links`, { description: "Changes reach every data center within about a minute." });
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Resync failed");
+      toast.error(e instanceof Error ? e.message : "Republish failed");
     } finally {
       setResyncing(null);
     }
@@ -118,6 +120,7 @@ export function Settings() {
   }
   if (settings.isError) return <Notice tone="danger">{settings.error.message}</Notice>;
   const s = settings.data;
+  const security = s.security;
   const utmError = utm ? validateUtmTemplate(utm) : "Template is required.";
   const origin = s.publicOrigin;
 
@@ -196,6 +199,9 @@ export function Settings() {
               <span className="font-medium text-fg">{s.lastDigestWeek ?? "never"}</span>
             </div>
             <div className="flex flex-wrap gap-2">
+              <Button variant={s.digestProblem ? "primary" : "outline"} onClick={() => setMailSetup(true)}>
+                <Settings2 /> Set up email
+              </Button>
               <Button variant="outline" onClick={() => loadPreview.mutate()} loading={loadPreview.isPending}>
                 Preview
               </Button>
@@ -214,92 +220,94 @@ export function Settings() {
           </div>
         </Card>
 
-        <Card className="lg:col-span-2">
-          <CardHeader
-            title="Security"
-            description={
-              s.security.mode === "password"
-                ? "Your admin password is the only lock: Cloudflare Access is off."
-                : "Cloudflare Access checks who you are; your admin password confirms it."
-            }
-            info={SETTINGS_HELP.security}
-          />
-          <div className="grid gap-6 px-5 pb-5 text-sm md:grid-cols-2">
-            <div className="space-y-3">
-              {!s.security.passwordConfigured ? (
-                <Notice>
-                  No admin password is set, so localhost opens without one. The deployed admin stays closed until ADMIN_PASSWORD_HASH is set. To try the login
-                  here: run <span className="font-mono text-xs">npm run setup -- local</span> (or{" "}
-                  <span className="font-mono text-xs">npx tsx scripts/hash-password.ts --generate</span> and add{" "}
-                  <span className="font-mono text-xs">ADMIN_PASSWORD_HASH=…</span> and <span className="font-mono text-xs">SESSION_SECRET=…</span> to .dev.vars), then
-                  restart npm run dev.
-                </Notice>
-              ) : null}
-              {s.security.globalLockedUntil ? (
-                <Notice tone="danger">All logins are paused until {when(s.security.globalLockedUntil)} after many failed attempts.</Notice>
-              ) : null}
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-muted">Sign-in</span>
-                {s.security.mode === "password" ? (
-                  <Badge tone="warn">Cloudflare Access off</Badge>
+        {security ? (
+          <Card className="lg:col-span-2">
+            <CardHeader
+              title="Security"
+              description={
+                security.mode === "password"
+                  ? "Your admin password is the only lock: Cloudflare Access is off."
+                  : "Cloudflare Access checks who you are; your admin password confirms it."
+              }
+              info={SETTINGS_HELP.security}
+            />
+            <div className="grid gap-6 px-5 pb-5 text-sm md:grid-cols-2">
+              <div className="space-y-3">
+                {!security.passwordConfigured ? (
+                  <Notice>
+                    No admin password is set, so localhost opens without one. The deployed admin stays closed until ADMIN_PASSWORD_HASH is set. To try the login
+                    here: run <span className="font-mono text-xs">npm run setup -- local</span> (or{" "}
+                    <span className="font-mono text-xs">npx tsx scripts/hash-password.ts --generate</span> and add{" "}
+                    <span className="font-mono text-xs">ADMIN_PASSWORD_HASH=…</span> and <span className="font-mono text-xs">SESSION_SECRET=…</span> to .dev.vars), then
+                    restart npm run dev.
+                  </Notice>
+                ) : null}
+                {security.globalLockedUntil ? (
+                  <Notice tone="danger">All logins are paused until {when(security.globalLockedUntil)} after many failed attempts.</Notice>
+                ) : null}
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-muted">Sign-in</span>
+                  {security.mode === "password" ? (
+                    <Badge tone="warn">Cloudflare Access off</Badge>
+                  ) : (
+                    <span className="font-medium text-fg">Cloudflare Access + password</span>
+                  )}
+                </div>
+                {security.mode === "password" ? (
+                  <Notice>
+                    Anyone who finds this page can try passwords, slowed only by the lockout. Use a long, random password and add the rate-limit rule from
+                    SECURITY.md, or turn Access on with <span className="font-mono text-xs">npm run setup -- access</span>.
+                    {security.accessConfigured ? " Access settings are filled in, but ignored while ADMIN_AUTH is \"password\"." : null}
+                  </Notice>
+                ) : null}
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-muted">Signed in as</span>
+                  <span className="truncate font-medium text-fg">{security.email}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-muted">Session ends</span>
+                  <span className="font-medium text-fg">{security.sessionExpiresAt ? when(security.sessionExpiresAt) : "—"}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-muted">Failed logins (24 h)</span>
+                  {security.failedLogins24h ? <Badge tone="warn">{num(security.failedLogins24h)}</Badge> : <span className="font-medium text-fg">0</span>}
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-muted">Locked networks</span>
+                  <span className="font-medium text-fg">{num(security.lockedNetworks)}</span>
+                </div>
+                <div className="flex flex-wrap gap-2 pt-1">
+                  <form method="post" action="/_admin/logout">
+                    <Button type="submit" variant="outline">
+                      <LogOut /> Log out
+                    </Button>
+                  </form>
+                  <Button variant="outline" onClick={() => setConfirmRevoke(true)} disabled={!security.passwordConfigured}>
+                    Log out everywhere
+                  </Button>
+                </div>
+              </div>
+              <div>
+                <p className="mb-2 text-xs font-medium text-muted">Recent logins</p>
+                {security.recent.length ? (
+                  <ul className="space-y-1.5">
+                    {security.recent.map((e, i) => (
+                      <li key={`${e.at}-${i}`} className="flex items-center gap-2">
+                        {e.ok ? <Badge tone="good">Success</Badge> : <Badge tone="danger">Failed</Badge>}
+                        <span className="text-muted">{when(e.at)}</span>
+                        <span className="ml-auto truncate text-xs text-muted">
+                          {e.country ? `${flag(e.country)} ${countryName(e.country)}` : "Unknown"}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
                 ) : (
-                  <span className="font-medium text-fg">Cloudflare Access + password</span>
+                  <p className="text-muted">No logins recorded yet.</p>
                 )}
               </div>
-              {s.security.mode === "password" ? (
-                <Notice>
-                  Anyone who finds this page can try passwords, slowed only by the lockout. Use a long, random password and add the rate-limit rule from
-                  SECURITY.md, or turn Access on with <span className="font-mono text-xs">npm run setup -- access</span>.
-                  {s.security.accessConfigured ? " Access settings are filled in, but ignored while ADMIN_AUTH is \"password\"." : null}
-                </Notice>
-              ) : null}
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-muted">Signed in as</span>
-                <span className="truncate font-medium text-fg">{s.security.email}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-muted">Session ends</span>
-                <span className="font-medium text-fg">{s.security.sessionExpiresAt ? when(s.security.sessionExpiresAt) : "—"}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-muted">Failed logins (24 h)</span>
-                {s.security.failedLogins24h ? <Badge tone="warn">{num(s.security.failedLogins24h)}</Badge> : <span className="font-medium text-fg">0</span>}
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-muted">Locked networks</span>
-                <span className="font-medium text-fg">{num(s.security.lockedNetworks)}</span>
-              </div>
-              <div className="flex flex-wrap gap-2 pt-1">
-                <form method="post" action="/_admin/logout">
-                  <Button type="submit" variant="outline">
-                    <LogOut /> Log out
-                  </Button>
-                </form>
-                <Button variant="outline" onClick={() => setConfirmRevoke(true)} disabled={!s.security.passwordConfigured}>
-                  Log out everywhere
-                </Button>
-              </div>
             </div>
-            <div>
-              <p className="mb-2 text-xs font-medium text-muted">Recent logins</p>
-              {s.security.recent.length ? (
-                <ul className="space-y-1.5">
-                  {s.security.recent.map((e, i) => (
-                    <li key={`${e.at}-${i}`} className="flex items-center gap-2">
-                      {e.ok ? <Badge tone="good">Success</Badge> : <Badge tone="danger">Failed</Badge>}
-                      <span className="text-muted">{when(e.at)}</span>
-                      <span className="ml-auto truncate text-xs text-muted">
-                        {e.country ? `${flag(e.country)} ${countryName(e.country)}` : "Unknown"}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="text-muted">No logins recorded yet.</p>
-              )}
-            </div>
-          </div>
-        </Card>
+          </Card>
+        ) : null}
 
         <Card className="lg:col-span-2">
           <CardHeader title="API and iOS Shortcut" description="Scripts use the API token (Worker secret API_TOKEN), not this browser session." info={SETTINGS_HELP.api} />
@@ -333,6 +341,8 @@ export function Settings() {
           </Button>
         </div>
       </Dialog>
+
+      <MailSetup open={mailSetup} onOpenChange={setMailSetup} />
 
       <Dialog open={preview !== null} onOpenChange={(o) => !o && setPreview(null)} title={preview?.subject ?? "Digest preview"} wide>
         {preview ? <iframe title="Digest preview" sandbox="" srcDoc={preview.html} className="h-[60vh] w-full rounded-lg border border-line bg-white" /> : null}

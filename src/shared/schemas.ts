@@ -2,7 +2,7 @@ import { z } from "zod";
 import { HOSTNAME_RE } from "./domains";
 import { HEX_COLOR_RE } from "./not-found";
 import { IMPORT_SLUG_RE } from "./slug";
-import { LIST_PERIODS, MISS_RETENTION_DAYS, NOISE_LIMITS, RANGES, REAL_MISS_LIMITS } from "./types";
+import { DIGEST_PROVIDERS, LIST_PERIODS, MISS_RETENTION_DAYS, NOISE_LIMITS, RANGES, REAL_MISS_LIMITS } from "./types";
 
 /** A short domain as typed: trimmed and lowercased; membership is checked by the API. */
 const domain = z.string().trim().toLowerCase().max(253);
@@ -11,10 +11,15 @@ const tags = z
   .union([z.array(z.string()), z.string()])
   .transform((v) => normalizeTags(Array.isArray(v) ? v : v.split(",")));
 
+/** The end of year 9999 in Unix seconds: later values (milliseconds sent by mistake) break date formatting. */
+const MAX_UNIX_SEC = 253402300799;
+const unixSec = z.number().int().positive().max(MAX_UNIX_SEC, "Use Unix seconds, not milliseconds.");
+
 /** Unix seconds, an ISO date string, or null. */
 const expiry = z
-  .union([z.number().int().positive(), z.iso.datetime({ offset: true }), z.iso.date(), z.null()])
-  .transform((v) => (typeof v === "string" ? Math.floor(Date.parse(v) / 1000) : v));
+  .union([unixSec, z.iso.datetime({ offset: true }), z.iso.date(), z.null()])
+  .transform((v) => (typeof v === "string" ? Math.floor(Date.parse(v) / 1000) : v))
+  .refine((v) => v === null || v <= MAX_UNIX_SEC, "Use a date before the year 10000.");
 
 export const createLinkSchema = z
   .object({
@@ -55,7 +60,7 @@ const importRowSchema = z.object({
   title: z.string().trim().max(300).nullish(),
   tags: tags.optional(),
   clicks: z.number().int().nonnegative().nullish(),
-  createdAt: z.number().int().positive().nullish(),
+  createdAt: unixSec.nullish(),
 });
 
 export const importSchema = z.object({
@@ -87,14 +92,18 @@ export const resyncQuerySchema = z.object({
   scope: z.enum(["all", "default-utm"]).default("all"),
 });
 
-export const clearMissesSchema = z.object({
-  /** The misses to clear; all of them when omitted. */
-  links: z
-    .array(z.object({ domain: z.string().regex(HOSTNAME_RE), slug: z.string().min(1).max(512) }))
-    .min(1)
-    .max(500)
-    .optional(),
-});
+export const clearMissesSchema = z
+  .object({
+    /** The misses to clear; all of them when neither this nor `probes` is given. */
+    links: z
+      .array(z.object({ domain: z.string().regex(HOSTNAME_RE), slug: z.string().min(1).max(512) }))
+      .min(1)
+      .max(500)
+      .optional(),
+    /** Every stored scanner probe, including those past the report's noise limit. */
+    probes: z.literal(true).optional(),
+  })
+  .refine((v) => !(v.links && v.probes), { message: "Send links or probes, not both" });
 
 export const missPolicySchema = z.object({
   trackNoise: z.boolean(),
@@ -150,3 +159,16 @@ export function normalizeTags(input: readonly string[]): string[] {
 }
 
 export type ImportRowInput = z.input<typeof importRowSchema>;
+
+/** Off and webhook send nothing from an address, so only they may leave the sender empty. */
+export const SENDERLESS_PROVIDERS: readonly string[] = ["off", "webhook"];
+
+export const mailSettingsSchema = z
+  .object({
+    provider: z.enum(DIGEST_PROVIDERS),
+    from: z.union([z.literal(""), z.email("Enter the sender address, such as digest@example.com").max(254)]),
+    mailgunDomain: z.union([z.literal(""), z.string().trim().toLowerCase().regex(HOSTNAME_RE, "Enter your Mailgun sending domain")]).optional(),
+    mailgunRegion: z.enum(["us", "eu"]).optional(),
+  })
+  .refine((s) => s.from !== "" || SENDERLESS_PROVIDERS.includes(s.provider), { path: ["from"], message: "Enter the sender address, such as digest@example.com" });
+export type MailSettings = z.infer<typeof mailSettingsSchema>;

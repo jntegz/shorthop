@@ -83,8 +83,9 @@
     // What the API token may do: "create" reads, creates links and imports new
     // ones; "full" also changes and deletes links and settings.
     "API_TOKEN_SCOPE": "create",
-    // Digest and alert delivery: cloudflare, resend, postmark, sendgrid, mailgun, webhook, off.
-    // API keys and webhook settings are secrets (docs/SETUP.md#email).
+    // Digest and alert delivery: cloudflare, resend, emailit, postmark, sendgrid, mailgun, custom, webhook, off.
+    // Settings → Weekly digest → Set up email overrides the provider and sender
+    // without a deploy. API keys and URLs are secrets (docs/SETUP.md#email).
     "DIGEST_PROVIDER": "cloudflare",
     "DIGEST_FROM": "digest@sh.example",
     // The only recipient.

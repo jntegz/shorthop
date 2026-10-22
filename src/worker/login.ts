@@ -23,6 +23,7 @@ import {
   loginEventStmt,
   readSession,
   recordGlobalFailure,
+  revokeSession,
   verifyPassword,
 } from "./session";
 
@@ -135,7 +136,9 @@ loginApp.post("/_admin/login", async (c) => {
     return seeOther(next, { "Set-Cookie": cookie });
   }
 
-  await Promise.all([recordGlobalFailure(env.DB, now), loginEventStmt(env.DB, false, key, country, now).run()]);
+  // The event first: the global brake counts the networks failures came from.
+  await loginEventStmt(env.DB, false, key, country, now).run();
+  await recordGlobalFailure(env.DB, now);
   console.warn(
     JSON.stringify({
       message: "admin login failed",
@@ -156,7 +159,15 @@ loginApp.post("/_admin/login", async (c) => {
   return render(401, `Wrong password. ${left} ${left === 1 ? "attempt" : "attempts"} left before a ${waitText(LOCK_BASE_SEC * 2 ** state.lockouts)} lock.`);
 });
 
-loginApp.post("/_admin/logout", (c) => {
+loginApp.post("/_admin/logout", async (c) => {
+  // Ends this session on the server too, so a copy of the cookie stops working.
+  // Only a valid session can be revoked: a stranger's POST changes nothing.
+  const cfg = loginConfig(c.env);
+  const access = await verifyIdentity(c.req.raw, c.env);
+  if (cfg && access.ok) {
+    const session = await readSession(c.req.raw, c.env.DB, cfg, access.identity, nowSec());
+    if (session) await revokeSession(c.env.DB, session);
+  }
   // Ends the Access session too, except where Access isn't in front (local dev hosts, password-only mode).
   const host = new URL(c.req.url).hostname;
   const viaAccess = !isLocalHost(host) && adminAuthMode(c.env) !== "password";

@@ -2,6 +2,7 @@
 // describe; numbers come from shared constants where one exists.
 
 import * as L from "../../shared/login-policy";
+import { SCANNER_PATHS_PER_DAY } from "../../shared/types";
 
 export interface Help {
   title: string;
@@ -29,8 +30,8 @@ export const LINK_HELP = {
     "https://example.com/guide",
   ),
   slug: h(
-    "Custom short link",
-    "The part after the domain: 1–64 letters, digits, - or _, starting with a letter or digit. It's case-sensitive, so /Guide and /guide are different links. api, _admin, health, cdn-cgi, robots.txt and favicon.ico are reserved. Leave it empty for a random 6-character slug. A slug can't be renamed later.",
+    "Custom slug",
+    "Your own text for the end of the short link, the part after the domain (sh.example/your-slug): 1–64 letters, digits, - or _, starting with a letter or digit. It's case-sensitive, so /Guide and /guide are different links. api, _admin, health, cdn-cgi, robots.txt and favicon.ico are reserved. Leave it empty for a random 6-character slug. A slug can't be renamed later.",
     "sh.example/job-search-guide",
   ),
   title: h("Title", "A private label for the link list and search. Visitors never see it. Up to 300 characters."),
@@ -50,7 +51,7 @@ export const LINK_HELP = {
   ),
   utm: h(
     "Add UTM parameters",
-    "Adds UTM tags to the destination at the moment someone clicks, so analytics tools like Google Analytics can attribute the visit. The saved destination doesn't change. Tags already in the destination, or passed through from the short link, are never overwritten. Uses this link's template if set, otherwise the default from Settings.",
+    "Adds UTM tags to the destination at the moment someone clicks, so analytics tools like Google Analytics can attribute the visit. The saved destination doesn't change. Tags already in the destination, or passed through from the short link, are never overwritten. Off by default for new links. Uses this link's template if set, otherwise the default from Settings.",
     "…/guide?utm_source=sh.example&utm_medium=shortlink&utm_campaign=guide",
   ),
   utmTemplate: h(
@@ -82,7 +83,7 @@ export const SETTINGS_HELP = {
   ),
   publishing: h(
     "Publishing",
-    "Copies every link from the database (the source of truth) to the edge store that redirects read from. Use it when a save said “not published”, after restoring the database, or after adding a domain. Costs one KV write per link (Free plan: 1,000 a day). Changes reach every location within about a minute.",
+    "Copies every link from the database (the source of truth) to the edge store that redirects read from. You don't need it in normal use: every save publishes on its own. Use it when a save said “not published”, after restoring the database, or after adding a domain. Costs one KV write per link (Free plan: 1,000 a day). Changes reach every location within about a minute.",
   ),
   statistics: h(
     "Statistics",
@@ -90,7 +91,7 @@ export const SETTINGS_HELP = {
   ),
   digest: h(
     "Weekly digest",
-    "An email every Monday at 07:00 UTC about the previous seven full UTC days: totals, top links, countries, sources, new links and missing slugs. It goes only to DIGEST_TO, which can't be changed from here. DIGEST_PROVIDER picks the delivery service: Cloudflare Email Service (default), Resend, Postmark, SendGrid, Mailgun, or a signed webhook for anything else (n8n, Zapier, your own relay), or off. Alerts from System status use the same service. API keys are Wrangler secrets and never shown here. “Send test” sends it now without counting as this week's email.",
+    "An email every Monday at 07:00 UTC about the previous seven full UTC days: totals, top links, countries, sources, new links and missing slugs. Alerts from System status use the same service. “Set up email” picks it: Cloudflare Email Service (default), Resend, Emailit, Postmark, SendGrid, Mailgun, any other JSON email API, a signed webhook (n8n, Zapier, your own relay), or off, with steps for each. API keys are Wrangler secrets and never shown here. It goes only to DIGEST_TO, which can't be changed from here. “Send test” sends it now without counting as this week's email.",
   ),
   exports: h(
     "Exports",
@@ -102,7 +103,22 @@ export const SETTINGS_HELP = {
   ),
   security: h(
     "Security",
-    `With Cloudflare Access on (the default), two locks protect the admin: Access checks who you are, and this password confirms it's you. With ADMIN_AUTH set to "password", only the password does, so keep it long. A login lasts ${duration(L.SESSION_TTL_SEC)} and, with Access, only works with the same Access account. “Log out everywhere” ends every session at once, including this one. After ${L.MAX_FAILS} wrong passwords within ${duration(L.WINDOW_SEC)}, a network is locked for ${duration(L.LOCK_BASE_SEC)}, doubling with each lockout up to ${duration(L.LOCK_MAX_SEC)}. ${L.GLOBAL_MAX_FAILS} failures in an hour pause all logins for ${duration(L.GLOBAL_LOCK_SEC)}. IP addresses are never stored, only a keyed hash.`,
+    `With Cloudflare Access on (the default), two locks protect the admin: Access checks who you are, and this password confirms it's you. With ADMIN_AUTH set to "password", only the password does, so keep it long. A login lasts ${duration(L.SESSION_TTL_SEC)} and, with Access, only works with the same Access account. “Log out everywhere” ends every session at once, including this one. After ${L.MAX_FAILS} wrong passwords within ${duration(L.WINDOW_SEC)}, a network is locked for ${duration(L.LOCK_BASE_SEC)}, doubling with each lockout up to ${duration(L.LOCK_MAX_SEC)}. ${L.GLOBAL_MAX_FAILS} failures in an hour from ${L.GLOBAL_MIN_NETWORKS} or more networks pause all logins for ${duration(L.GLOBAL_LOCK_SEC)}. IP addresses are never stored, only a keyed hash.`,
+  ),
+} satisfies Record<string, Help>;
+
+export const MISSES_HELP = {
+  live: h(
+    "Latest misses, as recorded",
+    `Every miss on your short domains from the last 7 days, newest first, with how the report counts it. The table above lists human visits only, so a visit can be recorded and still not show there. It counts as a bot when: one visitor (same network and browser) misses ${SCANNER_PATHS_PER_DAY} or more different paths in one UTC day (the scanner rule, easy to trip when you test several typos yourself); the browser only prerendered the address while you typed it; the visit came from a VPN or hosting network; or the user agent is a bot or a tool such as curl. Bot misses show in the table with “Hide bot-only misses” unticked, and aren't recorded at all while noise tracking is off. The admin host itself records nothing. New visits take about a minute to appear.`,
+  ),
+} satisfies Record<string, Help>;
+
+export const IMPORT_HELP = {
+  format: h(
+    "File format",
+    "A CSV (comma, semicolon or tab separated) with a header row, or JSON. Slugs can use letters, digits and . _ ~ -, start with a letter or digit, and be up to 96 characters; case matters. A slug that already exists is skipped, or with “Overwrite destination” gets the new destination (and the title and clicks, when the file has them) while its other settings stay. New links are active, never expire, and have UTM and query pass-through off. Each imported link costs one KV write (the Free plan allows 1,000 a day). Rows are sent 100 at a time; run “Check (dry run)” first to see every issue without saving.",
+    "guide,https://example.com/guide,Job search guide",
   ),
 } satisfies Record<string, Help>;
 

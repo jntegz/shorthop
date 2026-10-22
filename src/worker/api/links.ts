@@ -21,7 +21,24 @@ function dto(c: Context<AppEnv>, row: LinkRow): LinkDTO {
 
 const notConfigured = (domain: string) => `domain: "${domain}" is not one of your short domains (SHORT_DOMAINS).`;
 
-const PUBLISH_FAILED = "Saved, but publishing to KV failed. Run Resync in Settings.";
+const PUBLISH_FAILED = "Saved, but publishing to KV failed. Run “Republish all links” in Settings.";
+
+/** Rows GET /links returns at most. */
+const LIST_LIMIT = 5000;
+
+/** Escapes LIKE wildcards for a pattern used with ESCAPE '\'. */
+const likeEscape = (s: string) => s.replace(/[\\%_]/g, (m) => `\\${m}`);
+
+/** Publishes a link D1 already holds, trying once more after a short pause (KV writes can fail transiently). */
+async function publishSaved(env: Env, row: LinkRow): Promise<void> {
+  const defaultUtm = await getDefaultUtm(env.DB);
+  try {
+    await publish(env, row, defaultUtm);
+  } catch {
+    await new Promise((r) => setTimeout(r, 300));
+    await publish(env, row, defaultUtm);
+  }
+}
 
 export const linksApi = new Hono<AppEnv>()
   .get("/links", validate("query", listQuerySchema), async (c) => {
@@ -33,26 +50,41 @@ export const linksApi = new Hono<AppEnv>()
       where.push(`domain = ?${params.length}`);
     }
     if (q) {
-      params.push(`%${q.replace(/[\\%_]/g, (m) => `\\${m}`)}%`);
+      params.push(`%${likeEscape(q)}%`);
       const n = params.length;
       where.push(`(slug LIKE ?${n} ESCAPE '\\' OR target LIKE ?${n} ESCAPE '\\' OR title LIKE ?${n} ESCAPE '\\' OR notes LIKE ?${n} ESCAPE '\\')`);
     }
     if (tag) {
-      params.push(`%,${tag},%`);
-      where.push(`(',' || tags || ',') LIKE ?${params.length}`);
+      params.push(`%,${likeEscape(tag)},%`);
+      where.push(`(',' || tags || ',') LIKE ?${params.length} ESCAPE '\\'`);
     }
     const now = nowSec();
     if (status === "active") where.push(`active = 1 AND (expires_at IS NULL OR expires_at > ${now})`);
     if (status === "disabled") where.push("active = 0");
     if (status === "expired") where.push(`expires_at IS NOT NULL AND expires_at <= ${now}`);
-    const order = sort === "slug" ? "slug COLLATE NOCASE ASC, domain" : sort === "updated" ? "updated_at DESC" : "created_at DESC";
-    const sql = `SELECT * FROM links ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY ${order} LIMIT 5000`;
-    const [{ results }, totals, inPeriod] = await Promise.all([
+    const counts = Promise.all([clicksByLink(c.env, "all"), period === "all" ? null : clicksByLink(c.env, period)]);
+    let order = sort === "slug" ? "slug COLLATE NOCASE ASC, domain" : sort === "updated" ? "updated_at DESC" : "created_at DESC";
+    let join = "";
+    if (sort === "clicks") {
+      // Rank in SQL too, so the cap keeps the most clicked links rather than the newest.
+      // The unranked rest (fewer clicks than any ranked link) follows newest first.
+      const [totals, inPeriod] = await counts;
+      const byPeriod = inPeriod ?? totals;
+      const ranked = [...new Set([...byPeriod.keys(), ...totals.keys()])]
+        .map((key) => ({ key, p: byPeriod.get(key) ?? 0, t: totals.get(key) ?? 0 }))
+        .filter((r) => r.p > 0 || r.t > 0)
+        .sort((a, b) => b.p - a.p || b.t - a.t)
+        .slice(0, LIST_LIMIT);
+      params.push(JSON.stringify(ranked.map((r) => r.key)));
+      join = ` LEFT JOIN json_each(?${params.length}) r ON r.value = links.domain || '/' || links.slug`;
+      order = "r.key IS NULL, r.key, created_at DESC";
+    }
+    const sql = `SELECT links.* FROM links${join} ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY ${order} LIMIT ${LIST_LIMIT}`;
+    const [{ results }, [totals, inPeriod]] = await Promise.all([
       c.env.DB.prepare(sql)
         .bind(...params)
         .all<LinkRow>(),
-      clicksByLink(c.env, "all"),
-      period === "all" ? null : clicksByLink(c.env, period),
+      counts,
     ]);
     const clicks = inPeriod ?? totals;
     let links: LinkListItem[] = results.map((r) => {
@@ -80,7 +112,7 @@ export const linksApi = new Hono<AppEnv>()
       target: target.url,
       active: body.active === false ? 0 : 1,
       expires_at: body.expiresAt ?? null,
-      utm: body.utm === false ? 0 : 1,
+      utm: body.utm ? 1 : 0,
       utm_template: body.utmTemplate || null,
       pass_query: body.passQuery ? 1 : 0,
       title: body.title || null,
@@ -134,7 +166,7 @@ export const linksApi = new Hono<AppEnv>()
     if (!row) return c.json({ error: "Could not generate a free slug. Try again." }, 500);
 
     try {
-      await publish(c.env, row, await getDefaultUtm(c.env.DB));
+      await publishSaved(c.env, row);
     } catch (err) {
       console.error(JSON.stringify({ message: "kv publish failed", domain: row.domain, slug: row.slug, error: String(err) }));
       return c.json({ error: PUBLISH_FAILED, link: dto(c, row) }, 502);
@@ -181,9 +213,10 @@ export const linksApi = new Hono<AppEnv>()
     if (body.utm !== undefined) next.utm = body.utm ? 1 : 0;
     if (body.passQuery !== undefined) next.pass_query = body.passQuery ? 1 : 0;
 
-    await c.env.DB.prepare(
+    // RETURNING: a link deleted since the read above must not be published back to KV.
+    const saved = await c.env.DB.prepare(
       `UPDATE links SET target = ?, active = ?, expires_at = ?, utm = ?, utm_template = ?, pass_query = ?,
-       title = ?, tags = ?, notes = ?, updated_at = ? WHERE domain = ? AND slug = ?`,
+       title = ?, tags = ?, notes = ?, updated_at = ? WHERE domain = ? AND slug = ? RETURNING *`,
     )
       .bind(
         next.target,
@@ -199,15 +232,23 @@ export const linksApi = new Hono<AppEnv>()
         next.domain,
         next.slug,
       )
-      .run();
+      .first<LinkRow>();
+    if (!saved) return c.json({ error: "Link not found" }, 404);
 
     try {
-      await publish(c.env, next, await getDefaultUtm(c.env.DB));
+      await publishSaved(c.env, saved);
     } catch (err) {
-      console.error(JSON.stringify({ message: "kv publish failed", domain: next.domain, slug: next.slug, error: String(err) }));
-      return c.json({ error: PUBLISH_FAILED, link: dto(c, next) }, 502);
+      console.error(JSON.stringify({ message: "kv publish failed", domain: saved.domain, slug: saved.slug, error: String(err) }));
+      return c.json({ error: PUBLISH_FAILED, link: dto(c, saved) }, 502);
     }
-    return c.json({ link: dto(c, next) });
+    // A delete that ran between the update and the publish would leave a record
+    // for a link that's gone. Together with the delete's second KV pass, KV ends
+    // up matching D1 whichever way the two interleave.
+    if (!(await getLink(c.env.DB, saved.domain, saved.slug))) {
+      await c.env.LINKS.delete(kvKey(saved.domain, saved.slug));
+      return c.json({ error: "Link not found" }, 404);
+    }
+    return c.json({ link: dto(c, saved) });
   })
 
   .delete("/links/:domain/:slug", validate("param", linkParamSchema), async (c) => {
@@ -217,6 +258,8 @@ export const linksApi = new Hono<AppEnv>()
     // the other way round, a leftover KV record would keep redirecting.
     await c.env.LINKS.delete(kvKey(domain, slug));
     await c.env.DB.prepare("DELETE FROM links WHERE domain = ? AND slug = ?").bind(domain, slug).run();
+    // Again, for an edit that published between the two steps above (its own check covers later ones).
+    await c.env.LINKS.delete(kvKey(domain, slug));
     return c.json({ deleted: slug, domain });
   })
 
@@ -357,7 +400,7 @@ export const linksApi = new Hono<AppEnv>()
       for (const res of results) {
         if (failed.has(linkKey(res.domain, res.slug))) {
           res.status = "error";
-          res.message = "Saved to D1 but KV publish failed; run Resync.";
+          res.message = "Saved to D1 but KV publish failed. Run “Republish all links” in Settings.";
         }
       }
     }
@@ -394,7 +437,11 @@ export const linksApi = new Hono<AppEnv>()
 
   .get("/export/links.csv", async (c) => {
     const { results } = await c.env.DB.prepare("SELECT * FROM links ORDER BY created_at").all<LinkRow>();
-    const iso = (s: number | null) => (s === null ? "" : new Date(s * 1000).toISOString());
+    // An out-of-range date (an import from elsewhere) is left blank rather than failing the export.
+    const iso = (s: number | null) => {
+      const d = new Date((s ?? NaN) * 1000);
+      return Number.isFinite(d.getTime()) ? d.toISOString() : "";
+    };
     const body = csv([
       ["domain", "slug", "short_url", "target", "active", "expires_at", "utm", "utm_template", "pass_query", "title", "tags", "notes", "source", "imported_clicks", "created_at", "updated_at"],
       ...results.map((r) => [

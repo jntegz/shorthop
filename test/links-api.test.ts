@@ -13,8 +13,15 @@ async function create(body: Record<string, unknown>) {
 const kv = (slug: string, domain = "sh.example") => env.LINKS.get(`${domain}/${slug}`, "json") as Promise<Record<string, unknown> | null>;
 
 describe("create", () => {
+  it("creates links with UTM off unless it's asked for", async () => {
+    const { res, data } = await create({ url: "https://example.com/plain" });
+    expect(res.status).toBe(201);
+    expect(data.link.utm).toBe(false);
+    expect((await call(`${ORIGIN}/${data.link.slug}`)).headers.get("Location")).toBe("https://example.com/plain");
+  });
+
   it("creates an auto-slug link, publishes it to KV and redirects with UTM", async () => {
-    const { res, data } = await create({ url: "https://example.com/guide" });
+    const { res, data } = await create({ url: "https://example.com/guide", utm: true });
     expect(res.status).toBe(201);
     expect(data.link.slug).toMatch(/^[0-9A-Za-z]{6}$/);
     expect(data.link.shortUrl).toBe(`${ORIGIN}/${data.link.slug}`);
@@ -70,6 +77,75 @@ describe("update and delete", () => {
     expect((await call(`${ORIGIN}/edit-me`)).status).toBe(302);
   });
 
+  it("doesn't publish a link deleted while it was being edited", async () => {
+    await create({ slug: "racy", target: "https://example.com/a" });
+    // The DELETE lands between the PATCH's read and its UPDATE.
+    const DB = new Proxy(env.DB, {
+      get(target, prop) {
+        if (prop === "prepare") {
+          return (sql: string) => {
+            if (!sql.trim().startsWith("UPDATE links")) return target.prepare(sql);
+            return {
+              bind: (...args: unknown[]) => ({
+                first: async () => {
+                  await env.LINKS.delete("sh.example/racy");
+                  await env.DB.prepare("DELETE FROM links WHERE domain = 'sh.example' AND slug = 'racy'").run();
+                  return target.prepare(sql).bind(...args).first();
+                },
+              }),
+            };
+          };
+        }
+        const v = Reflect.get(target, prop) as unknown;
+        return typeof v === "function" ? (v as (...a: unknown[]) => unknown).bind(target) : v;
+      },
+    });
+    const res = await call(`${API}/links/sh.example/racy`, { ...json({ target: "https://example.com/b" }), method: "PATCH" }, { DB });
+    expect(res.status).toBe(404);
+    expect(await kv("racy")).toBeNull();
+  });
+
+  it("takes back an edit's KV record when the link is deleted right after it's published", async () => {
+    await create({ slug: "late", target: "https://example.com/a" });
+    const LINKS = new Proxy(env.LINKS, {
+      get(target, prop) {
+        if (prop === "put") {
+          return async (...args: Parameters<KVNamespace["put"]>) => {
+            await target.put(...args);
+            // A DELETE's D1 step lands between the publish and the edit's own check.
+            await env.DB.prepare("DELETE FROM links WHERE domain = 'sh.example' AND slug = 'late'").run();
+          };
+        }
+        const v = Reflect.get(target, prop) as unknown;
+        return typeof v === "function" ? (v as (...a: unknown[]) => unknown).bind(target) : v;
+      },
+    });
+    const res = await call(`${API}/links/sh.example/late`, { ...json({ target: "https://example.com/b" }), method: "PATCH" }, { LINKS });
+    expect(res.status).toBe(404);
+    expect(await kv("late")).toBeNull();
+  });
+
+  it("retries a failed KV write once after saving an edit", async () => {
+    await create({ slug: "flaky", target: "https://example.com/a" });
+    let puts = 0;
+    const LINKS = new Proxy(env.LINKS, {
+      get(target, prop) {
+        if (prop === "put") {
+          return (...args: Parameters<KVNamespace["put"]>) => {
+            if (++puts === 1) return Promise.reject(new Error("KV is having a moment"));
+            return target.put(...args);
+          };
+        }
+        const v = Reflect.get(target, prop) as unknown;
+        return typeof v === "function" ? (v as (...a: unknown[]) => unknown).bind(target) : v;
+      },
+    });
+    const res = await call(`${API}/links/sh.example/flaky`, { ...json({ target: "https://example.com/b" }), method: "PATCH" }, { LINKS });
+    expect(res.status).toBe(200);
+    expect(puts).toBe(2);
+    expect(await kv("flaky")).toMatchObject({ u: "https://example.com/b" });
+  });
+
   it("deletes from D1 and KV", async () => {
     await create({ slug: "gone", target: "https://example.com/" });
     const res = await call(`${API}/links/sh.example/gone`, { method: "DELETE", headers: bearer });
@@ -89,6 +165,11 @@ describe("list and search", () => {
     expect(await list("?tag=books")).toEqual(["ebook"]);
     expect(await list("?status=disabled")).toEqual(["ebook"]);
     expect(await list("?q=100%25")).toEqual([]);
+    // "_" and "%" in a tag are literal, not LIKE wildcards.
+    await create({ slug: "under", target: "https://example.com/u", tags: ["a_b"] });
+    await create({ slug: "plain", target: "https://example.com/p", tags: ["axb"] });
+    expect(await list("?tag=a_b")).toEqual(["under"]);
+    expect(await list("?tag=a%25")).toEqual([]);
   });
 });
 
@@ -158,8 +239,19 @@ describe("resync, export and settings", () => {
     expect(text).toContain("'=cmd");
   });
 
+  it("exports a link whose dates are out of range, leaving them blank", async () => {
+    await env.DB.prepare("INSERT INTO links (domain, slug, target, expires_at, created_at, updated_at) VALUES ('sh.example', 'far', 'https://example.com/', ?, 1, 1)")
+      .bind(1e15)
+      .run();
+    const res = await call(`${API}/export/links.csv`, { headers: bearer });
+    expect(res.status).toBe(200);
+    const row = (await res.text()).split("\r\n").find((l) => l.startsWith("sh.example,far,"));
+    expect(row?.split(",")[5]).toBe("");
+    expect(row).toContain("1970-01-01T00:00:01.000Z");
+  });
+
   it("changes the default UTM template, applied after resync", async () => {
-    await create({ slug: "u1", target: "https://example.com/" });
+    await create({ slug: "u1", target: "https://example.com/", utm: true });
     const put = await call(`${API}/settings`, { ...json({ defaultUtm: "utm_source=tl&utm_campaign={slug}" }), method: "PUT" });
     expect(put.status).toBe(200);
     await call(`${API}/resync`, { method: "POST", headers: bearer });

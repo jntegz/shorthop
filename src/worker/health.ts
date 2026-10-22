@@ -14,7 +14,7 @@ import { getSetting, nowSec, setSettingStmt } from "./db";
 import { autoClearDemo } from "./demo";
 import { domainsOf } from "./domains";
 import { runDigest } from "./digest";
-import { MailerError, mailerStatus, providerName, sendMail } from "./mailer";
+import { MailerError, mailerStatus, providerName, sendMail, withMailSettings } from "./mailer";
 import { runRollup, type RollupResult } from "./rollup";
 import { loginConfig } from "./session";
 
@@ -42,7 +42,19 @@ async function jobRuns(db: D1Database): Promise<Partial<Record<Job, JobRun>>> {
 export async function recordJob(db: D1Database, job: Job, ok: boolean, error?: string): Promise<void> {
   try {
     const runs = await jobRuns(db);
-    runs[job] = { ok, at: nowSec(), ...(ok ? {} : { error: (error ?? "Unknown error").slice(0, 300) }) };
+    runs[job] = { ok, at: nowSec(), ...(ok ? {} : { error: String(error ?? "Unknown error").slice(0, 300) }) };
+    await setSettingStmt(db, JOBS_KEY, JSON.stringify(runs)).run();
+  } catch (err) {
+    console.error(JSON.stringify({ message: "job record failed", job, error: String(err) }));
+  }
+}
+
+/** Forgets a job's last outcome, such as a digest failure that a new mail setup may have fixed. */
+export async function forgetJob(db: D1Database, job: Job): Promise<void> {
+  try {
+    const runs = await jobRuns(db);
+    if (!runs[job]) return;
+    delete runs[job];
     await setSettingStmt(db, JOBS_KEY, JSON.stringify(runs)).run();
   } catch (err) {
     console.error(JSON.stringify({ message: "job record failed", job, error: String(err) }));
@@ -145,10 +157,10 @@ export async function systemHealth(env: Env, now = new Date()): Promise<SystemHe
   }
 
   // Weekly digest (and therefore alert email).
-  const mail = mailerStatus(env);
+  const mail = mailerStatus(await withMailSettings(env));
   const mailFix: Extra = { fix: "npm run setup -- email", docs: "docs/SETUP.md#email" };
   if (mail.provider === "off") {
-    add("digest", "Weekly digest and alerts", "warn", "Email is turned off (DIGEST_PROVIDER=off), so alerts can only be seen here.", { ...mailFix, advisory: true });
+    add("digest", "Weekly digest and alerts", "warn", "Email is turned off (Settings → Weekly digest), so alerts can only be seen here.", { ...mailFix, advisory: true });
   } else if (mail.problem) {
     add("digest", "Weekly digest and alerts", "error", `${providerName(mail.provider)} can't send: ${mail.problem}`, mailFix);
   } else if (runs.digest && !runs.digest.ok) {
@@ -268,7 +280,8 @@ function renderAlert(problems: HealthCheck[], resolved: boolean, adminUrl: strin
  * resolved), and again weekly while one persists. `force` sends the current
  * state now (Dashboard → Send test alert).
  */
-export async function checkAndAlert(env: Env, now = new Date(), force = false): Promise<{ sent: boolean; reason?: string }> {
+export async function checkAndAlert(baseEnv: Env, now = new Date(), force = false): Promise<{ sent: boolean; reason?: string }> {
+  const env = await withMailSettings(baseEnv);
   const health = await systemHealth(env, now);
   const problems = health.checks.filter((c) => c.status !== "ok" && c.id !== "alert" && !c.advisory);
   const fingerprint = problems.map((p) => `${p.id}:${p.status}`).join(",");

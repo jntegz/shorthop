@@ -2,9 +2,9 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { HOSTNAME_RE } from "../../shared/domains";
 import { NOT_FOUND_IMAGE_MAX_BYTES } from "../../shared/not-found";
-import { notFoundSchema, purgeDomainSchema, settingsSchema } from "../../shared/schemas";
+import { mailSettingsSchema, notFoundSchema, purgeDomainSchema, settingsSchema } from "../../shared/schemas";
 import { validateUtmTemplate } from "../../shared/target";
-import type { PurgeDomainDTO, SettingsDTO } from "../../shared/types";
+import type { MailSetupDTO, PurgeDomainDTO, SettingsDTO } from "../../shared/types";
 import { aeAvailable } from "../ae";
 import { readCapped } from "../body";
 import { accessConfigured, adminAuthMode } from "../auth";
@@ -14,44 +14,49 @@ import { autoClearDemo, clearDemo, demoStatus } from "../demo";
 import { checkDomain } from "../dns-check";
 import { purgeDomain } from "../domain-purge";
 import { domainsOf, shortOrigin } from "../domains";
-import { checkAndAlert, systemHealth, trackedRollup } from "../health";
+import { checkAndAlert, forgetJob, recordJob, systemHealth, trackedRollup } from "../health";
 import { validate, type AppEnv } from "../hono";
-import { mailerStatus, providerName } from "../mailer";
+import { applyMailSettings, mailerStatus, mailProviders, mailSettings, mailSettingsKey, providerName } from "../mailer";
 import { deleteNotFoundImage, getNotFoundPage, notFoundImage, saveNotFoundImage, saveNotFoundSettings, sniffImageType } from "../not-found";
 import { pendingRollup } from "../rollup";
 import { clearSessionCookie, loginConfig, revokeAllSessions, securitySummary } from "../session";
+
+const DIGEST_TEST_KEY = "digest_test_at";
+const DIGEST_TEST_INTERVAL_SEC = 60;
 
 export const settingsApi = new Hono<AppEnv>()
   .get("/", async (c) => {
     // Sample data goes once a real domain is configured (the daily cron checks too).
     await autoClearDemo(c.env);
+    // Login activity and the recipient are for the admin, not for a token that may sit in a script or on a phone.
+    const admin = c.get("identity") !== "api-token";
     const [defaultUtm, lastRolled, rollupPending, lastDigestWeek, security, perDomain, demo] = await Promise.all([
       getDefaultUtm(c.env.DB),
       getSetting(c.env.DB, "last_rolled"),
       pendingRollup(c.env),
       getSetting(c.env.DB, "last_digest_week"),
-      securitySummary(c.env.DB, nowSec()),
+      admin ? securitySummary(c.env.DB, nowSec()) : null,
       c.env.DB.prepare("SELECT domain, COUNT(*) AS n FROM links GROUP BY domain").all<{ domain: string; n: number }>(),
       demoStatus(c.env.DB),
     ]);
-    const { list, primary, admin } = domainsOf(c.env);
-    const digest = mailerStatus(c.env);
+    const { list, primary, admin: adminHost } = domainsOf(c.env);
+    const digest = mailerStatus(applyMailSettings(c.env, await mailSettings(c.env.DB)));
     const settings: SettingsDTO = {
       defaultUtm,
       publicOrigin: shortOrigin(c.env, c.req.raw, primary),
       domains: list,
       primaryDomain: primary,
-      adminHost: admin,
+      adminHost,
       linksPerDomain: Object.fromEntries(perDomain.results.map((r) => [r.domain, r.n])),
       demo,
       aeAvailable: aeAvailable(c.env),
       lastRolled,
       rollupPending,
       lastDigestWeek,
-      digestTo: c.env.DIGEST_TO,
+      digestTo: admin ? c.env.DIGEST_TO : null,
       digestProvider: providerName(digest.provider),
       digestProblem: digest.problem,
-      security: {
+      security: security && {
         email: c.get("identity"),
         mode: adminAuthMode(c.env) ?? "access+password",
         accessConfigured: accessConfigured(c.env),
@@ -121,7 +126,51 @@ export const settingsApi = new Hono<AppEnv>()
   })
 
   .post("/digest/test", async (c) => {
-    return c.json(await runDigest(c.env, new Date(), true));
+    // One test a minute: each sends real email (and runs the rollup), and the API token may call this.
+    const now = nowSec();
+    const last = Number((await getSetting(c.env.DB, DIGEST_TEST_KEY)) ?? 0);
+    if (now - last < DIGEST_TEST_INTERVAL_SEC) {
+      return c.json({ error: `A test was sent less than a minute ago. Try again in ${DIGEST_TEST_INTERVAL_SEC - (now - last)} seconds.` }, 429);
+    }
+    await setSettingStmt(c.env.DB, DIGEST_TEST_KEY, String(now)).run();
+    const result = await runDigest(c.env, new Date(), true);
+    // A test that went through shows the email works again; the next Monday's run records itself.
+    if (result.status === "sent") await recordJob(c.env.DB, "digest", true);
+    return c.json(result);
+  })
+
+  .get("/mail", async (c) => {
+    // Which secrets are set and the recipient are for the admin only.
+    if (c.get("identity") === "api-token") return c.json({ error: "Not available with the API token" }, 403);
+    const saved = await mailSettings(c.env.DB);
+    const env = applyMailSettings(c.env, saved);
+    const e = env as unknown as Record<string, string | undefined>;
+    const setup: MailSetupDTO = {
+      provider: mailerStatus(env).provider,
+      from: env.DIGEST_FROM ?? "",
+      to: env.DIGEST_TO,
+      mailgunDomain: e.DIGEST_MAILGUN_DOMAIN ?? "",
+      mailgunRegion: e.DIGEST_MAILGUN_REGION === "eu" ? "eu" : "us",
+      customized: saved !== null,
+      defaults: { provider: mailerStatus(c.env).provider, from: c.env.DIGEST_FROM ?? "" },
+      providers: mailProviders(env),
+    };
+    return c.json(setup);
+  })
+
+  // Picks a provider and sender. Keys, URLs and the recipient stay in Wrangler config.
+  .put("/mail", validate("json", mailSettingsSchema), async (c) => {
+    const settings = c.req.valid("json");
+    await setSettingStmt(c.env.DB, mailSettingsKey, JSON.stringify(settings)).run();
+    console.log(JSON.stringify({ message: "mail settings changed", provider: settings.provider, by: c.get("identity") }));
+    await forgetJob(c.env.DB, "digest");
+    return c.json({ settings, problem: mailerStatus(applyMailSettings(c.env, settings)).problem });
+  })
+
+  .delete("/mail", async (c) => {
+    await c.env.DB.prepare("DELETE FROM settings WHERE key = ?").bind(mailSettingsKey).run();
+    await forgetJob(c.env.DB, "digest");
+    return c.json({ reset: true });
   })
 
   .get(

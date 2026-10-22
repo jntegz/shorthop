@@ -5,7 +5,7 @@ import { HOSTNAME_RE, linkLabel } from "../../shared/domains";
 import { clearMissesSchema, linkParamSchema, missExportQuerySchema, missPolicySchema, rangeQuerySchema } from "../../shared/schemas";
 import { IMPORT_SLUG_RE } from "../../shared/slug";
 import type { RecentHit } from "../../shared/types";
-import { aeAvailable, queryRecent } from "../ae";
+import { aeAvailable, queryRecent, queryScanners } from "../ae";
 import { domainsOf } from "../domains";
 import { csv, validate, type AppEnv } from "../hono";
 import { clearMisses, saveMissPolicy } from "../misses";
@@ -16,6 +16,8 @@ const recentQuerySchema = z.object({
   domain: z.string().regex(HOSTNAME_RE).optional(),
   slug: z.string().regex(IMPORT_SLUG_RE).optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),
+  /** Misses only, each marked with whether the scanner rule counts it as a bot. */
+  event: z.literal("miss").optional(),
 });
 
 export const statsApi = new Hono<AppEnv>()
@@ -33,10 +35,12 @@ export const statsApi = new Hono<AppEnv>()
   })
 
   .post("/misses/clear", validate("json", clearMissesSchema), async (c) => {
-    const { links } = c.req.valid("json");
-    await clearMisses(c.env, links);
-    console.log(JSON.stringify({ message: "misses cleared", count: links?.length ?? "all" }));
-    return c.json({ cleared: links?.length ?? "all" });
+    const { links, probes } = c.req.valid("json");
+    const target = links ?? (probes ? "probes" : "all");
+    await clearMisses(c.env, target);
+    const cleared: "all" | "probes" | number = Array.isArray(target) ? target.length : target;
+    console.log(JSON.stringify({ message: "misses cleared", count: cleared }));
+    return c.json({ cleared });
   })
 
   .put("/misses/policy", validate("json", missPolicySchema), async (c) => {
@@ -75,14 +79,23 @@ export const statsApi = new Hono<AppEnv>()
   })
 
   .get("/recent", validate("query", recentQuerySchema), async (c) => {
-    const { slug, limit } = c.req.valid("query");
+    const { slug, limit, event } = c.req.valid("query");
     const domain = c.req.valid("query").domain ?? (slug ? domainsOf(c.env).primary : undefined);
     if (!aeAvailable(c.env)) return c.json({ aeAvailable: false, hits: [] as RecentHit[] });
     try {
-      const rows = await queryRecent(c.env, Date.now() / 1000 - 7 * 86400, { domain, slug }, limit);
-      const hits: RecentHit[] = rows.map((r) => ({
+      const nowSec = Date.now() / 1000;
+      const since = nowSec - 7 * 86400;
+      const misses = event === "miss";
+      const [rows, scanners] = await Promise.all([
+        queryRecent(c.env, since, { domain, slug }, limit, misses),
+        misses ? queryScanners(c.env, since, nowSec + 60) : Promise.resolve([]),
+      ]);
+      const flagged = new Set(scanners);
+      // The visitor hash stays on the server.
+      const hits: RecentHit[] = rows.map(({ visitor, ...r }) => ({
         ...r,
         event: r.event === "bot" || r.event === "miss" ? r.event : "click",
+        ...(misses ? { scanner: flagged.has(visitor) } : {}),
       }));
       return c.json({ aeAvailable: true, hits });
     } catch (err) {

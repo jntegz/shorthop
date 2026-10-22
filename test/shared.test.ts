@@ -58,6 +58,9 @@ describe("targets", () => {
     }
     expect(normalizeTarget("https://sh.example/x", { selfHosts: ["sh.example"] }).ok).toBe(false);
     expect(normalizeTarget("https://www.sh.example/x", { selfHosts: ["sh.example"] }).ok).toBe(false);
+    expect(normalizeTarget("https://sh.example./x", { selfHosts: ["sh.example"] }).ok).toBe(false);
+    expect(normalizeTarget("https://WWW.Sh.Example./x", { selfHosts: ["sh.example"] }).ok).toBe(false);
+    expect(normalizeTarget("https://localhost./x").ok).toBe(false);
   });
 
   it("normalizes to ASCII", () => {

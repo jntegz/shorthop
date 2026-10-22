@@ -10,6 +10,7 @@ import {
   detectOs,
   primaryLanguage,
   pruneDaySalts,
+  referrerHostOf,
   resetDaySaltCache,
   resolveSource,
   siteHostOf,
@@ -90,6 +91,17 @@ describe("source attribution", () => {
     expect(resolveSource("nl", false, MAC_CHROME, "owner.example", "owner.example")).toEqual({ source: "nl", kind: "tag" });
     // A fallback on a known platform (a profile page) doesn't swallow that platform's referrals.
     expect(resolveSource(null, false, MAC_CHROME, "linkedin.com", "linkedin.com")).toEqual({ source: "li", kind: "inferred" });
+  });
+
+  it("keeps only real hostnames as the referrer", () => {
+    expect(referrerHostOf("https://www.Google.com/search?q=x", "sh.example")).toBe("google.com");
+    expect(referrerHostOf("https://news.example.com./", "sh.example")).toBe("news.example.com");
+    expect(referrerHostOf("http://203.0.113.7:8080/", "sh.example")).toBe("203.0.113.7");
+    expect(referrerHostOf("https://sh.example/other", "sh.example")).toBe("");
+    // The rollup's fold value must never arrive as a real referrer.
+    for (const r of ["http://(other)/", "http://localhost:3000/", "http://[::1]/", "android-app:", "not a url", "http://a_b.example/"]) {
+      expect(referrerHostOf(r, "sh.example"), r).toBe("");
+    }
   });
 
   it("reads the primary language", () => {

@@ -14,6 +14,8 @@ import { forgetDomainClears } from "./misses";
 const PURGED = "domains_purged";
 /** Links removed per call, like /resync: keeps each call well inside per-invocation limits. */
 const PAGE = 200;
+/** KV operations one call may spend on deletes and the list (Workers allows 1000). */
+const KV_OPS_BUDGET = 900;
 /** AE keeps ~90 days, so older purges can't be resurrected and are dropped. */
 const PURGED_KEEP_DAYS = 92;
 
@@ -43,7 +45,9 @@ export async function purgeDomain(env: Env, domain: string, now = new Date()): P
   if (results.length === PAGE) return { deleted, done: false };
 
   // KV records without a D1 row (a failed write) would keep redirecting: sweep the prefix too.
-  const listed = await env.LINKS.list({ prefix: `${domain}/`, limit: 1000 });
+  // The list can still return keys deleted just above (it is eventually consistent), so it is
+  // sized to keep this call's KV operations under the Workers limit of 1000.
+  const listed = await env.LINKS.list({ prefix: `${domain}/`, limit: Math.max(1, KV_OPS_BUDGET - deleted) });
   await Promise.all(listed.keys.map((k) => env.LINKS.delete(k.name)));
   if (!listed.list_complete) return { deleted, done: false };
 

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Download, SearchX, Settings2, Trash2 } from "lucide-react";
+import { Download, RefreshCw, SearchX, Settings2, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { toast } from "sonner";
@@ -11,13 +11,14 @@ import {
   type MissPolicy,
   type MissRow,
   type Range,
+  type RecentHit,
 } from "../../shared/types";
 import { api, call, keys } from "../api";
 import { DownloadButton } from "../components/DownloadButton";
 import { LinkForm } from "../components/LinkForm";
-import { Badge, Button, Card, Dialog, Empty, Field, InfoTip, Notice, PageHeader, Pagination, RANGE_OPTIONS, Segmented, Select, SortHeader, Spinner, Switch } from "../components/ui";
-import { day, num } from "../lib/format";
-import { PROBE_HELP } from "../lib/help";
+import { Badge, Button, Card, CardHeader, Dialog, Empty, Field, InfoTip, Notice, PageHeader, Pagination, RANGE_OPTIONS, Segmented, Select, SortHeader, Spinner, Switch } from "../components/ui";
+import { day, num, when } from "../lib/format";
+import { MISSES_HELP, PROBE_HELP } from "../lib/help";
 import { linkKey, linkPath, useLinkLabel } from "../lib/links";
 import { pageOf, savedPageSize, savePageSize, sortRows, type PageSize, type SortDir } from "../lib/table";
 
@@ -113,6 +114,87 @@ function TrackingDialog({ open, onOpenChange, policy }: { open: boolean; onOpenC
   );
 }
 
+/** How the report counts a recorded miss. */
+function MissKind({ hit }: { hit: RecentHit }) {
+  if (hit.botName) return <Badge tone="warn">Bot: {hit.botName}</Badge>;
+  if (hit.scanner) return <Badge tone="warn">Bot: scanner rule</Badge>;
+  return <Badge tone="good">Human</Badge>;
+}
+
+/** The raw miss log, so a visit that doesn't show in the report can be traced. Loaded only when opened. */
+function LiveMisses() {
+  const [open, setOpen] = useState(false);
+  const label = useLinkLabel();
+  const q = useQuery({
+    queryKey: ["stats", "recent", "misses"],
+    queryFn: () => call(api.stats.recent.$get({ query: { event: "miss", limit: "50" } })),
+    enabled: open,
+  });
+  return (
+    <Card className="mt-6">
+      <CardHeader
+        title="Latest misses, as recorded"
+        description="Last 7 days, newest first, with how each visit is counted. Use it when a visit you expected isn’t in the table."
+        info={MISSES_HELP.live}
+        action={
+          <div className="flex gap-2">
+            {open ? (
+              <Button variant="outline" size="sm" onClick={() => void q.refetch()} loading={q.isFetching}>
+                <RefreshCw /> Refresh
+              </Button>
+            ) : null}
+            <Button variant="outline" size="sm" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+              {open ? "Hide" : "Show"}
+            </Button>
+          </div>
+        }
+      />
+      {!open ? null : q.isPending ? (
+        <div className="flex justify-center py-8">
+          <Spinner />
+        </div>
+      ) : q.isError ? (
+        <div className="px-5 pb-5">
+          <Notice tone="danger">{q.error.message}</Notice>
+        </div>
+      ) : !q.data.aeAvailable ? (
+        <Empty title="Not available">Recorded misses come from Analytics Engine, which isn’t configured here.</Empty>
+      ) : q.data.hits.length === 0 ? (
+        <Empty title="No misses in the last 7 days" />
+      ) : (
+        <div className="overflow-x-auto px-4 pb-4">
+          <table className="w-full min-w-[640px] text-sm">
+            <thead className="text-left text-xs text-muted">
+              <tr>
+                <th className="py-1.5 font-medium">Time</th>
+                <th className="py-1.5 font-medium">Requested slug</th>
+                <th className="py-1.5 font-medium">Counted as</th>
+                <th className="py-1.5 font-medium">Device</th>
+              </tr>
+            </thead>
+            <tbody>
+              {q.data.hits.map((h, i) => (
+                <tr key={`${h.time}-${i}`} className="border-t border-line">
+                  <td className="py-1.5 whitespace-nowrap text-muted">{when(h.time)}</td>
+                  <td className="py-1.5 font-mono text-xs break-all text-fg">{label(h)}</td>
+                  <td className="py-1.5">
+                    <MissKind hit={h} />
+                  </td>
+                  <td className="py-1.5 text-muted">
+                    {h.device} · {h.os} · {h.browser}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+type ClearTarget = "all" | "probes" | Pick<MissRow, "domain" | "slug">[];
+
 export function Misses() {
   const [range, setRangeState] = useState<Range>("7d");
   const [showBots, setShowBotsState] = useState(false);
@@ -143,15 +225,34 @@ export function Misses() {
   const paged = pageOf(sorted, page, size);
 
   const clear = useMutation({
-    mutationFn: (links: Pick<MissRow, "domain" | "slug">[] | null) =>
-      call(api.stats.misses.clear.$post({ json: links ? { links: links.map(({ domain, slug }) => ({ domain, slug })) } : {} })),
-    onSuccess: (_, links) => {
+    mutationFn: (target: ClearTarget) =>
+      call(
+        api.stats.misses.clear.$post({
+          json: target === "all" ? {} : target === "probes" ? { probes: true } : { links: target.map(({ domain, slug }) => ({ domain, slug })) },
+        }),
+      ),
+    onSuccess: (_, target) => {
       setConfirmClear(null);
-      toast.success(links === null ? "All misses cleared" : links.length === 1 ? `${label(links[0]!)} cleared` : `${links.length} misses cleared`);
+      toast.success(
+        target === "all" ? "All misses cleared" : target === "probes" ? "Scanner probes cleared" : target.length === 1 ? `${label(target[0]!)} cleared` : `${target.length} misses cleared`,
+      );
       void qc.invalidateQueries({ queryKey: ["stats", "misses"] });
     },
     onError: (e) => toast.error(e.message),
   });
+
+  /** A link made from a miss row answers that miss, so the row goes. */
+  const createdFromMiss = async (saved: { domain: string; slug: string }) => {
+    if (creating && creating.domain === saved.domain && creating.slug === saved.slug) {
+      try {
+        await call(api.stats.misses.clear.$post({ json: { links: [{ domain: saved.domain, slug: saved.slug }] } }));
+      } catch {
+        toast.error("Link created, but its miss wasn’t cleared");
+      }
+      void qc.invalidateQueries({ queryKey: ["stats", "misses"] });
+    }
+    navigate(linkPath(saved));
+  };
 
   return (
     <>
@@ -303,17 +404,22 @@ export function Misses() {
           onSize={setSize}
         />
       ) : null}
+      <LiveMisses />
       <Dialog
         open={confirmClear !== null}
         onOpenChange={(o) => !o && setConfirmClear(null)}
-        title={confirmClear === "probes" ? `Clear ${num(probes.length)} scanner probes?` : "Clear all misses?"}
-        description={`Deletes the stored counts${confirmClear === "probes" ? " for these paths" : " for every missed path, in every date range"}. New visits are counted again right away. After clearing more than 50 paths at once, or for unusual paths such as most scanner probes, counting resumes tomorrow (UTC). This can’t be undone.`}
+        title={confirmClear === "probes" ? "Clear all scanner probes?" : "Clear all misses?"}
+        description={
+          confirmClear === "probes"
+            ? "Deletes the stored counts of every scanner probe, in every date range, including probes not listed here. Real misses stay. Probes requested later today show again from tomorrow (UTC). This can’t be undone."
+            : "Deletes the stored counts for every missed path, in every date range. New visits are counted again right away. This can’t be undone."
+        }
       >
         <div className="flex justify-end gap-2">
           <Button variant="outline" onClick={() => setConfirmClear(null)}>
             Cancel
           </Button>
-          <Button variant="danger" onClick={() => clear.mutate(confirmClear === "probes" ? probes : null)} loading={clear.isPending}>
+          <Button variant="danger" onClick={() => confirmClear && clear.mutate(confirmClear)} loading={clear.isPending}>
             Clear
           </Button>
         </div>
@@ -324,7 +430,7 @@ export function Misses() {
         onOpenChange={(o) => !o && setCreating(null)}
         initialSlug={creating?.slug ?? ""}
         initialDomain={creating?.domain ?? ""}
-        onSaved={(l) => navigate(linkPath(l))}
+        onSaved={(l) => void createdFromMiss(l)}
       />
     </>
   );

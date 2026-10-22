@@ -5,8 +5,8 @@ import { SESSION_TTL_SEC } from "../src/shared/login-policy";
 import { hashPassword } from "../src/shared/password";
 import { nowSec } from "../src/worker/db";
 import { safeNext } from "../src/worker/login";
-import { ipBucket, issueSessionCookie, loginConfig } from "../src/worker/session";
-import { call, ORIGIN, resetData } from "./helpers";
+import { globalLockedUntil, ipBucket, issueSessionCookie, loginConfig, loginEventStmt, recordGlobalFailure } from "../src/worker/session";
+import { bearer, call, ORIGIN, resetData } from "./helpers";
 
 const TEAM = "team.cloudflareaccess.com";
 const AUD = "aud-tag-123";
@@ -509,6 +509,8 @@ describe("API token", () => {
     it("reads, creates links and imports new ones", async () => {
       expect((await send("GET", "/links")).status).toBe(200);
       expect((await send("GET", "/settings")).status).toBe(200);
+      // The mail setup (which secrets are set) is for the admin only, whatever the scope.
+      expect((await send("GET", "/settings/mail")).status).toBe(403);
       expect((await send("POST", "/links", { url: "https://example.com/a", slug: "a" })).status).toBe(201);
       const imported = await send("POST", "/import", { rows: [{ slug: "b", target: "https://example.com/b" }] });
       expect(imported.status).toBe(200);
@@ -524,12 +526,15 @@ describe("API token", () => {
         await send("PUT", "/settings", { defaultUtm: "utm_source=x" }),
         await send("POST", "/resync"),
         await send("POST", "/stats/misses/clear", {}),
+        await send("PUT", "/settings/mail", { provider: "webhook", from: "x@sh.example" }),
+        await send("DELETE", "/settings/mail"),
       ];
       for (const res of refused) {
         expect(res.status).toBe(403);
         expect((await res.json<{ error: string }>()).error).toMatch(/API_TOKEN_SCOPE/);
       }
       expect((await env.DB.prepare("SELECT target FROM links WHERE slug = 'a'").first<{ target: string }>())?.target).toBe("https://example.com/a");
+      expect(await env.DB.prepare("SELECT 1 FROM settings WHERE key = 'mail'").first()).toBeNull();
     });
 
     it('treats anything but the exact value "full" as the default', async () => {
@@ -547,5 +552,65 @@ describe("password hashes", () => {
     expect(HASH).toMatch(/^pbkdf2-sha256:10000:[A-Za-z0-9_-]{22}:[A-Za-z0-9_-]{43}$/);
     await expect(hashPassword(PASSWORD, 100_001)).rejects.toThrow();
     expect(loginConfig({ ...env, ADMIN_PASSWORD_HASH: HASH.replace(":10000:", ":9999:") } as Env)).toBeNull();
+  });
+});
+
+describe("sessions end", () => {
+  const logout = (cookie: string, jwt: string) =>
+    new Request(`${ORIGIN}/_admin/logout`, {
+      method: "POST",
+      headers: { Cookie: cookie, "Cf-Access-Jwt-Assertion": jwt, "Sec-Fetch-Site": "same-origin", "Content-Type": "application/x-www-form-urlencoded" },
+    });
+
+  it("on logout, for a copy of the cookie too, but not for other sessions", async () => {
+    mockCerts();
+    const jwt = await token({});
+    // Issued a minute earlier: two logins in the same second get the same cookie.
+    const cfg = loginConfig({ ...env, ...LOGIN_ENV } as Env)!;
+    const kept = (await issueSessionCookie(env.DB, cfg, "owner@example.com", nowSec() - 60)).cookie.split(";")[0]!;
+    const cookie = await sessionCookie(jwt);
+    expect((await call(logout(cookie, jwt), undefined, LOGIN_ENV)).status).toBe(303);
+    expect((await call(withCookie(cookie, jwt), undefined, LOGIN_ENV)).status).toBe(401);
+    expect((await call(withCookie(kept, jwt), undefined, LOGIN_ENV)).status).toBe(200);
+  });
+
+  it("when the password changes", async () => {
+    mockCerts();
+    const jwt = await token({});
+    const cookie = await sessionCookie(jwt);
+    const changed = { ...LOGIN_ENV, ADMIN_PASSWORD_HASH: await hashPassword("another-long-password-2026", 10_000) };
+    expect((await call(withCookie(cookie, jwt), undefined, changed)).status).toBe(401);
+  });
+});
+
+describe("abuse limits", () => {
+  it("doesn't pause logins for failures from a single network", async () => {
+    const now = nowSec();
+    for (let i = 0; i < 40; i++) {
+      await loginEventStmt(env.DB, false, "one-network", "", now).run();
+      await recordGlobalFailure(env.DB, now);
+    }
+    expect(await globalLockedUntil(env.DB, now)).toBe(0);
+  });
+
+  it("refuses a locked network before comparing its API token", async () => {
+    const ip = { "CF-Connecting-IP": "203.0.113.77" };
+    for (let i = 0; i < 10; i++) await call(`${ORIGIN}/api/links`, { headers: { Authorization: "Bearer nope", ...ip } }, { AUTH_LIMITER: ALLOW_ALL });
+    const right = await call(`${ORIGIN}/api/links`, { headers: { ...bearer, ...ip } }, { AUTH_LIMITER: ALLOW_ALL });
+    expect(right.status).toBe(429);
+    expect((await call(`${ORIGIN}/api/links`, { headers: { ...bearer, "CF-Connecting-IP": "203.0.113.78" } })).status).toBe(200);
+  });
+
+  it("hides login activity and the recipient from the API token", async () => {
+    const s = await (await call(`${ORIGIN}/api/settings`, { headers: bearer })).json<{ security: unknown; digestTo: unknown }>();
+    expect(s.security).toBeNull();
+    expect(s.digestTo).toBeNull();
+  });
+
+  it("sends at most one test digest a minute", async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const send = () => call(`${ORIGIN}/api/settings/digest/test`, { method: "POST", headers: bearer });
+    expect((await send()).status).toBe(200);
+    expect((await send()).status).toBe(429);
   });
 });

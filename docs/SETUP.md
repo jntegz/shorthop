@@ -147,8 +147,8 @@ If you don't want Access, choose **Password only** in the setup (`ADMIN_AUTH="pa
 
 What changes:
 
-- **The login page is public.** Anyone who finds `/_admin/login` can try passwords. They're slowed by the lockout (5 wrong passwords within 15 minutes lock a network for a minute, doubling up to 24 hours; 30 failures an hour pause every login for 15 minutes), but nothing stops them from trying.
-- **Someone can keep you from signing in.** That global pause applies to you too: by failing from a few networks every 15 minutes, an attacker can block new logins. Sessions you already have keep working. Access avoids this, because nobody reaches the login page without your email.
+- **The login page is public.** Anyone who finds `/_admin/login` can try passwords. They're slowed by the lockout (5 wrong passwords within 15 minutes lock a network for a minute, doubling up to 24 hours; 30 failures an hour from 5 or more networks pause every login for 15 minutes), but nothing stops them from trying.
+- **Someone with several networks can keep you from signing in.** That global pause applies to you too: by failing from 5 or more networks every 15 minutes, an attacker can block new logins. One network alone can't trigger it. Sessions you already have keep working. Access avoids this, because nobody reaches the login page without your email.
 - **Use a long random password.** The setup accepts any password of at least 9 characters, but the generated one (32 characters) is the right choice.
 - **Add a rate-limiting rule** for `/_admin/login` in the Cloudflare WAF. See [SECURITY.md](../SECURITY.md).
 - The admin shows a "Cloudflare Access off" warning in Settings → Security and in System status. It isn't emailed as an alert, unless Access settings are left filled in (then it's a configuration warning).
@@ -158,7 +158,7 @@ Switching to Access later is `npm run setup -- access`. Existing password-only s
 <a id="password"></a>
 ## Admin password
 
-A typed password needs at least 9 characters; the generated one is 32 random characters and is the better choice. The password is stored only as a PBKDF2-SHA256 hash (`ADMIN_PASSWORD_HASH`), with 25,000 iterations on Workers Free or 100,000 on Paid. A login lasts 12 hours. Settings → Security → **Log out everywhere** ends every session.
+A typed password needs at least 9 characters; the generated one is 32 random characters and is the better choice. The password is stored only as a PBKDF2-SHA256 hash (`ADMIN_PASSWORD_HASH`), with 25,000 iterations on Workers Free or 100,000 on Paid. A login lasts 12 hours. Logging out ends that session on the server too, and changing the password ends every session. Settings → Security → **Log out everywhere** ends every session.
 
 - **New password:** `npm run setup -- password`. It takes effect right away and signs out existing sessions.
 - **Forgot it:** the same command; you don't need the old one.
@@ -197,7 +197,7 @@ Give it to the setup when asked, or later with `npm run setup -- analytics`. The
 
 Every Monday at 07:00 UTC, Shorthop emails a summary of the past week. When a check on the System status page starts failing (for example the nightly rollup), it emails an alert, and again once everything is OK. Email always goes to the single address in `DIGEST_TO`; nothing in the admin or the API can change the recipient.
 
-Choose a provider in the setup or with `npm run setup -- email`:
+Choose a provider in the setup or with `npm run setup -- email`. You can also switch later without a deploy: Settings → Weekly digest → **Set up email** lists every provider with what's missing, shows the steps and commands for each, and saves your choice. `DIGEST_PROVIDER` and `DIGEST_FROM` in `wrangler.jsonc` are the defaults; a choice saved in the admin overrides them until you press **Use wrangler.jsonc**. API keys still go in with `wrangler secret put`, which takes effect right away; press **Check again** after adding one.
 
 ### Cloudflare Email Service (`cloudflare`)
 
@@ -209,13 +209,41 @@ No extra account. The sender must be on a domain in your Cloudflare account.
 
 If the digest fails with `E_SENDER_NOT_VERIFIED`, the DNS records may still be propagating; try again later. Check Email → Email Routing → Destination addresses for the verification state.
 
-### Resend, Postmark, SendGrid or Mailgun
+### Resend, Emailit, Postmark, SendGrid or Mailgun
 
 1. Verify your sender's domain with the provider (they give you DNS records to add; add them in the Cloudflare zone).
 2. Create an API key that can only send email.
-3. Give the setup the sender, recipient and key. The key is stored as the `DIGEST_API_KEY` secret.
+3. Give the setup the sender, recipient and key, or save the key yourself under that provider's name:
 
-Mailgun also needs its sending domain (`DIGEST_MAILGUN_DOMAIN`) and region (`us` or `eu`); the setup asks.
+```sh
+npx wrangler secret put RESEND_API_KEY     # or EMAILIT_API_KEY, POSTMARK_API_KEY, SENDGRID_API_KEY, MAILGUN_API_KEY
+```
+
+Each provider has its own secret, so you can keep several and switch in the admin; a key is only ever sent to its own provider. `DIGEST_API_KEY` from older setups still works, for the provider named in `DIGEST_PROVIDER` only.
+
+Mailgun also needs its sending domain (`DIGEST_MAILGUN_DOMAIN`) and region (`us` or `eu`); the setup and the admin ask.
+
+Emailit: until your workspace is verified, it can only send to workspace members' account addresses. That's enough when `DIGEST_TO` is your account address.
+
+<a id="custom"></a>
+### Any other email API (`custom`)
+
+For services with an HTTPS JSON API that isn't built in (Brevo, MailerSend, SMTP2GO, ZeptoMail, your own relay):
+
+```sh
+npx wrangler secret put DIGEST_CUSTOM_URL       # the send endpoint, https:// only
+npx wrangler secret put DIGEST_CUSTOM_API_KEY
+```
+
+By default the key goes in `Authorization: Bearer <key>` and the body is `{"from","to":[...],"subject","html","text"}`, like Resend. For anything else, describe it in `vars` and deploy:
+
+```jsonc
+// Brevo
+"DIGEST_CUSTOM_AUTH": "api-key: {key}",
+"DIGEST_CUSTOM_BODY": "{\"sender\":{\"email\":\"{from_email}\",\"name\":\"{from_name}\"},\"to\":[{\"email\":\"{to}\"}],\"subject\":\"{subject}\",\"htmlContent\":\"{html}\",\"textContent\":\"{text}\"}"
+```
+
+Placeholders in the body: `{from}` (`Name <email>`), `{from_email}`, `{from_name}`, `{to}`, `{subject}`, `{html}`, `{text}`; in the header: `{key}`. Values are filled into the parsed JSON, so email content can't change its structure. The setup keeps both vars when it rewrites `wrangler.jsonc`.
 
 <a id="webhook"></a>
 ### Signed webhook (`webhook`)
@@ -247,11 +275,11 @@ function verify(rawBody, header, secret) {
 
 ### Off (`off`)
 
-No email. Problems only show on the dashboard.
+No email; pick **Off** in the admin or the setup. Problems only show on the dashboard.
 
 ### How keys are protected
 
-API keys, the webhook URL and its secret are Wrangler secrets; the admin shows only the provider's name and whether it's ready. Provider hosts are fixed in the code (the config picks a provider, never a URL), redirects are refused so credentials can't follow one, and requests time out after 10 seconds.
+API keys, the custom and webhook URLs and the webhook secret are Wrangler secrets; the admin shows only the provider names, whether each secret is set, and whether it's ready. The admin can pick a provider and the sender, never a URL, a key or the recipient, and the API token can only read that choice unless `API_TOKEN_SCOPE` is `full`. Provider hosts are fixed in the code and each key only goes to its own provider; redirects are refused so credentials can't follow one, and requests time out after 10 seconds.
 
 Test it from the admin (Settings → Weekly digest → **Send test**) or at the end of the setup.
 
@@ -265,7 +293,7 @@ Test it from the admin (Settings → Weekly digest → **Send test**) or at the 
 | `VISITOR_SALT` | the setup | `npm run setup -- secrets --rotate --salt` (visitors already counted today may be counted again) |
 | `ADMIN_PASSWORD_HASH` | the setup | `npm run setup -- password` |
 | `CF_ANALYTICS_TOKEN` | you, in the dashboard | `npm run setup -- analytics` |
-| `DIGEST_API_KEY`, `DIGEST_WEBHOOK_URL`, `DIGEST_WEBHOOK_SECRET` | you / the setup | `npm run setup -- email` |
+| `RESEND_API_KEY` (and the other providers' keys), `DIGEST_CUSTOM_URL`, `DIGEST_CUSTOM_API_KEY`, `DIGEST_WEBHOOK_URL`, `DIGEST_WEBHOOK_SECRET` | you / the setup | `npm run setup -- email` |
 
 The setup uploads secrets with one `wrangler secret bulk` call, passing them through stdin, so they never touch the disk or your shell history. Secret changes take effect immediately. To set one by hand: `npx wrangler secret put <NAME>`.
 
@@ -303,6 +331,7 @@ Afterwards, open `https://<admin host>/_admin/`. Dashboard → **System status**
 | Logins fail or time out on Workers Free | The password hash is too expensive for 10 ms CPU: set the plan to Free in the setup, then `npm run setup -- password` |
 | Stats are empty | No analytics token (`npm run setup -- analytics`), or no clicks yet. "Today" is never shown in local dev |
 | The digest isn't sent | Dashboard → System status names the problem. With Cloudflare Email Service, check the destination address is verified |
+| A new link shows the 404 page | Someone opened it before it was created, and KV caches that miss where it was opened for up to `KV_CACHE_TTL` seconds (60 by default). Wait that long, or try from another location |
 | "Missing required secrets" on deploy | A secret upload failed: `npm run setup` re-uploads what's missing |
 | Locked out by wrong passwords | See [Admin password](#password) |
 

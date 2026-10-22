@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { FileUp } from "lucide-react";
+import { Download, FileUp } from "lucide-react";
 import Papa from "papaparse";
 import { useMemo, useState, type ChangeEvent } from "react";
 import { toast } from "sonner";
@@ -8,7 +8,9 @@ import type { ImportResult, ImportRowResult } from "../../shared/types";
 import { api, call, keys } from "../api";
 import { Badge, Button, Card, CardHeader, Field, Notice, PageHeader, Select } from "../components/ui";
 import { num } from "../lib/format";
+import { IMPORT_HELP } from "../lib/help";
 import { linkKey, useDomains, useLinkLabel } from "../lib/links";
+import { download } from "../lib/utils";
 
 type Raw = Record<string, unknown>;
 
@@ -16,7 +18,7 @@ const GUESS = {
   slug: ["slug", "route", "short", "shortcode", "short_code", "key", "alias", "back-half", "backhalf", "path", "id", "short_url", "shorturl", "url"],
   target: ["target", "destination", "long_url", "longurl", "original_url", "originalurl", "redirect", "link", "url"],
   title: ["title", "name"],
-  clicks: ["clicks", "imported_clicks", "click_count", "visits", "total_clicks"],
+  clicks: ["clicks", "legacy_clicks", "imported_clicks", "click_count", "visits", "total_clicks"],
   created: ["createdat", "created_at", "created", "date"],
   tags: ["tags", "tag"],
   domain: ["domain", "host", "hostname"],
@@ -77,6 +79,50 @@ function mapRows(rows: Raw[], m: Mapping): Mapped[] {
 }
 
 const CHUNK = 100;
+
+/** Shown on the page and offered as a download. A Links → Export CSV file is accepted too. */
+const EXAMPLE_CSV = `slug,target,title,tags,created_at,imported_clicks
+guide,https://example.com/guide,Job search guide,"guides,career",2026-01-15,120
+cv,https://example.com/cv-template.pdf,CV template,,2025-11-02,
+sh.example/talk,https://example.com/talks/2026,Conference talk,talks,,
+`;
+
+function FormatHelp() {
+  return (
+    <Card>
+      <CardHeader
+        title="File format"
+        description="One link per row. Only slug and target are required; you can change which column is which after picking the file."
+        info={IMPORT_HELP.format}
+        action={
+          <Button variant="outline" size="sm" onClick={() => download("shorthop-import-example.csv", EXAMPLE_CSV, "text/csv")}>
+            <Download /> Example CSV
+          </Button>
+        }
+      />
+      <div className="space-y-3 px-5 pb-5 text-sm">
+        <pre className="overflow-x-auto rounded-xl border border-line bg-bg p-3 font-mono text-xs text-fg">{EXAMPLE_CSV}</pre>
+        <ul className="list-disc space-y-1 pl-5 text-muted">
+          <li>
+            <span className="font-medium text-fg">slug</span> (required): the short path, or a full short URL such as sh.example/talk, which also sets the domain.
+          </li>
+          <li>
+            <span className="font-medium text-fg">target</span> (required): the destination URL.
+          </li>
+          <li>
+            Optional: <span className="font-medium text-fg">title</span>, <span className="font-medium text-fg">tags</span> (comma-separated, quoted in a CSV),{" "}
+            <span className="font-medium text-fg">created_at</span> (a date), <span className="font-medium text-fg">imported_clicks</span> (lifetime clicks from the
+            old shortener) and <span className="font-medium text-fg">domain</span>.
+          </li>
+          <li>Header names are matched without regard to case, and common names from other shorteners are recognized. The file can be comma, semicolon or tab separated.</li>
+          <li>
+            JSON: an array of objects with the same keys, or <code className="font-mono text-xs">{'{ "data": [...] }'}</code>.
+          </li>
+        </ul>
+      </div>
+    </Card>
+  );
+}
 
 export function Import() {
   const qc = useQueryClient();
@@ -217,6 +263,8 @@ export function Import() {
             <input type="file" accept=".csv,.json,text/csv,application/json" className="sr-only" onChange={onFile} />
           </label>
         </Card>
+
+        {headers.length === 0 ? <FormatHelp /> : null}
 
         {headers.length > 0 ? (
           <Card>

@@ -28,8 +28,9 @@ export function normalizeTarget(input: string, opts: TargetOptions = {}): Target
     return { ok: false, error: opts.allowHttp ? "Target must be http(s)." : "Target must start with https://." };
   }
   if (url.username || url.password) return { ok: false, error: "Target must not contain credentials." };
-  if (!url.hostname.includes(".")) return { ok: false, error: "Target host looks invalid." };
-  const host = url.hostname.toLowerCase();
+  // "sh.example." is the same host as "sh.example": drop the root dot before comparing.
+  const host = url.hostname.toLowerCase().replace(/\.$/, "");
+  if (!host.includes(".")) return { ok: false, error: "Target host looks invalid." };
   if (opts.selfHosts?.some((h) => host === h || host === `www.${h}`)) {
     return { ok: false, error: "Target can't point back at the shortener." };
   }

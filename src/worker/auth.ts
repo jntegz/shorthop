@@ -7,7 +7,8 @@
 import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from "jose";
 import { nowSec } from "./db";
 import { isLocalHost } from "./domains";
-import { ipBucket, loginConfig, readSession } from "./session";
+import { API_MAX_FAILS, API_WINDOW_SEC } from "../shared/login-policy";
+import { chargeAttempt, ipBucket, lock, loginConfig, readSession } from "./session";
 
 export type AuthResult =
   | { ok: true; identity: string; sessionExp?: number }
@@ -129,23 +130,46 @@ async function tokenMatches(presented: string, expected: string): Promise<boolea
   return crypto.subtle.timingSafeEqual(a, b);
 }
 
-/** Verifies "Authorization: Bearer <API_TOKEN>", rate-limiting failures per IP. */
+/** The auth_failures key of a client network: a keyed hash, so no IP address is stored. */
+async function apiFailureKey(env: Env, ip: string): Promise<string> {
+  const digest = new Uint8Array(await sha256(`api-ip|${env.API_TOKEN}|${ip}`));
+  let hex = "";
+  for (const b of digest.slice(0, 16)) hex += b.toString(16).padStart(2, "0");
+  return `api:${hex}`;
+}
+
+const TOO_MANY = "Too many failed attempts. Try again later.";
+
+/**
+ * Verifies "Authorization: Bearer <API_TOKEN>". A network that sent too many
+ * wrong tokens is locked in D1 and refused before its token is even compared,
+ * so a locked network can't keep guessing (it would only see 429s otherwise).
+ */
 export async function verifyBearer(request: Request, env: Env): Promise<AuthResult> {
   if (!env.API_TOKEN || env.API_TOKEN.length < 16) {
     return { ok: false, status: 500, reason: "API token is not configured." };
   }
+  // Per /64 for IPv6, so rotating addresses inside one allocation doesn't escape the limit.
+  const ip = ipBucket(request.headers.get("CF-Connecting-IP") ?? "unknown");
+  const key = await apiFailureKey(env, ip);
+  const now = nowSec();
+  const locked = await env.DB.prepare("SELECT locked_until FROM auth_failures WHERE key = ?").bind(key).first<{ locked_until: number }>();
+  if (locked && locked.locked_until > now) return { ok: false, status: 429, reason: TOO_MANY };
+
   const header = request.headers.get("Authorization") ?? "";
   const match = /^Bearer\s+(\S+)$/i.exec(header);
   if (match?.[1] && (await tokenMatches(match[1], env.API_TOKEN))) return { ok: true, identity: "api-token" };
 
-  // Per /64 for IPv6, so rotating addresses inside one allocation doesn't escape the limit.
-  const ip = ipBucket(request.headers.get("CF-Connecting-IP") ?? "unknown");
+  // A burst brake per location, then the lock that counts.
   try {
     const { success } = await env.AUTH_LIMITER.limit({ key: `auth:${ip}` });
-    if (!success) return { ok: false, status: 429, reason: "Too many failed attempts. Try again in a minute." };
+    if (!success) return { ok: false, status: 429, reason: TOO_MANY };
   } catch (err) {
     console.error(JSON.stringify({ message: "rate limiter failed", error: String(err) }));
   }
+  // The failure that reaches the limit locks the network; its next request gets a 429.
+  const state = await chargeAttempt(env.DB, key, now, API_WINDOW_SEC);
+  if (state.fails >= API_MAX_FAILS) await lock(env.DB, key, now, state.lockouts);
   return { ok: false, status: 401, reason: "Missing or invalid API token." };
 }
 

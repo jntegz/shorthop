@@ -40,8 +40,8 @@ export function Layout() {
   const { pathname } = useLocation();
   const { domains, primary, demo } = useDomains();
   const settings = useQuery({ queryKey: keys.settings, queryFn: () => call(api.settings.$get()) });
-  const identity = settings.data?.security.email ?? "";
-  const passwordOnly = settings.data?.security.mode === "password";
+  const identity = settings.data?.security?.email ?? "";
+  const passwordOnly = settings.data?.security?.mode === "password";
   const current = NAV.find((n) => n.end ? pathname === n.to : pathname.startsWith(n.to));
 
   useEffect(() => {

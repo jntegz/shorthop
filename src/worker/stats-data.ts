@@ -19,7 +19,7 @@ import {
 } from "../shared/types";
 import { aeAvailable, queryTotalsByLink, type LinkFilter } from "./ae";
 import { getSetting, jsonChunks, nowSec } from "./db";
-import { byRecent, getMissPolicy, isCleared, isNoise, missesCleared } from "./misses";
+import { byRecent, getMissPolicy, isCleared, isNoise, isProbeCleared, missesCleared } from "./misses";
 import { collectFromAE } from "./rollup";
 
 const TOP_N = 50;
@@ -264,15 +264,20 @@ export async function missReport(
   now = new Date(),
 ): Promise<{ aeAvailable: boolean; policy: MissPolicy; rows: MissRow[] }> {
   const [w, cleared, policy] = await Promise.all([windows(env, range, now), missesCleared(env.DB, now), getMissPolicy(env.DB, true)]);
-  const totals = new Map<string, Link & { hits: number; bots: number; last: string }>();
-  const add = (domain: string, slug: string, hits: number, bots: number, last: string) => {
+  type Total = Link & { hits: number; bots: number; last: string };
+  const totals = new Map<string, Total>();
+  // Probe-looking paths on days "Clear scanner probes" hides, until the link check below says whether they're probes.
+  const held = new Map<string, Total>();
+  const addTo = (into: Map<string, Total>, domain: string, slug: string, hits: number, bots: number, last: string) => {
     const key = linkKey(domain, slug);
-    const t = totals.get(key) ?? { domain, slug, hits: 0, bots: 0, last };
+    const t = into.get(key) ?? { domain, slug, hits: 0, bots: 0, last };
     t.hits += hits;
     t.bots += bots;
     if (last > t.last) t.last = last;
-    totals.set(key, t);
+    into.set(key, t);
   };
+  const add = (domain: string, slug: string, hits: number, bots: number, last: string) =>
+    addTo(isProbeCleared(cleared, slug, last) ? held : totals, domain, slug, hits, bots, last);
   const d1From = w.d1 && cleared.all !== null && cleared.all >= w.d1.from ? addDays(cleared.all, 1) : w.d1?.from;
   if (w.d1 && d1From && d1From <= w.d1.to) {
     const { results } = await env.DB.prepare(
@@ -292,13 +297,12 @@ export async function missReport(
   });
 
   // Flag misses that hit a disabled/expired link, or differ from a real slug on the same domain only by case.
-  const all = [...totals.values()];
   const matchStmt = env.DB.prepare(
     `SELECT json_extract(j.value, '$[0]') AS domain, json_extract(j.value, '$[1]') AS miss, l.slug, l.active, l.expires_at
      FROM json_each(?1) j
      JOIN links l ON l.domain = json_extract(j.value, '$[0]') AND l.slug = json_extract(j.value, '$[1]') COLLATE NOCASE`,
   );
-  const chunks = jsonChunks(all.map((t) => [t.domain, t.slug]));
+  const chunks = jsonChunks([...totals.values(), ...held.values()].map((t) => [t.domain, t.slug]));
   const results = chunks.length
     ? (await env.DB.batch<{ domain: string; miss: string; slug: string; active: number; expires_at: number | null }>(chunks.map((c) => matchStmt.bind(c)))).flatMap(
         (r) => r.results,
@@ -309,6 +313,9 @@ export async function missReport(
     const key = linkKey(r.domain, r.miss);
     matchesOf.set(key, [...(matchesOf.get(key) ?? []), r]);
   }
+  // A held path that matches a link apart from case is a typo of it, not a probe: it stays. The rest stay cleared.
+  for (const [key, t] of held) if (matchesOf.has(key)) addTo(totals, t.domain, t.slug, t.hits, t.bots, t.last);
+  const all = [...totals.values()];
   const now_ = nowSec();
   const rows: MissRow[] = all.map((t) => {
     const matches = matchesOf.get(linkKey(t.domain, t.slug)) ?? [];
@@ -332,17 +339,34 @@ export async function missReport(
   return { aeAvailable: w.aeAvailable && aeOk, policy, rows: kept };
 }
 
+/** How long this isolate reuses the all-time rollup sums (they change only when a rollup runs). */
+const ALL_TIME_MEMO_MS = 60_000;
+let allTimeMemo: { to: string; at: number; clicks: Map<string, number> } | null = null;
+
+/** Drops the memoized all-time sums (for tests). */
+export function forgetAllTimeClicks(): void {
+  allTimeMemo = null;
+}
+
 /** Human clicks per link (keyed by linkKey) over a range: rollups plus today's live data. */
 export async function clicksByLink(env: Env, range: Range, now = new Date()): Promise<Map<string, number>> {
   const w = await windows(env, range, now);
   const out = new Map<string, number>();
   if (w.d1) {
-    const { results } = await env.DB.prepare(
-      `SELECT domain, slug, SUM(clicks) AS clicks FROM daily_dims WHERE dim = 'total' AND date BETWEEN ?1 AND ?2 GROUP BY domain, slug`,
-    )
-      .bind(w.d1.from, w.d1.to)
-      .all<{ domain: string; slug: string; clicks: number }>();
-    for (const r of results) out.set(linkKey(r.domain, r.slug), r.clicks);
+    // "all" sums every day ever rolled up, on every links list: reuse it briefly. Keyed by the
+    // last rolled day, so a new rollup is picked up at once; today's live clicks are never memoized.
+    const memo = range === "all" && allTimeMemo?.to === w.d1.to && Date.now() - allTimeMemo.at < ALL_TIME_MEMO_MS ? allTimeMemo : null;
+    if (memo) {
+      for (const [k, v] of memo.clicks) out.set(k, v);
+    } else {
+      const { results } = await env.DB.prepare(
+        `SELECT domain, slug, SUM(clicks) AS clicks FROM daily_dims WHERE dim = 'total' AND date BETWEEN ?1 AND ?2 GROUP BY domain, slug`,
+      )
+        .bind(w.d1.from, w.d1.to)
+        .all<{ domain: string; slug: string; clicks: number }>();
+      for (const r of results) out.set(linkKey(r.domain, r.slug), r.clicks);
+      if (range === "all") allTimeMemo = { to: w.d1.to, at: Date.now(), clicks: new Map(out) };
+    }
   }
   await safeAE(async () => {
     if (!w.ae) return;

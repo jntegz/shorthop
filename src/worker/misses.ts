@@ -85,30 +85,63 @@ export function byRecent(a: { last: string; hits: number; bots: number }, b: { l
   return b.last.localeCompare(a.last) || b.hits + b.bots - (a.hits + a.bots);
 }
 
-function deleteMissStmts(db: D1Database, links: { domain: string; slug: string }[]): D1PreparedStatement[] {
+/** Deletes the given paths' rows, or only those dated up to `through`. */
+function deleteMissStmts(db: D1Database, links: { domain: string; slug: string }[], through?: string): D1PreparedStatement[] {
   return jsonChunks(links.map((l) => [l.domain, l.slug])).map((chunk) =>
     db
       .prepare(
         `DELETE FROM daily_dims WHERE dim = 'miss' AND (domain, slug) IN
-         (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?1))`,
+         (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?1))${through ? " AND date <= ?2" : ""}`,
       )
-      .bind(chunk),
+      .bind(...(through ? [chunk, through] : [chunk])),
   );
 }
 
+interface StoredMissPath {
+  domain: string;
+  slug: string;
+  hits: number;
+  bots: number;
+  last: string;
+  /** 1 when a link matches the path apart from case. */
+  has_link: number;
+}
+
+/** Every stored missed path with its totals. */
+async function storedMissPaths(db: D1Database): Promise<StoredMissPath[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT d.domain, d.slug, SUM(d.clicks) AS hits, SUM(d.bots) AS bots, MAX(d.date) AS last,
+              EXISTS (SELECT 1 FROM links l WHERE l.domain = d.domain AND l.slug = d.slug COLLATE NOCASE) AS has_link
+       FROM daily_dims d WHERE d.dim = 'miss' GROUP BY d.domain, d.slug`,
+    )
+    .all<StoredMissPath>();
+  return results;
+}
+
+/** The report's rule: a probe-looking path that no link matches, even apart from case. */
+const isStoredProbe = (r: StoredMissPath) => r.has_link !== 1 && isProbePath(r.slug);
+
+/** Deletes the rows of every stored scanner probe dated up to `day`. */
+async function deleteProbesThrough(db: D1Database, day: string): Promise<void> {
+  const probes = (await storedMissPaths(db)).filter(isStoredProbe);
+  if (probes.length) await db.batch(deleteMissStmts(db, probes, day));
+}
+
 /**
- * Enforces the policy on the stored rollups: drops misses older than the
- * retention or hidden by a clear (so they can't take a visible path's place),
- * all noise when it isn't tracked, and the oldest paths beyond each limit.
- * Returns how many paths were removed entirely.
+ * Applies the clears to the stored rollups (so a hidden miss can't take a
+ * visible path's place), and, once the owner has saved a policy, enforces it:
+ * drops misses older than the retention, all noise when it isn't tracked, and
+ * the oldest paths beyond each limit. Returns how many paths were removed
+ * entirely by the policy.
  */
-export async function pruneMisses(env: Env, policy: MissPolicy, now = new Date()): Promise<number> {
+export async function pruneMisses(env: Env, policy: MissPolicy | null, now = new Date()): Promise<number> {
   const db = env.DB;
-  const cleared = await missesCleared(db);
-  const oldest = addDays(utcDate(now), -policy.retentionDays);
-  const hiddenAll = cleared.all !== null && cleared.all > oldest ? cleared.all : oldest;
+  const cleared = await missesCleared(db, now);
+  const oldest = policy ? addDays(utcDate(now), -policy.retentionDays) : null;
+  const hiddenAll = cleared.all !== null && (oldest === null || cleared.all > oldest) ? cleared.all : oldest;
   await db.batch([
-    db.prepare("DELETE FROM daily_dims WHERE dim = 'miss' AND date <= ?").bind(hiddenAll),
+    ...(hiddenAll !== null ? [db.prepare("DELETE FROM daily_dims WHERE dim = 'miss' AND date <= ?").bind(hiddenAll)] : []),
     db
       .prepare(
         `DELETE FROM daily_dims WHERE dim = 'miss'
@@ -116,13 +149,9 @@ export async function pruneMisses(env: Env, policy: MissPolicy, now = new Date()
       )
       .bind(JSON.stringify(cleared.links)),
   ]);
-  const { results } = await db
-    .prepare(
-      `SELECT d.domain, d.slug, SUM(d.clicks) AS hits, SUM(d.bots) AS bots, MAX(d.date) AS last,
-              EXISTS (SELECT 1 FROM links l WHERE l.domain = d.domain AND l.slug = d.slug COLLATE NOCASE) AS has_link
-       FROM daily_dims d WHERE d.dim = 'miss' GROUP BY d.domain, d.slug`,
-    )
-    .all<{ domain: string; slug: string; hits: number; bots: number; last: string; has_link: number }>();
+  if (cleared.probes !== null) await deleteProbesThrough(db, cleared.probes);
+  if (!policy) return 0;
+  const results = await storedMissPaths(db);
   const noise = results.filter((r) => isNoise(r.slug, r.hits, r.has_link === 1)).sort(byRecent);
   const real = results.filter((r) => !isNoise(r.slug, r.hits, r.has_link === 1)).sort(byRecent);
   const drop = [...noise.slice(policy.trackNoise ? policy.noiseLimit : 0), ...(policy.realLimit ? real.slice(policy.realLimit) : [])];
@@ -138,11 +167,17 @@ export async function pruneMisses(env: Env, policy: MissPolicy, now = new Date()
  * `all` and `links` give the last hidden day. A path cleared in a large bulk
  * clear, or one that can't be named in an AE query, is hidden by day only,
  * through the end of the clearing day (UTC).
+ *
+ * "Clear scanner probes" is stored as a day: probes are told apart in JS
+ * (isProbePath), not in AE SQL, so they're hidden through the end of the
+ * clearing day. Real misses aren't affected.
  */
 export interface MissesCleared {
   all: string | null;
   /** linkKey → day. */
   links: Record<string, string>;
+  /** Scanner probes are hidden through this day; null when a later "clear all" supersedes it. */
+  probes: string | null;
   cutoffs: MissCutoffs;
 }
 
@@ -150,6 +185,7 @@ export interface MissesCleared {
 interface StoredClears {
   all: number | string | null;
   links: Record<string, number | string>;
+  probes: string | null;
 }
 
 const MISSES_CLEARED = "misses_cleared";
@@ -164,7 +200,8 @@ const EXACT_CLEAR_MAX = 50;
 const EXACT_CLEARS_ACTIVE_MAX = 200;
 const EXACT_CLEAR_WINDOW_SEC = 8 * 86400;
 
-const isClear = (v: unknown): v is number | string => (typeof v === "number" && Number.isFinite(v)) || (typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v));
+const isDay = (v: unknown): v is string => typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v);
+const isClear = (v: unknown): v is number | string => (typeof v === "number" && Number.isFinite(v)) || isDay(v);
 const dayOf = (v: number | string) => (typeof v === "number" ? utcDate(new Date(v * 1000)) : v);
 /** The last day whose rolled-up rows are hidden. */
 const hiddenThrough = (v: number | string) => (typeof v === "number" ? addDays(dayOf(v), -1) : v);
@@ -173,9 +210,9 @@ async function storedClears(db: D1Database): Promise<StoredClears> {
   try {
     const v = JSON.parse((await getSetting(db, MISSES_CLEARED)) ?? "{}") as Partial<StoredClears>;
     const links = v.links && typeof v.links === "object" ? Object.fromEntries(Object.entries(v.links).filter(([, d]) => isClear(d))) : {};
-    return { all: isClear(v.all) ? v.all : null, links };
+    return { all: isClear(v.all) ? v.all : null, links, probes: isDay(v.probes) ? v.probes : null };
   } catch {
-    return { all: null, links: {} };
+    return { all: null, links: {}, probes: null };
   }
 }
 
@@ -193,9 +230,11 @@ export async function missesCleared(db: D1Database, now = new Date()): Promise<M
     const i = key.indexOf("/");
     cutoffs.links.push({ domain: key.slice(0, i), slug: key.slice(i + 1), sec: v });
   }
+  const all = s.all === null ? null : hiddenThrough(s.all);
   return {
-    all: s.all === null ? null : hiddenThrough(s.all),
+    all,
     links: Object.fromEntries(Object.entries(s.links).map(([k, v]) => [k, hiddenThrough(v)])),
+    probes: s.probes !== null && (all === null || s.probes > all) ? s.probes : null,
     cutoffs,
   };
 }
@@ -205,6 +244,11 @@ export function isCleared(c: MissesCleared, domain: string, slug: string, date: 
   return (c.all !== null && date <= c.all) || date <= (c.links[linkKey(domain, slug)] ?? "");
 }
 
+/** A probe-looking path on a day "Clear scanner probes" hides. The caller still checks that no link matches it. */
+export function isProbeCleared(c: MissesCleared, slug: string, date: string): boolean {
+  return c.probes !== null && date <= c.probes && isProbePath(slug);
+}
+
 /** Drops a removed domain's clears (see domain-purge.ts): its misses go with it. */
 export async function forgetDomainClears(db: D1Database, domain: string): Promise<D1PreparedStatement> {
   const stored = await storedClears(db);
@@ -212,18 +256,29 @@ export async function forgetDomainClears(db: D1Database, domain: string): Promis
   return setSettingStmt(db, MISSES_CLEARED, JSON.stringify({ ...stored, links }));
 }
 
-/** Deletes stored misses (all, or the given links); visits from now on show again. */
-export async function clearMisses(env: Env, links: { domain: string; slug: string }[] | undefined, now = new Date()): Promise<void> {
+/**
+ * Deletes stored misses: all of them, every scanner probe, or the given
+ * links. Visits from now on show again (probes: from tomorrow, UTC).
+ */
+export async function clearMisses(env: Env, target: "all" | "probes" | { domain: string; slug: string }[], now = new Date()): Promise<void> {
   const sec = Math.floor(now.getTime() / 1000);
   const today = utcDate(now);
   const keep = addDays(today, -CLEARED_KEEP_DAYS);
   const stored = await storedClears(env.DB);
+  if (target === "probes") {
+    // The marker first: a rollup running in between then can't leave probe rows behind.
+    await setSettingStmt(env.DB, MISSES_CLEARED, JSON.stringify({ ...stored, probes: today })).run();
+    await deleteProbesThrough(env.DB, today);
+    return;
+  }
+  const links = target === "all" ? undefined : target;
   const next: StoredClears = links
     ? {
         all: stored.all !== null && dayOf(stored.all) >= keep ? stored.all : null,
         links: Object.fromEntries(Object.entries(stored.links).filter(([, v]) => dayOf(v) >= keep)),
+        probes: stored.probes,
       }
-    : { all: sec, links: {} };
+    : { all: sec, links: {}, probes: null };
   const clearing = new Set((links ?? []).map((l) => linkKey(l.domain, l.slug)));
   const active = Object.entries(next.links).filter(([k, v]) => !clearing.has(k) && typeof v === "number" && v > sec - EXACT_CLEAR_WINDOW_SEC).length;
   const exact = (links?.length ?? 0) <= EXACT_CLEAR_MAX && active + (links?.length ?? 0) <= EXACT_CLEARS_ACTIVE_MAX;

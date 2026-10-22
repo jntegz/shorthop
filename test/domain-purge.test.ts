@@ -2,6 +2,7 @@ import { env } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { addDays, dayStartSec, utcDate } from "../src/shared/dates";
 import type { SettingsDTO } from "../src/shared/types";
+import { purgeDomain } from "../src/worker/domain-purge";
 import { scheduledDaily } from "../src/worker/health";
 import { runRollup } from "../src/worker/rollup";
 import { aePoint, mockAeSql } from "./ae-mock";
@@ -94,6 +95,37 @@ describe("removing a domain", () => {
     expect(first).toMatchObject({ deleted: 200, done: false });
     expect(200 + (await purgeAll("alt.example"))).toBe(450);
     expect(await count("SELECT COUNT(*) AS n FROM links")).toBe(0);
+  });
+
+  it("keeps each call under the Workers limit of 1000 KV operations", async () => {
+    await addLinks("alt.example", Array.from({ length: 199 }, (_, i) => `l${i}`));
+    // KV-only records (failed writes) for the prefix sweep.
+    await Promise.all(Array.from({ length: 1000 }, (_, i) => env.LINKS.put(`alt.example/orphan-${i}`, "{}")));
+    let ops = 0;
+    const LINKS = new Proxy(env.LINKS, {
+      get(target, prop) {
+        if (prop === "delete" || prop === "list") {
+          return (...args: unknown[]) => {
+            ops++;
+            return (target[prop] as (...a: unknown[]) => unknown).apply(target, args);
+          };
+        }
+        const v = Reflect.get(target, prop) as unknown;
+        return typeof v === "function" ? (v as (...a: unknown[]) => unknown).bind(target) : v;
+      },
+    });
+    const e = { ...env, LINKS };
+    const results = [];
+    for (let calls = 0; calls < 5; calls++) {
+      ops = 0;
+      const r = await purgeDomain(e, "alt.example", NOW);
+      expect(ops).toBeLessThanOrEqual(901);
+      results.push(r);
+      if (r.done) break;
+    }
+    expect(results[0]).toEqual({ deleted: 199, done: false });
+    expect(results.at(-1)?.done).toBe(true);
+    expect((await env.LINKS.list({ prefix: "alt.example/" })).keys).toHaveLength(0);
   });
 
   it("needs the domain typed again, and an admin session rather than the API token", async () => {

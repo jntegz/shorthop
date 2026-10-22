@@ -1,6 +1,7 @@
 // Click classification and the Analytics Engine data point layout.
 // Everything here runs inside ctx.waitUntil, after the redirect has been sent.
 
+import { HOSTNAME_RE } from "../shared/domains";
 import { getMissPolicy, hasLinkIgnoringCase } from "./misses";
 
 export type HitEvent = "click" | "bot" | "miss";
@@ -188,11 +189,13 @@ export function resolveSource(
   return { source: "direct", kind: "none" };
 }
 
+/** The referring site's host without "www.", or "" for our own host and anything that isn't a DNS name or IPv4 address. */
 export function referrerHostOf(referer: string | null, ownHost: string): string {
   if (!referer) return "";
   try {
-    const host = new URL(referer).hostname.toLowerCase().replace(/^www\./, "");
-    return host === ownHost ? "" : host;
+    const host = new URL(referer).hostname.toLowerCase().replace(/\.$/, "").replace(/^www\./, "");
+    // Only real hostnames: "(other)" is a valid URL host, but the rollup folds long tails into a value of that name.
+    return host === ownHost || !HOSTNAME_RE.test(host) ? "" : host;
   } catch {
     return "";
   }

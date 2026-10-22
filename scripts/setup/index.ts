@@ -338,23 +338,36 @@ async function analyticsStep(s: State, force: boolean): Promise<void> {
 const PROVIDER_CHOICES: Choice<Provider>[] = [
   { value: "cloudflare", label: "Cloudflare Email Service", hint: "no extra account; sends from a domain in this Cloudflare account" },
   { value: "resend", label: "Resend" },
+  { value: "emailit", label: "Emailit" },
   { value: "postmark", label: "Postmark" },
   { value: "sendgrid", label: "SendGrid" },
   { value: "mailgun", label: "Mailgun" },
+  { value: "custom", label: "Custom email API", hint: "any HTTPS JSON email API, such as Brevo" },
   { value: "webhook", label: "Signed webhook", hint: "n8n, Zapier, Make or your own endpoint" },
   { value: "off", label: "Off", hint: "problems only show on the dashboard" },
 ];
-const API_KEY_PROVIDERS: readonly Provider[] = ["resend", "postmark", "sendgrid", "mailgun"];
-const EMAIL_SECRETS = ["DIGEST_API_KEY", "DIGEST_WEBHOOK_URL", "DIGEST_WEBHOOK_SECRET"];
+/** Each provider's own key secret (src/worker/mailer.ts reads the same names). */
+const KEY_SECRET: Partial<Record<Provider, string>> = {
+  resend: "RESEND_API_KEY",
+  emailit: "EMAILIT_API_KEY",
+  postmark: "POSTMARK_API_KEY",
+  sendgrid: "SENDGRID_API_KEY",
+  mailgun: "MAILGUN_API_KEY",
+  custom: "DIGEST_CUSTOM_API_KEY",
+};
 
 async function emailStep(s: State): Promise<void> {
   heading("Email (weekly digest and alerts)");
-  const provider = await choose("How should email be sent?", PROVIDER_CHOICES, s.cfg.digestProvider);
+  info(color.dim("  A service picked in the admin (Settings → Weekly digest → Set up email) wins over this until you press “Use wrangler.jsonc” there."));
+  const previous = s.cfg.digestProvider;
+  const provider = await choose("How should email be sent?", PROVIDER_CHOICES, previous);
   const label = PROVIDER_CHOICES.find((c) => c.value === provider)!.label;
   s.cfg.digestProvider = provider;
-  // Keys of a provider no longer in use are removed from the Worker.
-  const needed = provider === "webhook" ? ["DIGEST_WEBHOOK_URL", "DIGEST_WEBHOOK_SECRET"] : API_KEY_PROVIDERS.includes(provider) ? ["DIGEST_API_KEY"] : [];
-  for (const name of EMAIL_SECRETS) if (s.existing.has(name) && !needed.includes(name)) s.secrets[name] = null;
+  // Other providers' own secrets stay, so Settings → Set up email can switch to
+  // them. The older shared DIGEST_API_KEY belongs to whichever provider
+  // DIGEST_PROVIDER names, so it goes when that changes.
+  const legacyKey = s.existing.has("DIGEST_API_KEY");
+  if (legacyKey && provider !== previous) s.secrets.DIGEST_API_KEY = null;
   if (provider === "off") return;
 
   const knownEmail = (e: string) => (e && e !== EXAMPLE_CONFIG.digestTo ? e : undefined);
@@ -383,8 +396,20 @@ async function emailStep(s: State): Promise<void> {
     s.cfg.mailgunDomain = (await ask("Mailgun sending domain", { default: s.cfg.mailgunDomain || fromDomain, check: (v) => (normalizeHost(v) ? null : "That isn't a domain.") })).toLowerCase();
     s.cfg.mailgunRegion = await choose("Mailgun region", [{ value: "us", label: "US" }, { value: "eu", label: "EU" }], s.cfg.mailgunRegion);
   }
-  if (!s.existing.has("DIGEST_API_KEY") || !(await confirm("Keep the existing API key?", true))) {
-    s.secrets.DIGEST_API_KEY = await secret(`${label} API key (hidden)`);
+  if (provider === "custom") {
+    if (!s.existing.has("DIGEST_CUSTOM_URL") || !(await confirm("Keep the existing API URL?", true))) {
+      s.secrets.DIGEST_CUSTOM_URL = await ask("Email API URL (https)", { check: httpsUrlProblem });
+    }
+  }
+  const keyName = KEY_SECRET[provider]!;
+  const hasKey = s.existing.has(keyName) || (legacyKey && provider === previous);
+  if (!hasKey || !(await confirm("Keep the existing API key?", true))) {
+    s.secrets[keyName] = await secret(`${label} API key (hidden)`);
+    if (legacyKey) s.secrets.DIGEST_API_KEY = null;
+  }
+  if (provider === "custom") {
+    info(color.dim("  The key is sent as Authorization: Bearer, and the body is Resend-style JSON. For another"));
+    info(color.dim("  header or body, set DIGEST_CUSTOM_AUTH and DIGEST_CUSTOM_BODY in wrangler.jsonc (docs/SETUP.md#custom)."));
   }
   info(color.dim(`  Make sure ${fromDomain} is verified as a sending domain with ${label}.`));
 }

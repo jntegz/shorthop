@@ -5,6 +5,7 @@
 import {
   GLOBAL_LOCK_SEC,
   GLOBAL_MAX_FAILS,
+  GLOBAL_MIN_NETWORKS,
   GLOBAL_WINDOW_SEC,
   LOCK_BASE_SEC,
   LOCK_MAX_SEC,
@@ -69,7 +70,12 @@ export async function revokeAllSessions(db: D1Database): Promise<void> {
   await setSettingStmt(db, "session_epoch", crypto.randomUUID()).run();
 }
 
-const sessionPayload = (exp: number, epoch: string, email: string) => `${VERSION}|${exp}|${epoch}|${email}`;
+/** Settings key prefix of sessions ended by logging out, kept until they would have expired. */
+const REVOKED_PREFIX = "revoked_session:";
+
+// The password hash is signed in too, so changing the password ends every session.
+const sessionPayload = (cfg: LoginConfig, exp: number, epoch: string, email: string) =>
+  `${VERSION}|${exp}|${epoch}|${toBase64Url(cfg.password.hash)}|${email}`;
 
 export async function issueSessionCookie(
   db: D1Database,
@@ -79,7 +85,7 @@ export async function issueSessionCookie(
 ): Promise<{ cookie: string; exp: number }> {
   const exp = now + SESSION_TTL_SEC;
   const epoch = await getEpoch(db);
-  const mac = toBase64Url(await sign(cfg.secret, sessionPayload(exp, epoch, email)));
+  const mac = toBase64Url(await sign(cfg.secret, sessionPayload(cfg, exp, epoch, email)));
   return {
     cookie: `${SESSION_COOKIE}=${VERSION}.${exp}.${epoch}.${mac}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${SESSION_TTL_SEC}`,
     exp,
@@ -106,7 +112,7 @@ export async function readSession(
   cfg: LoginConfig,
   email: string,
   now: number,
-): Promise<{ exp: number } | null> {
+): Promise<{ exp: number; mac: string } | null> {
   const raw = cookieValue(request.headers.get("Cookie"), SESSION_COOKIE);
   if (!raw) return null;
   const [version, expRaw, epoch, macRaw, ...rest] = raw.split(".");
@@ -116,9 +122,20 @@ export async function readSession(
   const mac = fromBase64Url(macRaw);
   if (!mac) return null;
   // The MAC is checked first (constant time), so junk cookies never reach D1.
-  const valid = await crypto.subtle.verify("HMAC", await hmacKey(cfg.secret), mac, encoder.encode(sessionPayload(exp, epoch, email)));
-  if (!valid || epoch !== (await getEpoch(db))) return null;
-  return { exp };
+  const valid = await crypto.subtle.verify("HMAC", await hmacKey(cfg.secret), mac, encoder.encode(sessionPayload(cfg, exp, epoch, email)));
+  if (!valid) return null;
+  const { results } = await db
+    .prepare("SELECT key, value FROM settings WHERE key IN ('session_epoch', ?)")
+    .bind(REVOKED_PREFIX + macRaw)
+    .all<{ key: string; value: string }>();
+  const current = results.find((r) => r.key === "session_epoch")?.value ?? "0";
+  if (epoch !== current || results.some((r) => r.key.startsWith(REVOKED_PREFIX))) return null;
+  return { exp, mac: macRaw };
+}
+
+/** Ends one session (logging out), leaving the others signed in. */
+export async function revokeSession(db: D1Database, session: { exp: number; mac: string }): Promise<void> {
+  await setSettingStmt(db, REVOKED_PREFIX + session.mac, String(session.exp)).run();
 }
 
 // --- Client networks ----------------------------------------------------------
@@ -195,10 +212,20 @@ export async function globalLockedUntil(db: D1Database, now: number): Promise<nu
   return row && row.locked_until > now ? row.locked_until : 0;
 }
 
-/** Counts a failure towards the global brake and applies it at the threshold. */
+/**
+ * Counts a failure towards the global brake and applies it at the threshold.
+ * Only failures from several networks count: one network is already held back
+ * by its own lockout, and must not be able to lock the owner out everywhere.
+ * Call it after the failure's login event is written.
+ */
 export async function recordGlobalFailure(db: D1Database, now: number): Promise<void> {
   const state = await chargeAttempt(db, GLOBAL_KEY, now, GLOBAL_WINDOW_SEC);
-  if (state.lockedUntil <= now && state.fails >= GLOBAL_MAX_FAILS) {
+  if (state.lockedUntil > now || state.fails < GLOBAL_MAX_FAILS) return;
+  const networks = await db
+    .prepare("SELECT COUNT(DISTINCT ip_hash) AS n FROM login_events WHERE ok = 0 AND ts > ?")
+    .bind(now - GLOBAL_WINDOW_SEC)
+    .first<{ n: number }>();
+  if ((networks?.n ?? 0) >= GLOBAL_MIN_NETWORKS) {
     await db
       .prepare("UPDATE auth_failures SET locked_until = ?2, fails = 0, window_start = ?3, updated_at = ?3 WHERE key = ?1")
       .bind(GLOBAL_KEY, now + GLOBAL_LOCK_SEC, now)
@@ -216,6 +243,8 @@ export async function pruneLoginState(db: D1Database, now: number): Promise<void
   await db.batch([
     db.prepare("DELETE FROM login_events WHERE ts < ?").bind(now - LOGIN_EVENT_RETENTION_SEC),
     db.prepare("DELETE FROM auth_failures WHERE locked_until <= ?1 AND updated_at < ?2").bind(now, now - 2 * 86400),
+    // The prefix range uses the settings primary key; values are expiry times.
+    db.prepare("DELETE FROM settings WHERE key >= ?1 AND key < ?2 AND CAST(value AS INTEGER) <= ?3").bind(REVOKED_PREFIX, `${REVOKED_PREFIX}~`, now),
   ]);
 }
 
@@ -229,7 +258,7 @@ export interface SecuritySummary {
 export async function securitySummary(db: D1Database, now: number): Promise<SecuritySummary> {
   const [failed, locked, global, recent] = await db.batch<Record<string, number | string>>([
     db.prepare("SELECT COUNT(*) AS n FROM login_events WHERE ok = 0 AND ts >= ?").bind(now - 86400),
-    db.prepare("SELECT COUNT(*) AS n FROM auth_failures WHERE key != ?1 AND locked_until > ?2").bind(GLOBAL_KEY, now),
+    db.prepare("SELECT COUNT(*) AS n FROM auth_failures WHERE key != ?1 AND key NOT LIKE 'api:%' AND locked_until > ?2").bind(GLOBAL_KEY, now),
     db.prepare("SELECT locked_until FROM auth_failures WHERE key = ?1 AND locked_until > ?2").bind(GLOBAL_KEY, now),
     db.prepare("SELECT ts, ok, country FROM login_events ORDER BY ts DESC LIMIT 8"),
   ]);

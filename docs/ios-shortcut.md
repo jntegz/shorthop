@@ -47,4 +47,4 @@ curl -X POST 'https://ADMIN_HOST/api/links?format=text' \
   -d '{"url":"https://example.com/new-post","slug":"new-post","tags":["linkedin"]}'
 ```
 
-The JSON body also accepts `domain` (another of your short domains; the primary one by default), `title`, `notes`, `expiresAt` (ISO date or unix seconds), `utm` (true/false) and `passQuery` (true/false). Without `?format=text`, the response is the full link as JSON.
+The JSON body also accepts `domain` (another of your short domains; the primary one by default), `title`, `notes`, `expiresAt` (ISO date or unix seconds), `utm` (true/false, off by default) and `passQuery` (true/false). Without `?format=text`, the response is the full link as JSON.

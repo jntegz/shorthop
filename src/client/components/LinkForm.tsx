@@ -50,7 +50,7 @@ function initial(link?: LinkDTO, slug = "", domain = ""): FormState {
     notes: link?.notes ?? "",
     expires: toLocalInput(link?.expiresAt ?? null),
     active: link?.active ?? true,
-    utm: link?.utm ?? true,
+    utm: link?.utm ?? false,
     utmTemplate: link?.utmTemplate ?? "",
     passQuery: link?.passQuery ?? false,
   };
@@ -183,8 +183,8 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
         ) : null}
 
         {!editing ? (
-          <Field label="Custom short link" htmlFor="slug" hint="Optional. Leave blank and we’ll create one for you." error={errors.slug} info={LINK_HELP.slug}>
-            <div className="flex items-center overflow-hidden rounded-lg border border-line bg-bg focus-within:ring-2 focus-within:ring-accent/25"><span className="flex shrink-0 items-center gap-2 pl-3 text-sm text-muted"><Link2 className="size-4" />{domain || "sh.example"}/</span><Input id="slug" className="border-0 bg-transparent shadow-none focus:ring-0" placeholder="your-link" value={f.slug} onChange={(e) => set("slug", e.target.value)} autoComplete="off" aria-invalid={Boolean(errors.slug)} /></div>
+          <Field label="Custom slug (your own link ending)" htmlFor="slug" hint={`Optional. Type your own word or phrase to go after ${domain || "sh.example"}/, e.g. webinar-2026. Leave blank for a random one.`} error={errors.slug} info={LINK_HELP.slug}>
+            <div className="flex items-center overflow-hidden rounded-lg border border-line bg-bg focus-within:ring-2 focus-within:ring-accent/25"><span className="flex shrink-0 items-center gap-2 pl-3 text-sm text-muted"><Link2 className="size-4" />{domain || "sh.example"}/</span><Input id="slug" className="border-0 bg-transparent shadow-none focus:ring-0" placeholder="type-your-own-slug" value={f.slug} onChange={(e) => set("slug", e.target.value)} autoComplete="off" aria-invalid={Boolean(errors.slug)} /></div>
           </Field>
         ) : null}
 

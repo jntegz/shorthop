@@ -8,7 +8,7 @@ import { escapeHtml } from "../shared/html";
 import { isProbePath } from "../shared/slug";
 import { getSetting, setSettingStmt } from "./db";
 import { domainsOf } from "./domains";
-import { MailerError, mailerStatus, sendMail } from "./mailer";
+import { MailerError, mailerStatus, sendMail, withMailSettings } from "./mailer";
 import { runRollup } from "./rollup";
 import { missesCleared } from "./misses";
 
@@ -212,7 +212,8 @@ export interface DigestResult {
 }
 
 /** Sends the digest. Scheduled runs send once per ISO week; `force` is for test sends. */
-export async function runDigest(env: Env, now: Date = new Date(), force = false): Promise<DigestResult> {
+export async function runDigest(baseEnv: Env, now: Date = new Date(), force = false): Promise<DigestResult> {
+  const env = await withMailSettings(baseEnv);
   const week = isoWeek(addDays(utcDate(now), -1));
   const { provider, problem } = mailerStatus(env);
   if (provider === "off") return { status: "skipped", week, reason: problem ?? "Digest is turned off" };
@@ -237,11 +238,16 @@ export async function runDigest(env: Env, now: Date = new Date(), force = false)
       html,
       text,
     });
-    if (!force) await setSettingStmt(env.DB, "last_digest_week", week).run();
     console.log(JSON.stringify({ message: "digest sent", week, provider, messageId: result.messageId }));
+    if (!force) {
+      // The email went out: a failed marker write must not report it as failed.
+      await setSettingStmt(env.DB, "last_digest_week", week)
+        .run()
+        .catch((err: unknown) => console.error(JSON.stringify({ message: "digest week not saved", week, error: String(err) })));
+    }
     return { status: "sent", week, messageId: result.messageId };
   } catch (err) {
-    const code = err instanceof MailerError ? err.code : ((err as { code?: string }).code ?? String(err));
+    const code = err instanceof MailerError ? err.code : err instanceof Error ? `${err.name}: ${err.message}` : String(err);
     console.error(JSON.stringify({ message: "digest send failed", week, provider, error: code }));
     return { status: "failed", week, reason: code };
   }

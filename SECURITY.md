@@ -10,7 +10,7 @@ Shorthop is a personal project without a bug bounty.
 
 - **Admin (`/_admin`):** by default, Cloudflare Access plus an admin password. The Worker verifies the Access JWT itself (issuer, audience, signature, allowed email) on every request, so a misconfigured Access application or a direct request can't bypass it. The password session is bound to the Access identity it was issued to.
 - **Fail closed:** missing or malformed configuration keeps the admin shut. Access is only turned off by the exact value `ADMIN_AUTH="password"`; empty Access settings without it, or any other value, return an error.
-- **Password login:** PBKDF2-SHA256 (25,000 or 100,000 iterations), constant-time comparison, a signed `__Host-` cookie with `SameSite=Strict`, CSRF checks, 5 attempts per network before a lockout that doubles up to 24 hours, and a global pause after 30 failures in an hour. IP addresses are never stored: lockouts and the login log use a keyed hash of the network.
+- **Password login:** PBKDF2-SHA256 (25,000 or 100,000 iterations), constant-time comparison, a signed `__Host-` cookie with `SameSite=Strict`, CSRF checks, 5 attempts per network before a lockout that doubles up to 24 hours, and a global pause after 30 failures in an hour from 5 or more networks. Logging out revokes that session on the server, and a password change ends every session. Wrong API tokens lock the sending network after 10 a minute, before the token is even compared. IP addresses are never stored: lockouts and the login log use a keyed hash of the network.
 - **API (`/api`):** a Bearer token of 40 random characters, compared in constant time. Failed attempts are rate-limited per IP. By default the token can only read and create: changing or deleting links, overwriting imports and changing settings need the admin, so a token lost with a phone can't retarget links people already have. `API_TOKEN_SCOPE="full"` lifts that limit.
 - **Secrets** are Wrangler secrets. The setup passes them to Wrangler through stdin and never writes them to disk; the admin never displays them, and System status reports only whether they're set and long enough.
 - **Outbound email:** provider hosts are fixed in the code, redirects are refused, and the recipient comes only from configuration. Webhooks are signed with HMAC-SHA256.
@@ -49,7 +49,7 @@ With `ADMIN_AUTH="password"` the login page is reachable by anyone. Shorthop's o
 
 Better still, keep Cloudflare Access on: `npm run setup -- access`.
 
-**A known trade-off:** after 30 failed logins in an hour, Shorthop pauses every login for 15 minutes. Without Access, an attacker can trigger that pause repeatedly from a handful of networks and keep you from signing in (existing sessions keep working). The pause exists to stop distributed password guessing; Access removes the problem, because the login page is then unreachable without your email.
+**A known trade-off:** after 30 failed logins in an hour from 5 or more networks, Shorthop pauses every login for 15 minutes. Without Access, an attacker with that many networks can trigger the pause repeatedly and keep you from signing in (existing sessions keep working). The pause exists to stop distributed password guessing; Access removes the problem, because the login page is then unreachable without your email.
 
 ## Hardening checklist
 

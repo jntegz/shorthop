@@ -6,6 +6,7 @@
 
 import { HOSTNAME_RE } from "../shared/domains";
 import { IMPORT_SLUG_RE } from "../shared/slug";
+import { SCANNER_PATHS_PER_DAY } from "../shared/types";
 import { domainsOf } from "./domains";
 
 const ROW_LIMIT = 10000;
@@ -22,11 +23,21 @@ export function aeAvailable(env: Env): boolean {
   return Boolean(env.CF_ACCOUNT_ID && env.CF_ANALYTICS_TOKEN);
 }
 
-async function aeQuery<T extends Record<string, unknown>>(env: Env, sql: string): Promise<T[]> {
+/** A query returned ROW_LIMIT rows, so some were cut off. */
+export class AeRowLimitError extends Error {
+  constructor() {
+    super(`Analytics Engine query hit the ${ROW_LIMIT}-row limit`);
+    this.name = "AeRowLimitError";
+  }
+}
+
+/** `strict` throws AeRowLimitError on a truncated result (the rollup can't store a partial day); otherwise it is logged. */
+async function aeQuery<T extends Record<string, unknown>>(env: Env, sql: string, strict = false): Promise<T[]> {
   const res = await fetch(`https://api.cloudflare.com/client/v4/accounts/${env.CF_ACCOUNT_ID}/analytics_engine/sql`, {
     method: "POST",
     headers: { Authorization: `Bearer ${env.CF_ANALYTICS_TOKEN}`, "Content-Type": "text/plain" },
     body: sql,
+    signal: AbortSignal.timeout(15000),
   });
   if (!res.ok) {
     throw new Error(`Analytics Engine SQL failed (${res.status}): ${(await res.text()).slice(0, 300)}`);
@@ -34,6 +45,7 @@ async function aeQuery<T extends Record<string, unknown>>(env: Env, sql: string)
   const json = await res.json<{ data?: T[] }>();
   const data = json.data ?? [];
   if (data.length >= ROW_LIMIT) {
+    if (strict) throw new AeRowLimitError();
     console.error(JSON.stringify({ message: "AE query hit row limit, results truncated", limit: ROW_LIMIT }));
   }
   return data;
@@ -130,15 +142,15 @@ const str = (v: unknown) => (v === null || v === undefined ? "" : String(v));
 /** Every data point is written with a domain; an empty one counts as the primary. */
 const domainOf = (env: Env, v: unknown) => str(v) || domainsOf(env).primary;
 
-export async function queryDim(env: Env, dim: AeDim, fromSec: number, toSec: number, filter?: LinkFilter): Promise<AeDimRow[]> {
+export async function queryDim(env: Env, dim: AeDim, fromSec: number, toSec: number, filter?: LinkFilter, strict = false): Promise<AeDimRow[]> {
   const cols = AE_DIMS[dim];
   const select = cols.map((c, i) => `${c} AS v${i}`).join(", ");
   const group = cols.map((_, i) => `v${i}`).join(", ");
   const extra = dim === "bot" ? "blob1 = 'bot'" : "blob1 != 'miss'";
   const sql = `SELECT ${DAY} AS day, blob17 AS domain, index1 AS slug, ${select}, ${CLICKS} AS clicks, ${BOTS} AS bots
 FROM ${dataset(env)} WHERE ${where(fromSec, toSec, filter, extra)}
-GROUP BY day, domain, slug, ${group} ORDER BY clicks DESC LIMIT ${ROW_LIMIT} FORMAT JSON`;
-  const rows = await aeQuery<Raw>(env, sql);
+GROUP BY day, domain, slug, ${group} ORDER BY ${dim === "bot" ? "bots" : "clicks"} DESC LIMIT ${ROW_LIMIT} FORMAT JSON`;
+  const rows = await aeQuery<Raw>(env, sql, strict);
   return rows.map((r) => ({
     day: num(r.day),
     domain: domainOf(env, r.domain),
@@ -150,19 +162,21 @@ GROUP BY day, domain, slug, ${group} ORDER BY clicks DESC LIMIT ${ROW_LIMIT} FOR
 }
 
 /** Country × device × source combinations, the daily_stats shape. */
-export async function queryCombos(env: Env, fromSec: number, toSec: number, filter?: LinkFilter): Promise<AeComboRow[]> {
+export async function queryCombos(env: Env, fromSec: number, toSec: number, filter?: LinkFilter, strict = false): Promise<AeComboRow[]> {
   const base = `${DAY} AS day, blob17 AS domain, index1 AS slug, blob2 AS country, blob8 AS device, blob12 AS source`;
   const group = "GROUP BY day, domain, slug, country, device, source";
   const [counts, uniques] = await Promise.all([
     aeQuery<Raw>(
       env,
       `SELECT ${base}, ${CLICKS} AS clicks, ${BOTS} AS bots FROM ${dataset(env)}
-WHERE ${where(fromSec, toSec, filter, "blob1 != 'miss'")} ${group} LIMIT ${ROW_LIMIT} FORMAT JSON`,
+WHERE ${where(fromSec, toSec, filter, "blob1 != 'miss'")} ${group} ORDER BY clicks DESC LIMIT ${ROW_LIMIT} FORMAT JSON`,
+      strict,
     ),
     aeQuery<Raw>(
       env,
       `SELECT ${base}, count(DISTINCT blob15) AS uniques FROM ${dataset(env)}
-WHERE ${where(fromSec, toSec, filter, "blob1 = 'click'")} ${group} LIMIT ${ROW_LIMIT} FORMAT JSON`,
+WHERE ${where(fromSec, toSec, filter, "blob1 = 'click'")} ${group} ORDER BY uniques DESC LIMIT ${ROW_LIMIT} FORMAT JSON`,
+      strict,
     ),
   ]);
   const key = (r: Raw) => `${num(r.day)}|${domainOf(env, r.domain)}|${str(r.slug)}|${str(r.country)}|${str(r.device)}|${str(r.source)}`;
@@ -181,11 +195,12 @@ WHERE ${where(fromSec, toSec, filter, "blob1 = 'click'")} ${group} LIMIT ${ROW_L
 }
 
 /** True per-day uniques per link (visitor hashes are per day). */
-export async function queryUniques(env: Env, fromSec: number, toSec: number, filter?: LinkFilter): Promise<AeTotalRow[]> {
+export async function queryUniques(env: Env, fromSec: number, toSec: number, filter?: LinkFilter, strict = false): Promise<AeTotalRow[]> {
   const rows = await aeQuery<Raw>(
     env,
     `SELECT ${DAY} AS day, blob17 AS domain, index1 AS slug, count(DISTINCT blob15) AS uniques FROM ${dataset(env)}
-WHERE ${where(fromSec, toSec, filter, "blob1 = 'click'")} GROUP BY day, domain, slug LIMIT ${ROW_LIMIT} FORMAT JSON`,
+WHERE ${where(fromSec, toSec, filter, "blob1 = 'click'")} GROUP BY day, domain, slug ORDER BY uniques DESC LIMIT ${ROW_LIMIT} FORMAT JSON`,
+    strict,
   );
   return rows.map((r) => ({ day: num(r.day), domain: domainOf(env, r.domain), slug: str(r.slug), uniques: num(r.uniques) }));
 }
@@ -203,6 +218,10 @@ export function isQueryableMiss(domain: string, slug: string): boolean {
   return HOSTNAME_RE.test(domain) && IMPORT_SLUG_RE.test(slug) && slug.length <= 96;
 }
 
+/**
+ * Missed paths per day and link. Never strict: one wordlist scanner can miss thousands
+ * of paths a day, and the rollup keeps only the top ones, which come first (most human hits).
+ */
 export async function queryMisses(env: Env, fromSec: number, toSec: number, cutoffs?: MissCutoffs): Promise<AeMissRow[]> {
   const from = cutoffs?.all != null ? Math.max(fromSec, cutoffs.all + 1) : fromSec;
   if (from >= toSec) return [];
@@ -230,7 +249,7 @@ GROUP BY day, domain, slug ORDER BY hits DESC LIMIT ${ROW_LIMIT} FORMAT JSON`,
     env,
     `SELECT ${DAY} AS day, blob17 AS domain, index1 AS slug, sumIf(_sample_interval, double2 = 0) AS hits
 FROM ${dataset(env)} WHERE ${where(from, toSec, undefined, `${extra} AND double2 = 0 AND blob15 IN (${scanners.map((v) => `'${v}'`).join(", ")})`)}
-GROUP BY day, domain, slug LIMIT ${ROW_LIMIT} FORMAT JSON`,
+GROUP BY day, domain, slug ORDER BY hits DESC LIMIT ${ROW_LIMIT} FORMAT JSON`,
   );
   const byKey = new Map(out.map((r) => [`${r.day}|${r.domain}|${r.slug}`, r]));
   for (const s of scanned) {
@@ -243,8 +262,6 @@ GROUP BY day, domain, slug LIMIT ${ROW_LIMIT} FORMAT JSON`,
   return out;
 }
 
-/** A visitor missing this many different paths in one UTC day is a scanner, whatever its user agent says. */
-export const SCANNER_PATHS_PER_DAY = 5;
 const MAX_SCANNERS = 200;
 const VISITOR_RE = /^[0-9a-f]{16}$/;
 
@@ -268,7 +285,7 @@ export async function queryTotalsByLink(
   const rows = await aeQuery<Raw>(
     env,
     `SELECT blob17 AS domain, index1 AS slug, ${CLICKS} AS clicks, ${BOTS} AS bots FROM ${dataset(env)}
-WHERE ${where(fromSec, toSec, undefined, "blob1 != 'miss'")} GROUP BY domain, slug LIMIT ${ROW_LIMIT} FORMAT JSON`,
+WHERE ${where(fromSec, toSec, undefined, "blob1 != 'miss'")} GROUP BY domain, slug ORDER BY clicks DESC LIMIT ${ROW_LIMIT} FORMAT JSON`,
   );
   return rows.map((r) => ({ domain: domainOf(env, r.domain), slug: str(r.slug), clicks: num(r.clicks), bots: num(r.bots) }));
 }
@@ -286,14 +303,16 @@ export interface AeRecentRow {
   referrer: string;
   source: string;
   botName: string;
+  /** The day's visitor hash: for matching against queryScanners, never sent to the browser. */
+  visitor: string;
 }
 
-export async function queryRecent(env: Env, sinceSec: number, filter?: LinkFilter, limit = 50): Promise<AeRecentRow[]> {
+export async function queryRecent(env: Env, sinceSec: number, filter?: LinkFilter, limit = 50, missesOnly = false): Promise<AeRecentRow[]> {
   const rows = await aeQuery<Raw>(
     env,
     `SELECT toUnixTimestamp(timestamp) AS ts, blob17 AS domain, index1 AS slug, blob1 AS event, blob2 AS country, blob4 AS city,
-blob8 AS device, blob9 AS os, blob10 AS browser, blob11 AS referrer, blob12 AS source, blob14 AS bot
-FROM ${dataset(env)} WHERE ${where(sinceSec, Date.now() / 1000 + 60, filter, "")}
+blob8 AS device, blob9 AS os, blob10 AS browser, blob11 AS referrer, blob12 AS source, blob14 AS bot, blob15 AS visitor
+FROM ${dataset(env)} WHERE ${where(sinceSec, Date.now() / 1000 + 60, filter, missesOnly ? "blob1 = 'miss'" : "")}
 ORDER BY timestamp DESC LIMIT ${Math.min(Math.max(1, Math.floor(limit)), 200)} FORMAT JSON`,
   );
   return rows.map((r) => ({
@@ -309,5 +328,6 @@ ORDER BY timestamp DESC LIMIT ${Math.min(Math.max(1, Math.floor(limit)), 200)} F
     referrer: str(r.referrer),
     source: str(r.source),
     botName: str(r.bot),
+    visitor: str(r.visitor),
   }));
 }

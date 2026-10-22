@@ -117,6 +117,9 @@ export interface OverviewDTO {
   devices: BreakdownRow[];
 }
 
+/** A visitor missing this many different paths in one UTC day is a scanner, whatever its user agent says. */
+export const SCANNER_PATHS_PER_DAY = 5;
+
 /** How much of the misses report is kept. Scanner probes and bot-only misses are "noise". */
 export interface MissPolicy {
   /** Record noise at all. Off by default: it isn't even written to Analytics Engine. */
@@ -163,6 +166,8 @@ export interface RecentHit {
   referrer: string;
   source: string;
   botName: string;
+  /** Misses only: the visitor missed SCANNER_PATHS_PER_DAY or more paths in a day, so the report counts it as a bot. */
+  scanner?: boolean;
 }
 
 export interface DomainRecord {
@@ -210,6 +215,33 @@ export interface SecurityDTO {
   recent: { at: number; ok: boolean; country: string }[];
 }
 
+/** Email delivery services. Picked in Settings → Weekly digest, or DIGEST_PROVIDER in wrangler.jsonc. */
+export const DIGEST_PROVIDERS = ["cloudflare", "resend", "emailit", "postmark", "sendgrid", "mailgun", "custom", "webhook", "off"] as const;
+export type DigestProvider = (typeof DIGEST_PROVIDERS)[number];
+
+export interface MailProviderDTO {
+  id: DigestProvider;
+  name: string;
+  /** Why it can't send, or null when it could be used right now. */
+  problem: string | null;
+  /** Wrangler secrets it reads, and whether each is set (never their values). */
+  secrets: { name: string; set: boolean }[];
+}
+
+export interface MailSetupDTO {
+  provider: string;
+  from: string;
+  /** Config-only (DIGEST_TO). */
+  to: string;
+  mailgunDomain: string;
+  mailgunRegion: "us" | "eu";
+  /** True when the admin's choice overrides wrangler.jsonc. */
+  customized: boolean;
+  /** What wrangler.jsonc says, used after a reset. */
+  defaults: { provider: string; from: string };
+  providers: MailProviderDTO[];
+}
+
 export interface SettingsDTO {
   defaultUtm: string;
   publicOrigin: string;
@@ -218,7 +250,8 @@ export interface SettingsDTO {
   /** Finished days the next rollup would summarize; null when up to date. */
   rollupPending: { from: string; to: string; days: number } | null;
   lastDigestWeek: string | null;
-  digestTo: string;
+  /** Null for the API token, which doesn't see the recipient. */
+  digestTo: string | null;
   /** Display name of the delivery provider (DIGEST_PROVIDER). */
   digestProvider: string;
   /** Why the digest can't be sent, or null when it's ready. */
@@ -232,7 +265,8 @@ export interface SettingsDTO {
   linksPerDomain: Record<string, number>;
   /** Sample data from `npm run seed:dev`, or null. */
   demo: DemoDTO | null;
-  security: SecurityDTO;
+  /** Null for the API token, which doesn't see login activity. */
+  security: SecurityDTO | null;
 }
 
 export interface DemoDTO {

@@ -111,16 +111,18 @@ npm run types            # then regenerate worker-configuration.d.ts
 | `WORKERS_PLAN` | var | `free` or `paid`; System status checks the password hash cost against it |
 | `API_TOKEN_SCOPE` | var | `create` (default): the API token reads, creates links and imports new ones. `full`: it can also change and delete links and settings. Anything else means `create` |
 | `KV_CACHE_TTL` | var | Edge cache for slug lookups in seconds (default 60; values under 30 fall back to 60) |
-| `DIGEST_PROVIDER` | var | `cloudflare`, `resend`, `postmark`, `sendgrid`, `mailgun`, `webhook` or `off` |
+| `DIGEST_PROVIDER` | var | Default delivery: `cloudflare`, `resend`, `emailit`, `postmark`, `sendgrid`, `mailgun`, `custom`, `webhook` or `off`. Settings → Weekly digest → **Set up email** can override it (and `DIGEST_FROM`) without a deploy |
 | `DIGEST_FROM`, `DIGEST_TO` | var | Sender and the only recipient of the digest and alerts |
 | `DIGEST_MAILGUN_DOMAIN`, `DIGEST_MAILGUN_REGION` | var | Mailgun only |
+| `DIGEST_CUSTOM_AUTH`, `DIGEST_CUSTOM_BODY` | var | Custom email API only, optional: auth header and JSON body template ([docs/SETUP.md](docs/SETUP.md#custom)) |
 | `DEV_AUTH_BYPASS` | var | `1` only in `.dev.vars`: skips Access on localhost. Ignored on any other host |
 | `API_TOKEN` | secret | Bearer token for `/api` |
 | `VISITOR_SALT` | secret | Mixed into the visitor hash, together with a random salt per day that's deleted once the day is over |
 | `ADMIN_PASSWORD_HASH` | secret | PBKDF2 hash of the admin password |
 | `SESSION_SECRET` | secret | Signs admin sessions; rotating it logs everyone out |
 | `CF_ANALYTICS_TOKEN` | secret | Optional: API token with Account Analytics Read, for stats |
-| `DIGEST_API_KEY` | secret | Resend, Postmark, SendGrid or Mailgun API key |
+| `RESEND_API_KEY`, `EMAILIT_API_KEY`, `POSTMARK_API_KEY`, `SENDGRID_API_KEY`, `MAILGUN_API_KEY` | secret | Each provider's own API key. An older `DIGEST_API_KEY` still works, for the provider named in `DIGEST_PROVIDER` only |
+| `DIGEST_CUSTOM_URL`, `DIGEST_CUSTOM_API_KEY` | secret | Custom email API only: HTTPS endpoint and key |
 | `DIGEST_WEBHOOK_URL`, `DIGEST_WEBHOOK_SECRET` | secret | Webhook endpoint and its HMAC key |
 
 ## How requests are routed
@@ -164,7 +166,7 @@ docs/                      SETUP.md, CLOUDFLARE-FREE-TIER.md, PRIVACY.md, ios-sh
 - **A 60-second KV cache:** a cached value, including a cached "not found", lives until its TTL ends. At 60 seconds, edits reach everyone within about a minute.
 - **Daily uniques:** the visitor hash covers the IP address, user agent and date, with a secret salt and a random salt for that day. The daily job deletes each day's salt once the day is over, so afterwards nobody, the owner included, can work out whose visit a hash was. Hashes can't be followed across days. Stats show the sum of daily uniques.
 - **Imported links** keep `http://` targets and get no UTM tags, so they redirect exactly as before. New links must be `https://`.
-- **Bots** still get the redirect but are counted separately, by user agent, HEAD and prefetch requests, and datacenter networks. iCloud Private Relay is deliberately not flagged.
+- **Bots** still get the redirect but are counted separately, by user agent, HEAD and prefetch requests, and datacenter networks. iCloud Private Relay is deliberately not flagged. A visitor that misses 5 or more different paths in one UTC day counts as a scanner, and that can include you while you test typos. Chrome prerendering an address as you type it counts as a bot too. The Misses page’s **Latest misses, as recorded** shows how each recent miss was counted.
 
 ## FAQ
 

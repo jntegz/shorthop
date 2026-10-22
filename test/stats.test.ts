@@ -1,11 +1,13 @@
 import { env } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { addDays, dayStartSec, utcDate } from "../src/shared/dates";
-import type { LinkStatsDTO, MissRow, OverviewDTO, SettingsDTO } from "../src/shared/types";
-import { dataset } from "../src/worker/ae";
+import type { LinkStatsDTO, MissRow, OverviewDTO, RecentHit, SettingsDTO } from "../src/shared/types";
+import { AeRowLimitError, dataset } from "../src/worker/ae";
 import { digestData, renderDigest, runDigest } from "../src/worker/digest";
 import { jsonChunks, setSettingStmt } from "../src/worker/db";
+import { isProbeCleared, missesCleared } from "../src/worker/misses";
 import { capDims, runRollup } from "../src/worker/rollup";
+import { forgetAllTimeClicks } from "../src/worker/stats-data";
 import { aePoint, mockAeSql, type StoredPoint } from "./ae-mock";
 import { API, bearer, call, captureClicks, json, ORIGIN, putLink, resetData } from "./helpers";
 
@@ -44,6 +46,7 @@ let store: StoredPoint[];
 
 beforeEach(async () => {
   await resetData();
+  forgetAllTimeClicks();
   store = [];
   await putLink("guide", { u: "https://example.com/guide" });
   await putLink("cv", { u: "https://example.com/cv" });
@@ -135,6 +138,53 @@ describe("rollup", () => {
     expect(chunks.flatMap((c) => JSON.parse(c) as unknown[])).toHaveLength(30000);
   });
 
+  it("never writes two (other) rows when a real value is named (other)", async () => {
+    const row = (value: string, clicks: number) => ({ date: YESTERDAY, domain: "sh.example", slug: "guide", dim: "city", value, clicks, uniques: 0, bots: 0 });
+    const capped = capDims([row("(other)", 500), ...Array.from({ length: 150 }, (_, i) => row(`c${i}`, 150 - i))]);
+    expect(capped.filter((r) => r.value === "(other)")).toEqual([row("(other)", 500 + ((1 + 51) * 51) / 2)]);
+    expect(capped).toHaveLength(100);
+
+    // The same through a full rollup: a breakdown with a real "(other)" in its top values still saves.
+    mockAeSql(store);
+    const e = { ...env, ...AE_ENV };
+    const y = dayStartSec(YESTERDAY) + 40000;
+    // Without a country the city is stored as is, so a city named "(other)" meets the fold.
+    const cities = [{ path: "/guide", cf: { city: "(other)", country: "" } }, ...Array.from({ length: 101 }, (_, i) => ({ path: "/guide", cf: { city: `Town${i}`, country: "" } }))];
+    await hits(store, y, [...cities, ...cities.slice(0, 3)]);
+    expect((await runRollup(e, NOW)).rolled.at(-1)).toBe(YESTERDAY);
+    expect(await rows("SELECT COUNT(*) AS n FROM daily_dims WHERE dim = 'city' AND slug = 'guide' AND value = '(other)' AND date = ?", YESTERDAY)).toEqual([{ n: 1 }]);
+  });
+
+  it("goes a day at a time when a week doesn't fit in one query, and never saves a cut-off day", async () => {
+    mockAeSql(store);
+    const real = vi.mocked(globalThis.fetch).getMockImplementation()!;
+    let maxSpan = 7 * 86400;
+    vi.mocked(globalThis.fetch).mockImplementation(async (input, init) => {
+      const sql = typeof init?.body === "string" ? init.body : "";
+      const [from = 0, to = 0] = [...sql.matchAll(/toDateTime\((\d+)\)/g)].map((m) => Number(m[1]));
+      // Pretend the country × device × source counts overflow any window longer than maxSpan.
+      if (/blob8 AS device/.test(sql) && to - from > maxSpan) {
+        return Response.json({ data: Array.from({ length: 10000 }, (_, i) => ({ day: from, domain: "sh.example", slug: `x${i}`, clicks: "1", bots: "0" })) });
+      }
+      return real(input, init);
+    });
+    const e = { ...env, ...AE_ENV };
+
+    maxSpan = 86400;
+    const res = await runRollup(e, NOW);
+    expect(res.rolled).toHaveLength(7);
+    expect(await rows("SELECT slug, clicks FROM daily_dims WHERE dim = 'total' AND date = ? ORDER BY slug", YESTERDAY)).toEqual([
+      { slug: "cv", clicks: 1 },
+      { slug: "guide", clicks: 3 },
+    ]);
+
+    await resetData();
+    maxSpan = 0;
+    await expect(runRollup(e, NOW)).rejects.toBeInstanceOf(AeRowLimitError);
+    expect(await rows("SELECT value FROM settings WHERE key = 'last_rolled'")).toEqual([]);
+    expect(await rows("SELECT COUNT(*) AS n FROM daily_stats")).toEqual([{ n: 0 }]);
+  });
+
   it("keeps a day's real misses however busy the scanners were", () => {
     const miss = (slug: string, clicks: number) => ({ date: TODAY, domain: "sh.example", slug, dim: "miss", value: "", clicks, uniques: 0, bots: 0 });
     const capped = capDims([...Array.from({ length: 300 }, (_, i) => miss(`scan-${i}.php`, 5)), ...Array.from({ length: 5 }, (_, i) => miss(`typo-${i}`, 1))]);
@@ -211,6 +261,22 @@ describe("stats API", () => {
     expect((await list("30d")).find((l) => l.slug === "guide")?.clicksPeriod).toBe(4);
     expect((await list("all")).find((l) => l.slug === "guide")?.clicksPeriod).toBe(4);
     expect((await call(`${API}/links?period=2d`, { headers: bearer })).status).toBe(400);
+  });
+
+  it("keeps the most clicked links when sorting by clicks past the list cap", async () => {
+    mockAeSql(store);
+    await runRollup({ ...env, ...AE_ENV }, NOW);
+    // 5000 newer links without clicks: "guide" and "cv" (created at 1) are the oldest.
+    await env.DB.prepare(
+      `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 5000)
+       INSERT INTO links (domain, slug, target, created_at, updated_at) SELECT 'sh.example', 'new' || i, 'https://example.com/', 1000 + i, 1000 + i FROM n`,
+    ).run();
+    const { links } = (await (await call(`${API}/links?sort=clicks`, { headers: bearer }, AE_ENV)).json()) as { links: { slug: string; clicksPeriod: number }[] };
+    expect(links).toHaveLength(5000);
+    expect(links.slice(0, 2).map((l) => [l.slug, l.clicksPeriod])).toEqual([
+      ["guide", 4],
+      ["cv", 2],
+    ]);
   });
 
   it("says which days the next rollup will save", async () => {
@@ -326,6 +392,49 @@ describe("misses cleanup", () => {
     expect((await call(`${ORIGIN}/_404`)).status).toBe(404);
   });
 
+  it("clears every scanner probe, including ones past the noise limit, and keeps typos of real links", async () => {
+    await env.DB.prepare("INSERT INTO links (domain, slug, target, created_at, updated_at) VALUES ('sh.example', 'Feed.xml', 'https://x.com/', 1, 1)").run();
+    const sec = Math.floor(Date.now() / 1000);
+    await hits(store, sec - 20, [
+      ...Array.from({ length: 130 }, (_, i) => ({ path: `/scan-${i}.php`, ip: "6.6.6.6" })),
+      { path: "/feed.xml", ip: "5.5.5.5" },
+    ]);
+    const probes = async () => (await report()).filter((r) => r.probe);
+    expect(await probes()).toHaveLength(100);
+
+    const res = await clear({ probes: true });
+    expect(await res.json()).toEqual({ cleared: "probes" });
+    expect(await probes()).toEqual([]);
+    const left = await report();
+    expect(left.map((r) => r.slug).sort()).toEqual(["feed.xml", "nope", "old"]);
+    expect(left.find((r) => r.slug === "feed.xml")).toMatchObject({ suggestion: "Feed.xml", probe: false });
+
+    // Stored rows: only real misses, also after re-rolling the past days without a saved policy.
+    const stored = async () => (await rows("SELECT DISTINCT slug FROM daily_dims WHERE dim = 'miss' ORDER BY slug")).map((r) => r.slug);
+    expect(await stored()).toEqual(["old"]);
+    await env.DB.prepare("DELETE FROM settings WHERE key = 'miss_policy'").run();
+    await env.DB.prepare("UPDATE settings SET value = ? WHERE key = 'last_rolled'").bind(addDays(YESTERDAY, -3)).run();
+    await runRollup({ ...env, ...AE_ENV }, NOW);
+    expect(await stored()).toEqual(["old"]);
+    await setPolicy({ trackNoise: true });
+
+    // Later today: a probe stays hidden until tomorrow, a real miss shows at once.
+    await hits(store, sec + 5, [
+      { path: "/later.php", ip: "4.4.4.4" },
+      { path: "/later-typo", ip: "4.4.4.4" },
+    ]);
+    const now = (await report()).map((r) => r.slug);
+    expect(now).toContain("later-typo");
+    expect(now).not.toContain("later.php");
+    const cleared = await missesCleared(env.DB);
+    expect(isProbeCleared(cleared, "later.php", TODAY)).toBe(true);
+    expect(isProbeCleared(cleared, "later.php", addDays(TODAY, 1))).toBe(false);
+    expect(isProbeCleared(cleared, "later-typo", TODAY)).toBe(false);
+
+    expect((await clear({ links: [{ domain: "sh.example", slug: "nope" }], probes: true })).status).toBe(400);
+    expect((await clear({})).status).toBe(200);
+    expect((await missesCleared(env.DB)).probes).toBeNull();
+  });
 });
 
 describe("scanner detection", () => {
@@ -362,6 +471,28 @@ describe("scanner detection", () => {
     await runRollup({ ...env, ...AE_ENV }, NOW);
     expect(await rows("SELECT clicks, bots FROM daily_dims WHERE dim = 'miss' AND slug = 'portal'")).toEqual([{ clicks: 1, bots: 1 }]);
     expectSplit(await report("7d"));
+  });
+
+  it("lists the latest misses with how each was counted", async () => {
+    const t = Math.floor(NOW.getTime() / 1000) - 30;
+    await scan(t);
+    await hits(store, t, [{ path: "/fetched", ua: "curl/8" }]);
+    mockAeSql(store);
+    const res = (await (await call(`${API}/stats/recent?event=miss&limit=200`, { headers: bearer }, AE_ENV)).json()) as { hits: RecentHit[] };
+    expect(res.hits.length).toBeGreaterThan(0);
+    for (const h of res.hits) {
+      expect(h.event).toBe("miss");
+      expect(h).not.toHaveProperty("visitor");
+    }
+    expect(res.hits.find((h) => h.slug === "backup")).toMatchObject({ botName: "", scanner: true });
+    expect(res.hits.find((h) => h.slug === "gide")).toMatchObject({ botName: "", scanner: false });
+    expect(res.hits.find((h) => h.slug === "portal" && !h.scanner)).toBeDefined();
+    expect(res.hits.find((h) => h.slug === "fetched")).toMatchObject({ botName: "HTTP client" });
+
+    // Other recent-hit queries don't carry the visitor hash either.
+    const all = (await (await call(`${API}/stats/recent?limit=200`, { headers: bearer }, AE_ENV)).json()) as { hits: RecentHit[] };
+    expect(all.hits.some((h) => h.event === "click")).toBe(true);
+    for (const h of all.hits) expect(h).not.toHaveProperty("visitor");
   });
 });
 
