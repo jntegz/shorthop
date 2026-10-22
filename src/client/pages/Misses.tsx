@@ -15,10 +15,20 @@ import {
 import { api, call, keys } from "../api";
 import { DownloadButton } from "../components/DownloadButton";
 import { LinkForm } from "../components/LinkForm";
-import { Badge, Button, Card, Dialog, Empty, Field, InfoTip, Notice, PageHeader, RANGE_OPTIONS, Segmented, Select, Spinner, Switch } from "../components/ui";
+import { Badge, Button, Card, Dialog, Empty, Field, InfoTip, Notice, PageHeader, Pagination, RANGE_OPTIONS, Segmented, Select, SortHeader, Spinner, Switch } from "../components/ui";
 import { day, num } from "../lib/format";
 import { PROBE_HELP } from "../lib/help";
 import { linkKey, linkPath, useLinkLabel } from "../lib/links";
+import { pageOf, savedPageSize, savePageSize, sortRows, type PageSize, type SortDir } from "../lib/table";
+
+type MissSort = "slug" | "hits" | "bots" | "lastSeen";
+const MISS_SORT_VALUE: Record<MissSort, (r: MissRow) => string | number> = {
+  slug: (r) => r.slug,
+  hits: (r) => r.hits,
+  bots: (r) => r.bots,
+  // A number, so it sorts newest first by default.
+  lastSeen: (r) => Date.parse(r.lastSeen) || 0,
+};
 
 const retentionLabel = (d: number) => (d === 180 ? "6 months" : `${d} days`);
 const realLimitLabel = (n: number) => (n === 0 ? "No limit" : `${num(n)} paths`);
@@ -104,9 +114,20 @@ function TrackingDialog({ open, onOpenChange, policy }: { open: boolean; onOpenC
 }
 
 export function Misses() {
-  const [range, setRange] = useState<Range>("7d");
-  const [showBots, setShowBots] = useState(false);
-  const [showProbes, setShowProbes] = useState(false);
+  const [range, setRangeState] = useState<Range>("7d");
+  const [showBots, setShowBotsState] = useState(false);
+  const [showProbes, setShowProbesState] = useState(false);
+  const [sort, setSort] = useState<{ key: MissSort; dir: SortDir }>({ key: "hits", dir: "desc" });
+  const [page, setPage] = useState(1);
+  const [size, setSizeState] = useState<PageSize>(() => savedPageSize("misses"));
+  const setRange = (r: Range) => (setRangeState(r), setPage(1));
+  const setShowBots = (v: boolean) => (setShowBotsState(v), setPage(1));
+  const setShowProbes = (v: boolean) => (setShowProbesState(v), setPage(1));
+  const setSize = (n: PageSize) => (savePageSize("misses", n), setSizeState(n), setPage(1));
+  const sortBy = (key: MissSort) => {
+    setSort((s) => (s.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: key === "slug" ? "asc" : "desc" }));
+    setPage(1);
+  };
   const [confirmClear, setConfirmClear] = useState<"all" | "probes" | null>(null);
   const [tracking, setTracking] = useState(false);
   const [creating, setCreating] = useState<{ domain: string; slug: string } | null>(null);
@@ -118,6 +139,8 @@ export function Misses() {
   const policy = q.data?.policy ?? DEFAULT_MISS_POLICY;
   const probes = all.filter((r) => r.probe);
   const rows = all.filter((r) => (showProbes || !r.probe) && (showBots || r.hits > 0));
+  const sorted = sortRows(rows, MISS_SORT_VALUE[sort.key], sort.dir);
+  const paged = pageOf(sorted, page, size);
 
   const clear = useMutation({
     mutationFn: (links: Pick<MissRow, "domain" | "slug">[] | null) =>
@@ -196,10 +219,10 @@ export function Misses() {
           <table className="w-full min-w-[640px] text-sm">
             <thead className="border-b border-line text-left text-xs text-muted">
               <tr>
-                <th className="px-4 py-2.5 font-medium">Requested slug</th>
-                <th className="px-4 py-2.5 text-right font-medium">Human visits</th>
-                <th className="px-4 py-2.5 text-right font-medium">Bots</th>
-                <th className="px-4 py-2.5 font-medium">Last seen</th>
+                <SortHeader label="Requested slug" active={sort.key === "slug"} dir={sort.dir} onSort={() => sortBy("slug")} />
+                <SortHeader label="Human visits" className="text-right" active={sort.key === "hits"} dir={sort.dir} onSort={() => sortBy("hits")} />
+                <SortHeader label="Bots" className="text-right" active={sort.key === "bots"} dir={sort.dir} onSort={() => sortBy("bots")} />
+                <SortHeader label="Last seen" active={sort.key === "lastSeen"} dir={sort.dir} onSort={() => sortBy("lastSeen")} />
                 <th className="px-4 py-2.5 font-medium">Why it missed</th>
                 <th className="px-4 py-2.5">
                   <span className="sr-only">Actions</span>
@@ -207,7 +230,7 @@ export function Misses() {
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => (
+              {paged.rows.map((r) => (
                 <tr key={linkKey(r.domain, r.slug)} className="border-b border-line last:border-0">
                   <td className="px-4 py-2.5 font-mono text-xs break-all text-fg">{label(r)}</td>
                   <td className="tabular px-4 py-2.5 text-right font-medium">{num(r.hits)}</td>
@@ -267,6 +290,19 @@ export function Misses() {
           </table>
         </Card>
       )}
+      {rows.length ? (
+        <Pagination
+          page={paged.page}
+          pages={paged.pages}
+          size={size}
+          total={rows.length}
+          onPage={(p) => {
+            setPage(p);
+            window.scrollTo({ top: 0 });
+          }}
+          onSize={setSize}
+        />
+      ) : null}
       <Dialog
         open={confirmClear !== null}
         onOpenChange={(o) => !o && setConfirmClear(null)}

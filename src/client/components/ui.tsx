@@ -1,7 +1,7 @@
 // Small shadcn-style primitives on Radix, styled with the semantic tokens.
 
 import { cva, type VariantProps } from "class-variance-authority";
-import { Info, Loader2, X } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight, Info, Loader2, X } from "lucide-react";
 import { Dialog as D, Popover as P, Switch as S } from "radix-ui";
 import {
   createContext,
@@ -15,6 +15,7 @@ import {
   type TextareaHTMLAttributes,
 } from "react";
 import type { Help } from "../lib/help";
+import { PAGE_SIZES, parsePageSize, type PageSize, type SortDir } from "../lib/table";
 import { cn } from "../lib/utils";
 
 const button = cva(
@@ -386,3 +387,44 @@ export const RANGE_OPTIONS = [
   { value: "365d", label: "1 year" },
   { value: "all", label: "All" },
 ] as const;
+
+/** A column header that sorts the table: click to sort by it, click again to flip the order. */
+export function SortHeader({ label, active, dir, onSort, className }: { label: string; active: boolean; dir: SortDir; onSort: () => void; className?: string }) {
+  const Icon = !active ? ArrowUpDown : dir === "asc" ? ArrowUp : ArrowDown;
+  return (
+    <th className={cn("px-4 py-2.5 font-medium", className)} aria-sort={active ? (dir === "asc" ? "ascending" : "descending") : "none"}>
+      <button
+        type="button"
+        onClick={onSort}
+        className={cn("inline-flex items-center gap-1 rounded hover:text-fg", active && "text-fg", className?.includes("text-right") && "flex-row-reverse")}
+        title={`Sort by ${label.toLowerCase()}`}
+      >
+        {label}
+        <Icon className={cn("size-3.5", !active && "opacity-40")} aria-hidden />
+      </button>
+    </th>
+  );
+}
+
+/** "Showing 1–25 of 312", rows per page (25, 50, 100) and previous/next. */
+export function Pagination({ page, pages, size, total, onPage, onSize }: { page: number; pages: number; size: PageSize; total: number; onPage: (page: number) => void; onSize: (size: PageSize) => void }) {
+  if (total === 0) return null;
+  const from = (page - 1) * size + 1;
+  const to = Math.min(page * size, total);
+  return (
+    <nav className="mt-3 flex flex-wrap items-center justify-between gap-3 text-xs text-muted" aria-label="Pagination">
+      <span className="tabular">Showing {from}–{to} of {total}</span>
+      <div className="flex items-center gap-2">
+        <label className="inline-flex items-center gap-2">
+          Rows per page
+          <Select className="h-9 w-auto text-xs" value={size} onChange={(e) => onSize(parsePageSize(e.target.value) ?? size)}>
+            {PAGE_SIZES.map((s) => <option key={s} value={s}>{s}</option>)}
+          </Select>
+        </label>
+        <Button variant="outline" size="icon-sm" aria-label="Previous page" disabled={page <= 1} onClick={() => onPage(page - 1)}><ChevronLeft /></Button>
+        <span className="tabular min-w-20 text-center">Page {page} of {pages}</span>
+        <Button variant="outline" size="icon-sm" aria-label="Next page" disabled={page >= pages} onClick={() => onPage(page + 1)}><ChevronRight /></Button>
+      </div>
+    </nav>
+  );
+}

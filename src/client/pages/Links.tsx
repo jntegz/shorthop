@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { BarChart3, Copy, Download, Link2, Plus, Search, QrCode, X } from "lucide-react";
-import { lazy, Suspense, useDeferredValue, useEffect, useState } from "react";
+import { lazy, Suspense, useDeferredValue, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { toast } from "sonner";
 import type { LinkDTO, LinkListItem, ListPeriod } from "../../shared/types";
@@ -8,15 +8,16 @@ import { api, call, keys } from "../api";
 
 import { DownloadButton } from "../components/DownloadButton";
 import { LinkForm } from "../components/LinkForm";
-import { Badge, Button, buttonClass, Card, Empty, Input, Notice, PageHeader, Select, Spinner } from "../components/ui";
+import { Badge, Button, buttonClass, Card, Empty, Input, Notice, PageHeader, Pagination, Select, SortHeader, Spinner } from "../components/ui";
 import { ago, hostOf, num } from "../lib/format";
 import { linkKey, linkPath, useDomains, useLinkLabel } from "../lib/links";
+import { pageOf, parsePageSize, savedPageSize, savePageSize, sortRows, type PageSize, type SortDir } from "../lib/table";
 import { copy } from "../lib/utils";
 
 const QrDialog = lazy(() => import("../components/QrDialog").then((module) => ({ default: module.QrDialog })));
 
 type Status = "all" | "active" | "disabled" | "expired";
-type Sort = "created" | "updated" | "slug" | "clicks";
+type Sort = "created" | "updated" | "slug" | "target" | "total" | "clicks" | "status";
 
 const PERIODS: { value: ListPeriod; label: string; short: string }[] = [
   { value: "7d", label: "Last 7 days", short: "7d" },
@@ -34,6 +35,19 @@ function linkState(l: Pick<LinkDTO, "active" | "expiresAt">): "active" | "disabl
   return "active";
 }
 
+/** The value each sortable column orders by. "clicks" is the selected period. */
+const SORT_VALUE: Record<Sort, (l: LinkListItem) => string | number> = {
+  created: (l) => l.createdAt,
+  updated: (l) => l.updatedAt,
+  slug: (l) => l.slug,
+  target: (l) => hostOf(l.target) + l.target,
+  total: (l) => l.clicksTotal,
+  clicks: (l) => l.clicksPeriod,
+  status: (l) => linkState(l),
+};
+const SORTS = Object.keys(SORT_VALUE) as Sort[];
+const TEXT_SORTS: ReadonlySet<Sort> = new Set(["slug", "target", "status"]);
+
 export function StateBadge({ link }: { link: Pick<LinkDTO, "active" | "expiresAt"> }) {
   const s = linkState(link);
   if (s === "active") return <Badge tone="good">Active</Badge>;
@@ -50,8 +64,13 @@ export function Links() {
   const { domains, multiple } = useDomains();
   const label = useLinkLabel();
   const status = (params.get("status") as Status | null) ?? "all";
-  const sort = (params.get("sort") as Sort | null) ?? "created";
+  const sortParam = SORTS.find((s) => s === params.get("sort")) ?? "created";
   const period = PERIODS.find((p) => p.value === params.get("period")) ?? PERIODS[0]!;
+  // With "all time" the period column is the total column.
+  const sort: Sort = sortParam === "clicks" && period.value === "all" ? "total" : sortParam;
+  const dir: SortDir = params.get("dir") === "asc" || params.get("dir") === "desc" ? (params.get("dir") as SortDir) : TEXT_SORTS.has(sort) ? "asc" : "desc";
+  const size = parsePageSize(params.get("size")) ?? savedPageSize("links");
+  const pageParam = Number(params.get("page") ?? 1);
   const [creating, setCreating] = useState(false);
   const [qrLink, setQrLink] = useState<LinkListItem | null>(null);
   const urlSearch = params.get("q") ?? "";
@@ -63,10 +82,26 @@ export function Links() {
     const next = new URLSearchParams(params);
     if (v === def) next.delete(k);
     else next.set(k, v);
+    if (k !== "page") next.delete("page");
+    if (k === "sort") next.delete("dir");
     setParams(next, { replace: true });
   };
+  const sortBy = (key: Sort) => {
+    const next = new URLSearchParams(params);
+    next.delete("page");
+    if (key === sort) next.set("dir", dir === "asc" ? "desc" : "asc");
+    else {
+      next.set("sort", key);
+      next.delete("dir");
+    }
+    setParams(next, { replace: true });
+  };
+  const setSize = (n: PageSize) => {
+    savePageSize("links", n);
+    setParam("size", String(n), "");
+  };
 
-  const query = { q: q || undefined, tag: tag || undefined, domain: domain || undefined, status, sort, period: period.value };
+  const query = { q: q || undefined, tag: tag || undefined, domain: domain || undefined, status, period: period.value };
   const links = useQuery({
     queryKey: keys.links(query),
     queryFn: () => call(api.links.$get({ query })),
@@ -86,6 +121,8 @@ export function Links() {
 
   const list = links.data?.links ?? [];
   const filtered = Boolean(q || tag || domain || status !== "all");
+  const sorted = useMemo(() => sortRows(list, SORT_VALUE[sort], dir), [list, sort, dir]);
+  const paged = pageOf(sorted, pageParam, size);
 
   return (
     <>
@@ -146,8 +183,11 @@ export function Links() {
         <Select className="w-auto" value={sort} onChange={(e) => setParam("sort", e.target.value, "created")} aria-label="Sort">
           <option value="created">Newest</option>
           <option value="updated">Recently edited</option>
-          <option value="clicks">Most clicks</option>
+          <option value="total">Most total clicks</option>
+          {period.value === "all" ? null : <option value="clicks">Most clicks: {period.label.toLowerCase()}</option>}
           <option value="slug">Slug A–Z</option>
+          <option value="target">Destination A–Z</option>
+          <option value="status">Status</option>
         </Select>
         <Select className="w-auto" value={period.value} onChange={(e) => setParam("period", e.target.value, "7d")} aria-label="Clicks period">
           {PERIODS.map((p) => (
@@ -180,19 +220,21 @@ export function Links() {
           <table className="w-full table-fixed text-sm">
             <thead className="hidden border-b border-line bg-bg text-left text-[11px] text-muted md:table-header-group">
               <tr>
-                <th className="w-[25%] px-4 py-3.5 font-medium">Link</th>
-                <th className="w-[25%] px-4 py-3.5 font-medium">Destination</th>
-                <th className="px-4 py-2.5 text-right font-medium">Total clicks</th>
-                {period.value === "all" ? null : <th className="hidden px-4 py-2.5 text-right font-medium lg:table-cell">{period.label}</th>}
-                <th className="px-4 py-2.5 font-medium">Status</th>
-                <th className="hidden px-4 py-3.5 font-medium xl:table-cell">Created</th>
+                <SortHeader label="Link" className="w-[25%] py-3.5" active={sort === "slug"} dir={dir} onSort={() => sortBy("slug")} />
+                <SortHeader label="Destination" className="w-[25%] py-3.5" active={sort === "target"} dir={dir} onSort={() => sortBy("target")} />
+                <SortHeader label="Total clicks" className="text-right" active={sort === "total"} dir={dir} onSort={() => sortBy("total")} />
+                {period.value === "all" ? null : (
+                  <SortHeader label={period.label} className="hidden text-right lg:table-cell" active={sort === "clicks"} dir={dir} onSort={() => sortBy("clicks")} />
+                )}
+                <SortHeader label="Status" active={sort === "status"} dir={dir} onSort={() => sortBy("status")} />
+                <SortHeader label="Created" className="hidden py-3.5 xl:table-cell" active={sort === "created"} dir={dir} onSort={() => sortBy("created")} />
                 <th className="w-52 px-2 py-2.5 xl:w-72">
                   <span className="sr-only">Actions</span>
                 </th>
               </tr>
             </thead>
             <tbody>
-              {list.map((l) => (
+              {paged.rows.map((l) => (
                 <tr
                   key={linkKey(l.domain, l.slug)}
                   className="group flex cursor-pointer flex-wrap items-center gap-x-3 gap-y-1 border-b border-line px-4 py-3 last:border-0 hover:bg-surface-2/60 md:table-row md:p-0"
@@ -262,6 +304,19 @@ export function Links() {
           </table>
         </Card>
       )}
+      {list.length ? (
+        <Pagination
+          page={paged.page}
+          pages={paged.pages}
+          size={size}
+          total={list.length}
+          onPage={(p) => {
+            setParam("page", String(p), "1");
+            window.scrollTo({ top: 0 });
+          }}
+          onSize={setSize}
+        />
+      ) : null}
 
       {qrLink && <Suspense fallback={<div role="status" className="fixed right-6 bottom-24 z-40 rounded-xl border border-line bg-surface p-4 text-sm shadow-lg">Preparing QR code…</div>}><QrDialog open onOpenChange={(open) => !open && setQrLink(null)} shortUrl={qrLink.shortUrl} label={label(qrLink)} /></Suspense>}
       <LinkForm open={creating} onOpenChange={setCreating} onSaved={(l) => navigate(linkPath(l))} />
