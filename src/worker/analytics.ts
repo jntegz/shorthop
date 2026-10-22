@@ -51,6 +51,19 @@ const DATACENTER_ASNS: ReadonlySet<number> = new Set([
   132203, // Tencent Cloud
   12876, // Scaleway
   51167, // Contabo
+  37963, // Alibaba Cloud (China)
+  45090, // Tencent Cloud (China)
+  9009, // M247
+  60781, 28753, // Leaseweb
+  212238, // Datacamp / CDN77
+  47583, // Hostinger
+  8560, // IONOS
+  197540, // netcup
+  36352, // ColoCrossing
+  53667, // FranTech / BuyVM
+  62240, // Clouvider
+  202425, // IP Volume
+  398324, // Censys
 ]);
 
 export interface Classification {

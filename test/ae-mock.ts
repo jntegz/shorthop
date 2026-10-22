@@ -31,6 +31,8 @@ function col(p: StoredPoint, name: string): string | number {
 }
 
 function cond(p: StoredPoint, expr: string): boolean {
+  const list = /^(\w+) IN \((.*)\)$/.exec(expr.trim());
+  if (list) return list[2]!.split(",").map((v) => v.trim().replace(/^'|'$/g, "")).includes(String(col(p, list[1]!)));
   const m = /^(\w+)\s*(=|!=)\s*'?([^']*)'?$/.exec(expr.trim());
   if (!m) throw new Error(`mock AE: unknown condition ${expr}`);
   const [, name = "", op, raw = ""] = m;

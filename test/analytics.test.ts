@@ -43,6 +43,7 @@ describe("bot detection", () => {
     expect(detectBot(req({}, "HEAD"), MAC_CHROME, 0)).toBe("HEAD request");
     expect(detectBot(req({ "Sec-Purpose": "prefetch;prerender" }), MAC_CHROME, 0)).toBe("Prefetch");
     expect(detectBot(req(), MAC_CHROME, 16509)).toBe("Datacenter");
+    expect(detectBot(req(), MAC_CHROME, 9009)).toBe("Datacenter");
     expect(detectBot(req(), "shorthop-check/1", 0)).toBe("Monitor");
   });
 

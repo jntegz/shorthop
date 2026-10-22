@@ -328,6 +328,43 @@ describe("misses cleanup", () => {
 
 });
 
+describe("scanner detection", () => {
+  const WORDS = ["backup", "portal", "ghostwriting", "admin", "staging"];
+  const TYPOS = ["gide", "guid", "giude", "cvv"];
+
+  async function scan(ts: number) {
+    await hits(store, ts, [
+      ...WORDS.map((w) => ({ path: `/${w}`, ip: "6.6.6.6" })),
+      { path: "/portal", ip: "7.7.7.7", ua: IPHONE }, // a person asking for one of the same words
+      ...TYPOS.map((w) => ({ path: `/${w}`, ip: "5.5.5.5" })),
+    ]);
+  }
+
+  function expectSplit(rows_: MissRow[]) {
+    expect(rows_.find((r) => r.slug === "portal")).toMatchObject({ hits: 1, bots: 1 });
+    for (const w of WORDS.filter((w) => w !== "portal")) expect(rows_.find((r) => r.slug === w)).toMatchObject({ hits: 0, bots: 1 });
+    for (const w of TYPOS) expect(rows_.find((r) => r.slug === w)).toMatchObject({ hits: 1, bots: 0 });
+  }
+
+  beforeEach(async () => {
+    expect((await setPolicy({ trackNoise: true })).status).toBe(200);
+  });
+
+  it("counts a visitor missing 5 paths in a day as a bot, live", async () => {
+    await scan(Math.floor(NOW.getTime() / 1000) - 30);
+    mockAeSql(store);
+    expectSplit(await report("today"));
+  });
+
+  it("counts a visitor missing 5 paths in a day as a bot, after the rollup", async () => {
+    await scan(dayStartSec(YESTERDAY) + 40000);
+    mockAeSql(store);
+    await runRollup({ ...env, ...AE_ENV }, NOW);
+    expect(await rows("SELECT clicks, bots FROM daily_dims WHERE dim = 'miss' AND slug = 'portal'")).toEqual([{ clicks: 1, bots: 1 }]);
+    expectSplit(await report("7d"));
+  });
+});
+
 describe("miss tracking policy", () => {
   it("prunes nothing until the owner saves a policy", async () => {
     mockAeSql(store);

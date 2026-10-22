@@ -1,11 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { addDays, isoWeek, rangeBounds } from "../src/shared/dates";
 import { normalizeTags } from "../src/shared/schemas";
-import { generateSlug, isRoutableSlug, validateSlug } from "../src/shared/slug";
+import { generateSlug, isProbePath, isRoutableSlug, validateSlug } from "../src/shared/slug";
 import { buildLocation, normalizeTarget, renderUtm, splitOwnParams, validateUtmTemplate } from "../src/shared/target";
 import { csvCell } from "../src/worker/hono";
 
 describe("slugs", () => {
+  it("flags scanner probe paths but not plain words", () => {
+    for (const p of ["yarn.lock", "composer.lock", "main.js.map", "docker-compose.yml", "Dockerfile", "server-status", "swagger-ui", "node_modules"])
+      expect(isProbePath(p), p).toBe(true);
+    for (const p of ["ghostwriting", "guide", "lockdown", "jsconf"]) expect(isProbePath(p), p).toBe(false);
+  });
+
   it("validates native slugs", () => {
     expect(validateSlug("guide", "native")).toBeNull();
     expect(validateSlug("My_Guide-2", "native")).toBeNull();

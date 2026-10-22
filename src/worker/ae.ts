@@ -213,13 +213,50 @@ export async function queryMisses(env: Env, fromSec: number, toSec: number, cuto
       .filter((l) => l.sec >= from && l.sec < toSec)
       .map((l) => `NOT (blob17 = ${domainLiteral(l.domain)} AND index1 = ${slugLiteral(l.slug)} AND timestamp < toDateTime(${l.sec + 1}))`),
   ].join(" AND ");
-  const rows = await aeQuery<Raw>(
-    env,
-    `SELECT ${DAY} AS day, blob17 AS domain, index1 AS slug, sumIf(_sample_interval, double2 = 0) AS hits, sumIf(_sample_interval, double2 = 1) AS bots
+  const [rows, scanners] = await Promise.all([
+    aeQuery<Raw>(
+      env,
+      `SELECT ${DAY} AS day, blob17 AS domain, index1 AS slug, sumIf(_sample_interval, double2 = 0) AS hits, sumIf(_sample_interval, double2 = 1) AS bots
 FROM ${dataset(env)} WHERE ${where(from, toSec, undefined, extra)}
 GROUP BY day, domain, slug ORDER BY hits DESC LIMIT ${ROW_LIMIT} FORMAT JSON`,
+    ),
+    queryScanners(env, from, toSec),
+  ]);
+  const out = rows.map((r) => ({ day: num(r.day), domain: domainOf(env, r.domain), slug: str(r.slug), hits: num(r.hits), bots: num(r.bots) }));
+  if (!scanners.length) return out;
+
+  // A browser user agent from a home network passes detectBot; its spread of paths gives it away. Count its visits as bot visits.
+  const scanned = await aeQuery<Raw>(
+    env,
+    `SELECT ${DAY} AS day, blob17 AS domain, index1 AS slug, sumIf(_sample_interval, double2 = 0) AS hits
+FROM ${dataset(env)} WHERE ${where(from, toSec, undefined, `${extra} AND double2 = 0 AND blob15 IN (${scanners.map((v) => `'${v}'`).join(", ")})`)}
+GROUP BY day, domain, slug LIMIT ${ROW_LIMIT} FORMAT JSON`,
   );
-  return rows.map((r) => ({ day: num(r.day), domain: domainOf(env, r.domain), slug: str(r.slug), hits: num(r.hits), bots: num(r.bots) }));
+  const byKey = new Map(out.map((r) => [`${r.day}|${r.domain}|${r.slug}`, r]));
+  for (const s of scanned) {
+    const r = byKey.get(`${num(s.day)}|${domainOf(env, s.domain)}|${str(s.slug)}`);
+    if (!r) continue;
+    const moved = Math.min(r.hits, num(s.hits));
+    r.hits -= moved;
+    r.bots += moved;
+  }
+  return out;
+}
+
+/** A visitor missing this many different paths in one UTC day is a scanner, whatever its user agent says. */
+export const SCANNER_PATHS_PER_DAY = 5;
+const MAX_SCANNERS = 200;
+const VISITOR_RE = /^[0-9a-f]{16}$/;
+
+/** Visitor hashes (per day) that missed at least SCANNER_PATHS_PER_DAY paths while passing as human. */
+export async function queryScanners(env: Env, fromSec: number, toSec: number): Promise<string[]> {
+  const rows = await aeQuery<Raw>(
+    env,
+    `SELECT ${DAY} AS day, blob15 AS visitor, count(DISTINCT index1) AS paths
+FROM ${dataset(env)} WHERE ${where(fromSec, toSec, undefined, "blob1 = 'miss' AND double2 = 0")}
+GROUP BY day, visitor ORDER BY paths DESC LIMIT ${MAX_SCANNERS} FORMAT JSON`,
+  );
+  return rows.filter((r) => num(r.paths) >= SCANNER_PATHS_PER_DAY && VISITOR_RE.test(str(r.visitor))).map((r) => str(r.visitor));
 }
 
 /** Clicks and bots per link in a window (cheap, for list views). */

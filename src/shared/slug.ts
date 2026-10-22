@@ -57,8 +57,8 @@ export function generateSlug(length = 6): string {
 
 // Paths vulnerability scanners request on every site: config and secrets files,
 // scripts, archives and well-known admin tools.
-const PROBE_EXT_RE = /\.(php\d?|aspx?|ashx|jsp|cgi|env|git|svn|hg|sql|sqlite|db|bak|backup|old|orig|swp|ini|conf|cfg|config|ya?ml|toml|log|zip|tar|t?gz|rar|7z|xml|json|sh|py|rb|pl|pem|key|ds_store|htaccess|htpasswd)$/i;
-const PROBE_PREFIX_RE = /^(wp-|wp$|wordpress|xmlrpc|phpmyadmin|pma$|cgi-bin|vendor$|actuator|autodiscover|owa$|ecp$|boaform|hnap1|solr|druid|telescope|_ignition|\.)/i;
+const PROBE_EXT_RE = /\.(php\d?|aspx?|ashx|jsp|cgi|env|git|svn|hg|sql|sqlite3?|db|mdb|bak|backup|old|orig|save|swp|tmp|ini|conf|cfg|config|properties|ya?ml|toml|log|lock|zip|tar|t?gz|bz2|xz|rar|7z|war|jar|xml|json|map|js|ts|sh|bash|py|rb|pl|pem|key|crt|p12|pfx|kdbx|ds_store|htaccess|htpasswd|npmrc|dockerenv)$/i;
+const PROBE_PREFIX_RE = /^(wp-|wp$|wordpress|xmlrpc|phpmyadmin|pma$|cgi-bin|vendor$|node_modules$|actuator|autodiscover|owa$|ecp$|boaform|hnap1|solr|druid|telescope|_ignition|dockerfile$|docker-compose|server-status$|server-info$|swagger|api-docs$|graphql$|geoserver|jenkins$|\.)/i;
 
 /** True for a missed path that is almost certainly a scanner probe, not a mistyped link. */
 export function isProbePath(slug: string): boolean {
