@@ -58,8 +58,8 @@ export function Dashboard() {
     {overview.isPending ? <div className="flex justify-center py-24"><Spinner /></div>
       : overview.isError ? <Notice tone="danger">{overview.error.message} <button className="ml-2 underline" onClick={() => void overview.refetch()}>Try again</button></Notice>
       : o ? <div className="space-y-5">
-        <StatTiles totals={o.totals} />
-        <ClicksChart series={o.series} liveAvailable={o.aeAvailable} title="Your audience, over time" />
+        <StatTiles totals={o.totals} comparison={o.comparison} />
+        <ClicksChart series={o.series} liveAvailable={o.aeAvailable} title="Your audience, over time" previous={o.comparison?.series} />
         <div className="grid gap-5 xl:grid-cols-3">
           <Card className="xl:col-span-2">
             <CardHeader title="Your top-performing links" description="Ranked by human clicks in this period" action={<Link to="/links" className="inline-flex items-center gap-1 text-xs font-medium text-accent">All links <ArrowRight className="size-3.5" /></Link>} />

@@ -239,8 +239,9 @@ export function LinkDetail() {
           <StatTiles
             totals={s.totals}
             extra={link.importedClicks !== null ? { label: "Clicks before import", value: num(link.importedClicks), note: "As reported by the previous shortener" } : undefined}
+            comparison={s.comparison}
           />
-          <ClicksChart series={s.series} liveAvailable={s.aeAvailable} />
+          <ClicksChart series={s.series} liveAvailable={s.aeAvailable} previous={s.comparison?.series} />
           {link.routing ? <RoutingResults routing={link.routing} rows={s.dims.route} period={period} from={s.from} onPeriod={setPeriod} /> : null}
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
             <Breakdown title="Countries" rows={s.dims.country} kind="country" />

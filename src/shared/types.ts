@@ -205,6 +205,18 @@ export interface BreakdownRow {
   bots: number;
 }
 
+/**
+ * The period before, of equal length, compared on completed days only (today
+ * is still in progress). Null for "today" and "all time".
+ */
+export interface ComparisonDTO {
+  /** The completed days of the selected period that are compared. */
+  current: Totals & { from: string; to: string };
+  previous: Totals & { from: string; to: string };
+  /** Daily totals of the previous period, oldest first, for the chart overlay. */
+  series: SeriesPoint[];
+}
+
 export interface LinkStatsDTO {
   domain: string;
   slug: string;
@@ -215,6 +227,7 @@ export interface LinkStatsDTO {
   totals: Totals;
   series: SeriesPoint[];
   dims: Record<Dim, BreakdownRow[]>;
+  comparison: ComparisonDTO | null;
 }
 
 /** The account-wide stats page: the dashboard's summary plus every breakdown. */
@@ -235,6 +248,7 @@ export interface OverviewDTO {
   aeAvailable: boolean;
   totals: Totals;
   series: SeriesPoint[];
+  comparison: ComparisonDTO | null;
   topLinks: TopLink[];
   countries: BreakdownRow[];
   sources: BreakdownRow[];

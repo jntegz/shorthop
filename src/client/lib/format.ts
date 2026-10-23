@@ -9,6 +9,8 @@ export function fullNum(n: number): string {
   return full.format(n);
 }
 
+export { change, type Change } from "../../shared/change";
+
 export function pct(part: number, total: number): string {
   if (!total) return "0%";
   const p = (part / total) * 100;

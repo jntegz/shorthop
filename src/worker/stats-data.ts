@@ -1,12 +1,13 @@
 // Stats reads: completed days come from the D1 rollups, and only days that
 // haven't been rolled up yet (normally just today) come from Analytics Engine.
 
-import { addDays, dayStartSec, periodBounds, utcDate } from "../shared/dates";
+import { addDays, dayStartSec, daysBetween, periodBounds, utcDate } from "../shared/dates";
 import { linkKey } from "../shared/domains";
 import { isProbePath } from "../shared/slug";
 import {
   DIMS,
   type BreakdownRow,
+  type ComparisonDTO,
   type Dim,
   type AccountStatsDTO,
   type LinkStatsDTO,
@@ -172,12 +173,44 @@ async function safeAE(fn: () => Promise<void>): Promise<boolean> {
   }
 }
 
+/**
+ * The previous period for a comparison. Both sides cover completed days only,
+ * so a period that includes today isn't measured against full days; the
+ * previous one ends the day before the selected period starts.
+ */
+async function comparison(env: Env, period: Period, from: string, series: SeriesPoint[], now: Date, link?: Link): Promise<ComparisonDTO | null> {
+  if (period.range === "all" || period.range === "today") return null;
+  const today = utcDate(now);
+  const done = series.filter((p) => p.date < today);
+  if (!done.length) return null;
+  const to = done.at(-1)!.date;
+  const days = daysBetween(from, to) + 1;
+  const prevTo = addDays(from, -1);
+  const prevFrom = addDays(prevTo, -(days - 1));
+  const filter = link ? " AND domain = ?3 AND slug = ?4" : "";
+  const { results } = await env.DB.prepare(
+    `SELECT date, SUM(clicks) AS clicks, SUM(uniques) AS uniques, SUM(bots) AS bots FROM daily_dims
+     WHERE dim = 'total' AND date BETWEEN ?1 AND ?2${filter} GROUP BY date`,
+  )
+    .bind(prevFrom, prevTo, ...(link ? [link.domain, link.slug] : []))
+    .all<SeriesPoint>();
+  const byDate = new Map(results.map((r) => [r.date, r]));
+  const prevSeries: SeriesPoint[] = [];
+  for (let d = prevFrom; d <= prevTo; d = addDays(d, 1)) {
+    const r = byDate.get(d);
+    prevSeries.push({ date: d, clicks: Number(r?.clicks ?? 0), uniques: Number(r?.uniques ?? 0), bots: Number(r?.bots ?? 0) });
+  }
+  const sum = (list: SeriesPoint[]) => list.reduce((t, p) => ({ clicks: t.clicks + p.clicks, uniques: t.uniques + p.uniques, bots: t.bots + p.bots }), { clicks: 0, uniques: 0, bots: 0 });
+  return { current: { ...sum(done), from, to }, previous: { ...sum(prevSeries), from: prevFrom, to: prevTo }, series: prevSeries };
+}
+
 export async function linkStats(env: Env, domain: string, slug: string, period: Period, now = new Date()): Promise<LinkStatsDTO> {
   const w = await windows(env, period, now);
   const agg = new Aggregate();
   const link = { domain, slug };
   const [, aeOk] = await Promise.all([addD1(env, agg, w, link, true), safeAE(() => addAE(env, agg, w, link, true))]);
   const dims = Object.fromEntries(DIMS.map((d) => [d, agg.breakdown(d)])) as Record<Dim, BreakdownRow[]>;
+  const series = agg.seriesList(w.from, w.to);
   return {
     domain,
     slug,
@@ -186,8 +219,9 @@ export async function linkStats(env: Env, domain: string, slug: string, period: 
     to: w.to,
     aeAvailable: w.aeAvailable && aeOk,
     totals: agg.totals(),
-    series: agg.seriesList(w.from, w.to),
+    series,
     dims,
+    comparison: await comparison(env, period, w.from, series, now, link),
   };
 }
 
@@ -237,13 +271,15 @@ export async function overview(env: Env, period: Period, now = new Date(), opts:
   const targets = await targetsFor(env, top);
   const topLinks: TopLink[] = top.map((t) => ({ ...t, target: targets.get(linkKey(t.domain, t.slug)) ?? null }));
 
+  const series = agg.seriesList(w.from, w.to);
   const summary: OverviewDTO = {
     range: period.range,
     from: w.from,
     to: w.to,
     aeAvailable: w.aeAvailable && aeOk,
     totals: agg.totals(),
-    series: agg.seriesList(w.from, w.to),
+    series,
+    comparison: await comparison(env, period, w.from, series, now),
     topLinks,
     countries: agg.breakdown("country", 15),
     sources: agg.breakdown("source", 15),

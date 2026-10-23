@@ -60,8 +60,8 @@ export function Stats() {
         <Notice tone="danger">{stats.error.message}</Notice>
       ) : s ? (
         <div className="space-y-4">
-          <StatTiles totals={s.totals} />
-          <ClicksChart series={s.series} liveAvailable={s.aeAvailable} title="All links, over time" />
+          <StatTiles totals={s.totals} comparison={s.comparison} />
+          <ClicksChart series={s.series} liveAvailable={s.aeAvailable} title="All links, over time" previous={s.comparison?.series} />
           <Card>
             <CardHeader title="Top links" description="Ranked by human clicks in this period" />
             {!s.topLinks.length ? (
