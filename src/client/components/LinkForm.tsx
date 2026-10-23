@@ -397,7 +397,7 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
                     <option key={key} value={key}>
                       {label(l)}
                       {l.title ? ` · ${l.title}` : ""}
-                      {state === "active" ? "" : ` (${state === "broken" ? "not working" : state})`}
+                      {state === "active" ? "" : ` (${state === "broken" ? (l.replacement ? "replaced" : "retired") : state})`}
                     </option>
                   );
                 })}

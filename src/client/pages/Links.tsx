@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArchiveRestore, BarChart3, Copy, Gauge, Lock, Split, Download, Link2, Plus, Search, QrCode, X } from "lucide-react";
+import { Archive, ArchiveRestore, BarChart3, CornerUpRight, Copy, Gauge, Lock, Split, Download, Link2, Plus, Search, QrCode, X } from "lucide-react";
 import { lazy, Suspense, useDeferredValue, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { toast } from "sonner";
@@ -48,11 +48,23 @@ const SORT_VALUE: Record<Sort, (l: LinkListItem) => string | number> = {
 const SORTS = Object.keys(SORT_VALUE) as Sort[];
 const TEXT_SORTS: ReadonlySet<Sort> = new Set(["slug", "target", "status"]);
 
-export function StateBadge({ link }: { link: Pick<LinkDTO, "active" | "expiresAt" | "broken"> }) {
+export function StateBadge({ link }: { link: Pick<LinkDTO, "domain" | "active" | "expiresAt" | "broken" | "replacement"> }) {
+  const label = useLinkLabel();
   const s = linkState(link);
   if (s === "active") return <Badge tone="good">Active</Badge>;
   if (s === "expired") return <Badge tone="warn">Expired</Badge>;
-  if (s === "broken") return <Badge tone="warn">Not working</Badge>;
+  // Marked "no longer working" on purpose: the short link still works, so no warning colour.
+  if (s === "broken") {
+    return link.replacement ? (
+      <Badge title={`Visitors are pointed to ${label(link.replacement)}`}>
+        <CornerUpRight className="size-3" aria-hidden /> Replaced
+      </Badge>
+    ) : (
+      <Badge title="Visitors see a short notice, then go to the site set in Settings">
+        <Archive className="size-3" aria-hidden /> Retired
+      </Badge>
+    );
+  }
   return <Badge>Disabled</Badge>;
 }
 
@@ -188,7 +200,7 @@ export function Links() {
           <option value="active">Active</option>
           <option value="disabled">Disabled</option>
           <option value="expired">Expired</option>
-          <option value="broken">Not working</option>
+          <option value="broken">Replaced or retired</option>
           <option value="failing">Destination problems</option>
         </Select>
         <Select className="w-auto" value={sort} onChange={(e) => setParam("sort", e.target.value, "created")} aria-label="Sort">
