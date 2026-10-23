@@ -11,12 +11,13 @@ import { linksApi } from "./api/links";
 import { previewsApi } from "./api/previews";
 import { qrApi } from "./api/qr";
 import { utmApi } from "./api/utm";
+import { webhooksApi } from "./api/webhooks";
 import { settingsApi } from "./api/settings";
 import { statsApi } from "./api/stats";
 import { fullTokenScope, TOKEN_SCOPE_ERROR, verifyAdmin, verifyBearer, type AuthResult } from "./auth";
 import type { AppEnv } from "./hono";
 
-export const api = new Hono<AppEnv>().route("/", linksApi).route("/stats", statsApi).route("/settings", settingsApi).route("/checks", checksApi).route("/previews", previewsApi).route("/utm-presets", utmApi).route("/qr", qrApi);
+export const api = new Hono<AppEnv>().route("/", linksApi).route("/stats", statsApi).route("/settings", settingsApi).route("/checks", checksApi).route("/previews", previewsApi).route("/utm-presets", utmApi).route("/qr", qrApi).route("/webhooks", webhooksApi);
 
 /** The writes the API token may make by default (import also refuses overwrite mode). */
 const TOKEN_WRITES = new Set(["POST /api/links", "POST /api/import", "POST /api/settings/digest/test"]);

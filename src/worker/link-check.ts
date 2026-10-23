@@ -32,6 +32,7 @@ import type { CheckSettings, LinkChecksDTO, TargetCheckDTO } from "../shared/typ
 import { getSetting, nowSec, setSettingStmt } from "./db";
 import { domainsOf } from "./domains";
 import { MailerError, mailerStatus, sendMail, withMailSettings } from "./mailer";
+import { emit } from "./webhooks";
 
 /** Outbound requests one run may spend on checks (leaves room for an email). */
 export const RUN_BUDGET = 40;
@@ -260,7 +261,34 @@ async function checkAndStore(
     );
   });
   if (writes.length) await env.DB.batch(writes);
+  await emitHealthChanges(env, results, now);
   return { checked: results.length, remaining: items.length - results.length, newlyDown, recovered };
+}
+
+/**
+ * link.health_changed webhooks: a destination confirmed down, or working again
+ * after being down. "Problem, confirming" isn't announced: it may be a blip.
+ * Sent by the next cron run.
+ */
+async function emitHealthChanges(env: Env, results: { target: string; prev: CheckRow | null; outcome: CheckOutcome }[], now: number): Promise<void> {
+  for (const { target, prev, outcome } of results) {
+    const next = nextRecord(prev ? toRecord(prev) : null, outcome, now);
+    const wentDown = next.status === "down" && prev?.status !== "down";
+    const cameBack = prev?.status === "down" && next.status === "ok";
+    if (!wentDown && !cameBack) continue;
+    const { results: links } = await env.DB.prepare("SELECT DISTINCT domain, slug, title FROM link_destinations WHERE url = ? ORDER BY domain, slug")
+      .bind(target)
+      .all<{ domain: string; slug: string; title: string | null }>();
+    await emit(env, "link.health_changed", {
+      destination: target,
+      state: wentDown ? "down" : "working",
+      previous_state: prev?.status ?? "unchecked",
+      problem: outcome.problem,
+      http_status: outcome.httpStatus,
+      failing_since: wentDown ? new Date(next.since * 1000).toISOString() : null,
+      links: links.map((l) => ({ ...l, short_url: `https://${l.domain}/${encodeURIComponent(l.slug)}` })),
+    });
+  }
 }
 
 /** The scheduled run: due targets, the email for changes, and cleanup of rows no link uses. */

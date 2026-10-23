@@ -89,6 +89,10 @@ export const LINK_HELP = {
 } satisfies Record<string, Help>;
 
 export const SETTINGS_HELP = {
+  webhooks: h(
+    "Webhooks",
+    "Each event is a POST with a JSON body: id, type, created_at, api_version and data. Link events carry the link (never its password); updates also list the fields that changed. Requests are signed with X-Shorthop-Signature (HMAC-SHA256 of t.body with the webhook's secret), carry X-Shorthop-Event and X-Shorthop-Delivery, and must be answered with a 2xx within 10 seconds. Redirects aren't followed. A failed delivery is retried after 30 minutes, then 2, 6, 12 and 24 hours; changes you make are sent at once, while destination alerts, milestones and retries go out with the half-hourly checks. A delivery can arrive twice, so use X-Shorthop-Delivery to ignore repeats.",
+  ),
   domains: h(
     "Short domains",
     "Every domain listed here serves its own short links: sh.example/guide and alt.example/guide can point to different places. The first (primary) domain is the default for new links, and it hosts this admin and the API unless ADMIN_HOST names a separate host. Domains are set in the Worker's configuration (SHORT_DOMAINS plus one route per domain), so adding one takes a deploy; each must be a domain in the same Cloudflare account.",

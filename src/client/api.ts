@@ -109,5 +109,6 @@ export const keys = {
   utmPresets: ["utm-presets"] as const,
   qrDefault: ["qr", "default"] as const,
   cap: (domain: string, slug: string) => ["cap", domain, slug] as const,
+  webhooks: ["webhooks"] as const,
   linkCheck: (domain: string, slug: string) => ["checks", domain, slug] as const,
 };

@@ -140,6 +140,39 @@ export interface DeletedLinkDTO {
   title: string | null;
 }
 
+export interface WebhookDTO {
+  id: number;
+  url: string;
+  description: string;
+  events: string[];
+  active: boolean;
+  createdAt: number;
+  /** False after SESSION_SECRET changed: rotate the secret. */
+  secretReadable: boolean;
+  /** Deliveries waiting for a retry. */
+  retrying: number;
+  /** Deliveries given up on in the last 7 days. */
+  failedRecent: number;
+  last: { ok: boolean; httpStatus: number | null; at: number; error: string | null } | null;
+}
+
+export interface WebhookDeliveryDTO {
+  id: string;
+  eventId: string;
+  type: string;
+  status: "pending" | "delivered" | "failed";
+  attempts: number;
+  /** Pending: when the next attempt is due. */
+  nextAt: number | null;
+  httpStatus: number | null;
+  error: string | null;
+  lastAt: number | null;
+  durationMs: number | null;
+  createdAt: number;
+  /** The JSON body, exactly as signed. */
+  payload: string;
+}
+
 export interface CheckRunDTO {
   checked: number;
   remaining: number;

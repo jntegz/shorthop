@@ -17,6 +17,7 @@ import { runDigest } from "./digest";
 import { MailerError, mailerStatus, providerName, sendMail, withMailSettings } from "./mailer";
 import { runRollup, type RollupResult } from "./rollup";
 import { getCheckSettings, runLinkChecks } from "./link-check";
+import { checkMilestones, deliver, pruneDeliveries } from "./webhooks";
 import { loginConfig } from "./session";
 
 type Job = "rollup" | "digest" | "alert" | "links";
@@ -59,6 +60,12 @@ export async function lastJobRun(db: D1Database, job: Job): Promise<JobRun | nul
 
 /** The half-hourly cron: due destination checks, with the outcome recorded. */
 export async function scheduledLinkChecks(env: Env): Promise<void> {
+  // Webhook deliveries that are due go first, with a few of the run's outbound requests.
+  try {
+    await deliver(env);
+  } catch (err) {
+    console.error(JSON.stringify({ message: "webhook deliveries failed", error: String(err) }));
+  }
   try {
     const r = await runLinkChecks(env);
     if (!r.skipped) await recordJob(env.DB, "links", true);
@@ -352,7 +359,7 @@ export async function checkAndAlert(baseEnv: Env, now = new Date(), force = fals
   return { sent: true };
 }
 
-/** The 01:15 UTC cron: rollup, then the alert check. */
+/** The 01:15 UTC cron: rollup, click milestones (from the fresh rollup), then the alert check. */
 export async function scheduledDaily(env: Env, now = new Date()): Promise<void> {
   try {
     await trackedRollup(env, now);
@@ -363,6 +370,12 @@ export async function scheduledDaily(env: Env, now = new Date()): Promise<void> 
     await autoClearDemo(env);
   } catch (err) {
     console.error(JSON.stringify({ message: "demo cleanup failed", error: String(err) }));
+  }
+  try {
+    await checkMilestones(env);
+    await pruneDeliveries(env);
+  } catch (err) {
+    console.error(JSON.stringify({ message: "webhook milestones failed", error: String(err) }));
   }
   await checkAndAlert(env, now);
 }

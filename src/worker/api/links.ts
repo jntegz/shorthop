@@ -15,6 +15,7 @@ import { fullTokenScope, TOKEN_SCOPE_ERROR } from "../auth";
 import { getDefaultUtm, getLink, kvKey, nowSec, publish, toDTO, type LinkRow } from "../db";
 import { domainsOf, isConfiguredDomain, selfHosts, shortOrigin } from "../domains";
 import { csv, validate, type AppEnv } from "../hono";
+import { changedFields, emit, linkPayload } from "../webhooks";
 import { deletedLinks, getVersion, listVersions, SNAPSHOT_SQL, versionStmt } from "../history";
 import { clicksByLink } from "../stats-data";
 
@@ -59,13 +60,15 @@ async function published(env: Env, row: LinkRow): Promise<boolean> {
 }
 
 /**
- * Saves an edit of an existing link with its version, then publishes it.
+ * Saves an edit of an existing link with its version, runs onSaved (webhook
+ * events) once D1 has it, then publishes it.
  * RETURNING: a link deleted since it was read must not be published back to KV.
  */
-async function saveEdit(c: Context<AppEnv>, next: LinkRow, version: D1PreparedStatement | null) {
+async function saveEdit(c: Context<AppEnv>, next: LinkRow, version: D1PreparedStatement | null, onSaved?: (saved: LinkRow) => Promise<void>) {
   const [updated] = await c.env.DB.batch<LinkRow>([updateStmt(c.env.DB, next), ...(version ? [version] : [])]);
   const saved = updated?.results[0];
   if (!saved) return c.json({ error: "Link not found" }, 404);
+  await onSaved?.(saved);
   if (!(await published(c.env, saved))) return c.json({ error: PUBLISH_FAILED, link: dto(c, saved) }, 502);
   // A delete that ran between the update and the publish would leave a record
   // for a link that's gone. Together with the delete's second KV pass, KV ends
@@ -168,6 +171,9 @@ function restoreProblem(c: Context<AppEnv>, r: LinkRow): string | null {
   }
   return null;
 }
+
+/** Import events sent straight away; the rest wait for the cron (outbound request limits). */
+const IMPORT_EVENTS_NOW = 5;
 
 const PUBLISH_FAILED = "Saved, but publishing to KV failed. Run “Republish all links” in Settings.";
 
@@ -336,6 +342,7 @@ export const linksApi = new Hono<AppEnv>()
       console.error(JSON.stringify({ message: "kv publish failed", domain: row.domain, slug: row.slug, error: String(err) }));
       return c.json({ error: PUBLISH_FAILED, link: dto(c, row) }, 502);
     }
+    await emit(c.env, "link.created", { link: linkPayload(row) }, { ctx: c.executionCtx });
     const link = dto(c, row);
     if (c.req.query("format") === "text") return c.text(link.shortUrl, 201);
     return c.json({ link }, 201);
@@ -407,7 +414,9 @@ export const linksApi = new Hono<AppEnv>()
     // A new limit counts from now; changing an existing one keeps the count.
     if (row.max_clicks === null && next.max_clicks !== null) await resetCounter(c.env, next);
     const changed = !sameSnapshot(snapshotOf(row), snapshotOf(next));
-    return saveEdit(c, next, changed ? versionStmt(c.env.DB, next, "update", c.get("identity"), { at: next.updated_at }) : null);
+    return saveEdit(c, next, changed ? versionStmt(c.env.DB, next, "update", c.get("identity"), { at: next.updated_at }) : null, async (saved) => {
+      if (changed) await emit(c.env, "link.updated", { link: linkPayload(saved), changes: changedFields(row, saved) }, { ctx: c.executionCtx });
+    });
   })
 
   /** Links that point visitors to this one while marked "no longer working". */
@@ -426,15 +435,18 @@ export const linksApi = new Hono<AppEnv>()
     // the other way round, a leftover KV record would keep redirecting.
     await c.env.LINKS.delete(kvKey(domain, slug));
     // The delete's version keeps the link as D1 holds it, so it can be restored.
-    await c.env.DB.batch([
+    const [, removed] = await c.env.DB.batch<LinkRow>([
       c.env.DB.prepare(
         `INSERT INTO link_versions (domain, slug, at, action, actor, snapshot)
          SELECT domain, slug, ?1, 'delete', ?2, ${SNAPSHOT_SQL} FROM links WHERE domain = ?3 AND slug = ?4`,
       ).bind(nowSec(), c.get("identity"), domain, slug),
-      c.env.DB.prepare("DELETE FROM links WHERE domain = ? AND slug = ?").bind(domain, slug),
+      c.env.DB.prepare("DELETE FROM links WHERE domain = ? AND slug = ? RETURNING *").bind(domain, slug),
     ]);
     // Again, for an edit that published between the two steps above (its own check covers later ones).
     await c.env.LINKS.delete(kvKey(domain, slug));
+    // Only the request that removed the row reports it.
+    const row = removed?.results[0];
+    if (row) await emit(c.env, "link.deleted", { link: linkPayload(row) }, { ctx: c.executionCtx });
     return c.json({ deleted: slug, domain });
   })
 
@@ -453,7 +465,9 @@ export const linksApi = new Hono<AppEnv>()
     const invalid = restoreProblem(c, next);
     if (invalid) return c.json({ error: invalid }, 400);
     if (sameSnapshot(snapshotOf(row), snapshotOf(next))) return c.json({ error: "The link already matches this version." }, 409);
-    return saveEdit(c, next, versionStmt(c.env.DB, next, "restore", c.get("identity"), { at: next.updated_at, restoredFrom: id }));
+    return saveEdit(c, next, versionStmt(c.env.DB, next, "restore", c.get("identity"), { at: next.updated_at, restoredFrom: id }), async (saved) => {
+      await emit(c.env, "link.updated", { link: linkPayload(saved), changes: changedFields(row, saved), restored_version: id }, { ctx: c.executionCtx });
+    });
   })
 
   /** A capped link's counter. */
@@ -498,6 +512,7 @@ export const linksApi = new Hono<AppEnv>()
       if (isUniqueViolation(err)) return c.json({ error: `${linkKey(domain, slug)} is in use by another link now.` }, 409);
       throw err;
     }
+    await emit(c.env, "link.created", { link: linkPayload(row), restored: true }, { ctx: c.executionCtx });
     if (!(await published(c.env, row))) return c.json({ error: PUBLISH_FAILED, link: dto(c, row) }, 502);
     return c.json({ link: dto(c, row) }, 201);
   })
@@ -651,6 +666,13 @@ export const linksApi = new Hono<AppEnv>()
           }),
         ),
       );
+      // New links only. The first few are sent now; the cron sends the rest, a few each run.
+      const created = new Set(results.filter((r) => r.status === "created").map((r) => linkKey(r.domain, r.slug)));
+      let sentNow = 0;
+      for (const r of saved) {
+        if (!created.has(linkKey(r.domain, r.slug))) continue;
+        await emit(c.env, "link.created", { link: linkPayload(r), imported: true }, sentNow++ < IMPORT_EVENTS_NOW ? { ctx: c.executionCtx } : {});
+      }
       for (const res of results) {
         if (failed.has(linkKey(res.domain, res.slug))) {
           res.status = "error";

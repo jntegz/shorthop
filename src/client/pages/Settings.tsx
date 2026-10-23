@@ -9,6 +9,7 @@ import { MailSetup } from "../components/MailSetup";
 import { DeadLinkEditor } from "../components/DeadLinkEditor";
 import { NotFoundEditor } from "../components/NotFoundEditor";
 import { UtmSettings } from "../components/UtmSettings";
+import { Webhooks } from "../components/Webhooks";
 import { ShortDomains } from "../components/ShortDomains";
 import { Badge, Button, Card, CardHeader, Dialog, Notice, PageHeader, Spinner } from "../components/ui";
 import { countryName, day, flag, num, when } from "../lib/format";
@@ -124,6 +125,8 @@ export function Settings() {
         <ShortDomains domains={s.domains} primary={s.primaryDomain} adminHost={s.adminHost} linksPerDomain={s.linksPerDomain} demo={s.demo} />
         <CloudflareFeatures />
         <UtmSettings key={s.defaultUtm} defaultUtm={s.defaultUtm} onSaveDefault={(t) => saveUtm.mutate(t)} saving={saveUtm.isPending || resyncing !== null} />
+
+        <Webhooks />
 
         <NotFoundEditor domain={s.primaryDomain} />
 
