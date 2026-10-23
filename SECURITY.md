@@ -8,14 +8,22 @@ Shorthop is a personal project without a bug bounty.
 
 ## How Shorthop protects itself
 
-- **Admin (`/_admin`):** by default, Cloudflare Access plus an admin password. The Worker verifies the Access JWT itself (issuer, audience, signature, allowed email) on every request, so a misconfigured Access application or a direct request can't bypass it. The password session is bound to the Access identity it was issued to.
+- **Admin (`/_admin`):** by default, Cloudflare Access plus a password. The Worker verifies the Access JWT itself (issuer, audience, RS256 signature) on every request, so a misconfigured Access application or a direct request can't bypass it. Only owners (`ADMIN_EMAIL`) and people added in the admin get in. The password session is bound to the identity it was issued to.
+- **People and permissions:** every API route has a permission rule, checked in the Worker after sign-in. A route without one is refused, and a test fails until it has one. Owners use the admin password. Everyone else chooses their own (PBKDF2, at least 12 characters) from a one-time invite link, which is stored only as a SHA-256 hash and works for 7 days, once, for one Access email. Each person has their own session epoch, so a reset or removal ends their sessions at once. Without Access there is only the owner.
 - **Fail closed:** missing or malformed configuration keeps the admin shut. Access is only turned off by the exact value `ADMIN_AUTH="password"`; empty Access settings without it, or any other value, return an error.
-- **Password login:** PBKDF2-SHA256 (25,000 or 100,000 iterations), constant-time comparison, a signed `__Host-` cookie with `SameSite=Strict`, CSRF checks, 5 attempts per network before a lockout that doubles up to 24 hours, and a global pause after 30 failures in an hour from 5 or more networks. Logging out revokes that session on the server, and a password change ends every session. Wrong API tokens lock the sending network after 10 a minute, before the token is even compared. IP addresses are never stored: lockouts and the login log use a keyed hash of the network.
-- **API (`/api`):** a Bearer token of 40 random characters, compared in constant time. Failed attempts are rate-limited per IP. By default the token can only read and create: changing or deleting links, overwriting imports and changing settings need the admin, so a token lost with a phone can't retarget links people already have. `API_TOKEN_SCOPE="full"` lifts that limit.
+- **Password login:** PBKDF2-SHA256 (25,000 or 100,000 iterations), constant-time comparison, a signed `__Host-` cookie with `SameSite=Strict`, CSRF checks, 5 attempts per network before a lockout that doubles up to 24 hours, and a global pause after 30 failures in an hour from 5 or more networks. Logging out revokes that session on the server, and a password change ends every session. Wrong API keys or tokens lock the sending network after 10 a minute, before anything is even compared. IP addresses are never stored: lockouts and the login log use a keyed hash of the network.
+- **API (`/api`):** personal API keys (`shp_…`, 256 random bits), stored only as a SHA-256 hash and shown once. A key does what was ticked on it, limited to what its owner may do at the moment it's used, and it stops working when it expires, is revoked or its owner is removed. Keys and the API token can't manage people, keys or sessions, can't remove a domain, and can't see which email secrets are set. The older `API_TOKEN` secret is compared in constant time. By default it can only read and create: changing or deleting links, overwriting imports and changing settings need the admin or a key, so a token lost with a phone can't retarget links people already have. `API_TOKEN_SCOPE="full"` lifts that limit.
 - **Secrets** are Wrangler secrets. The setup passes them to Wrangler through stdin and never writes them to disk; the admin never displays them, and System status reports only whether they're set and long enough.
-- **Outbound email:** provider hosts are fixed in the code, redirects are refused, and the recipient comes only from configuration. Webhooks are signed with HMAC-SHA256.
+- **Deploy to Cloudflare installs:**
+  - The owners' password is the plain `ADMIN_PASSWORD` secret, compared in constant time and ignored below 9 characters. A hash (`ADMIN_PASSWORD_HASH`) wins once it's set.
+  - The session secret and the visitor salt are generated once and kept in D1 until you set them as secrets. Anyone who can read your D1 database can then read them; that's someone who already has access to your Cloudflare account.
+- **Outbound requests:**
+  - Destination checks, the social-preview fetch and webhooks only reach public addresses: private, loopback and link-local ranges are refused. Each redirect is checked again before it's followed, or isn't followed at all (webhooks).
+  - Email provider hosts are fixed in the code, redirects are refused, and the recipient comes only from configuration.
+  - Webhooks are signed with HMAC-SHA256 (`X-Shorthop-Signature`). Their secrets are encrypted at rest with AES-GCM, with a key derived from `SESSION_SECRET`, and shown only once.
+- **Password-protected links:** PBKDF2 at 30,000 iterations (a check fits the Free plan's CPU limit), attempts rate-limited per network and link. A correct password is remembered for 12 hours in a cookie scoped to that link and signed with `SESSION_SECRET`; changing the link's password ends every remembered access. The destination is never revealed before the password, not even to preview crawlers.
 - **Admin pages** are served with a strict Content Security Policy, `X-Frame-Options: DENY` and `no-store` caching. Every page and redirect sends `Strict-Transport-Security`.
-- **Visitors:** no IP addresses or cookies are stored. The daily visitor hash uses a random salt per day that's deleted once the day is over. See [docs/PRIVACY.md](docs/PRIVACY.md).
+- **Visitors:** no IP addresses are stored, and no cookies are set except on a password-protected link. The daily visitor hash uses a random salt per day that's deleted once the day is over. See [docs/PRIVACY.md](docs/PRIVACY.md).
 - **Redirect targets** must be `https://` and can't point back at the shortener's own hosts.
 
 <a id="daily-cap"></a>
@@ -55,8 +63,10 @@ Better still, keep Cloudflare Access on: `npm run setup -- access`.
 
 - Use the generated admin password and keep it in a password manager.
 - Turn on **Always Use HTTPS** for each zone. Shorthop also sends `Strict-Transport-Security`, so a browser that has visited once stays on HTTPS.
-- Rotate the API token if a device that stores it (such as a phone with the iOS Shortcut) is lost: `npm run setup -- secrets --rotate`.
-- Keep `API_TOKEN_SCOPE` at `create` unless a script really has to change or delete links.
+- Give each script or device its own personal API key with only the permissions it needs, and an expiry where that fits. Revoke the key if the device (such as a phone with the iOS Shortcut) is lost.
+- If you still have the older `API_TOKEN`, move to keys and delete it (`npx wrangler secret delete API_TOKEN`). Until then, keep `API_TOKEN_SCOPE` at `create`.
+- Turn on Cloudflare Access, even on a Deploy to Cloudflare install: password-only sign-in leaves the login page open to anyone.
+- When someone leaves, remove them in Settings → People and take them out of the Access policy.
 - On Workers Free, add the rate-limiting rule from [the daily cap section](#daily-cap).
 - Monitor a real short link from outside: an uptime service that requests one of your links and expects a `302` notices a used-up daily cap or a broken deploy within minutes. `/health` only shows that the Worker runs; it doesn't read the link store.
-- Review **Settings → Security** for failed logins now and then; the System status page emails you when a check fails.
+- Review **Settings → Access & security** for failed logins now and then; the System status page emails you when a check fails.

@@ -145,13 +145,13 @@ describe("digest providers", () => {
 
   it("reports a timeout as a readable reason and records it", async () => {
     fetchMock.mockRejectedValue(new DOMException("The operation was aborted due to timeout", "TimeoutError"));
-    const result = await runDigest(withEnv({ DIGEST_PROVIDER: "resend", RESEND_API_KEY: "re_key_12345678" }), new Date(), true);
+    const result = await runDigest(withEnv({ DIGEST_PROVIDER: "resend", RESEND_API_KEY: "re_key_12345678" }), new Date(), true); // gitleaks:allow (made-up key)
     expect(result).toMatchObject({ status: "failed", reason: expect.stringMatching(/^TimeoutError/) });
   });
 
   it("keeps secrets out of error reasons", async () => {
     fetchMock.mockResolvedValue(new Response("bad key re_secret_abcdef123 rejected", { status: 401 }));
-    const result = await runDigest(withEnv({ DIGEST_PROVIDER: "resend", RESEND_API_KEY: "re_secret_abcdef123" }), new Date(), true);
+    const result = await runDigest(withEnv({ DIGEST_PROVIDER: "resend", RESEND_API_KEY: "re_secret_abcdef123" }), new Date(), true); // gitleaks:allow (made-up key)
     expect(result.reason).toContain("***");
     expect(result.reason).not.toContain("re_secret_abcdef123");
   });

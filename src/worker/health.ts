@@ -187,7 +187,7 @@ export async function systemHealth(env: Env, now = new Date()): Promise<SystemHe
   const mail = mailerStatus(await withMailSettings(env));
   const mailFix: Extra = { fix: "npm run setup -- email", docs: "docs/SETUP.md#email" };
   if (mail.provider === "off") {
-    add("digest", "Weekly digest and alerts", "warn", "Email is turned off (Settings → Weekly digest), so alerts can only be seen here.", { ...mailFix, advisory: true });
+    add("digest", "Weekly digest and alerts", "warn", "Email is turned off (Settings → Statistics & email → Weekly digest), so alerts can only be seen here.", { ...mailFix, advisory: true });
   } else if (mail.problem) {
     add("digest", "Weekly digest and alerts", "error", `${providerName(mail.provider)} can't send: ${mail.problem}`, mailFix);
   } else if (runs.digest && !runs.digest.ok) {

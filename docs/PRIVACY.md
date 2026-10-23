@@ -25,7 +25,7 @@ Each request to a short domain becomes one Analytics Engine data point, written 
 
 ## How unique visitors are counted
 
-A visitor hash is the first 16 hex characters of SHA-256 over the IP address, the user agent, the UTC date, the `VISITOR_SALT` secret and a random salt for that day. Every isolate shares the day's salt through D1. The daily job (01:15 UTC) deletes the salt of each day that has ended. After that, nobody, the owner included, can work out whose visit a hash was, even with a known IP address. Hashes change every day, so they can't follow a visitor across days.
+A visitor hash is the first 16 hex characters of SHA-256 over the IP address, the user agent, the UTC date, the `VISITOR_SALT` secret (or, on an install without it, a random value generated once and kept in D1) and a random salt for that day. Every isolate shares the day's salt through D1. The daily job (01:15 UTC) deletes the salt of each day that has ended. After that, nobody, the owner included, can work out whose visit a hash was, even with a known IP address. Hashes change every day, so they can't follow a visitor across days.
 
 ## How long it is kept
 
@@ -33,14 +33,28 @@ A visitor hash is the first 16 hex characters of SHA-256 over the IP address, th
 |---|---|
 | Per-visit data points in Analytics Engine | About 90 days (Cloudflare deletes them; they can't be deleted earlier) |
 | Daily totals in D1: per link, country, device and source, and per city, region, OS, browser, referrer, language and bot | Until you delete the link's domain in Settings → Short domains, or the database |
-| Missed paths | As set on the Misses page (Keep for, and the path limits) |
+| Missed paths | As set on the Misses page: Keep for 30 days, 2 months or 3 months, and the path limits |
 | The day's salt | Until the daily job after that day ends |
 
 The daily totals contain counts only, no hashes.
 
-## Admin sign-ins
+## The admin's own users
 
-The admin's login log keeps the time, the result, the country and a keyed hash of the network (never the IP address) for 30 days. The admin uses a session cookie, and Cloudflare Access sets its own when it's on; both are needed to sign in.
+This is about the people who use the admin, not visitors.
+
+- **Login log:** the time, the result, the email of who signed in, the country and a keyed hash of the network (never the IP address), kept for 30 days.
+- **Cookies:** the admin uses a session cookie, and Cloudflare Access sets its own when it's on; both are needed to sign in.
+- **People** added in Settings → Access & security: their email, name, role, permissions, who added them, and when they last signed in. This stays until they are removed. Their password is stored only as a PBKDF2 hash, and an invite link only as a SHA-256 hash.
+- **Personal API keys:** the name, owner, permissions, expiry and when the key was last used (at most hourly). The key itself is stored only as a SHA-256 hash.
+- **Link history:** each version records who made the change, as an email or `api-token`, or as an email and an API key's name. Versions are kept for a year; the latest one of each link for as long as the link exists.
+
+## Requests Shorthop makes
+
+None of these carry visitor data.
+
+- **Destination checks** fetch your links' destinations, once you turn them on. They send a `ShorthopLinkCheck/1.0` user agent.
+- **"Start from the destination"** in the social-preview editor fetches that destination's page to read its preview.
+- **Webhooks** send link data (slug, destination, title, tags, click milestones) to the endpoints you configure, signed with your secret.
 
 ## A starting point for your privacy notice
 

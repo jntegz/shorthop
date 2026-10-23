@@ -10,7 +10,7 @@ const style = (over: Partial<QrStyle> = {}): QrStyle => ({ ...DEFAULT_QR_STYLE, 
 
 describe("designs", () => {
   it("accepts a design, forcing the strongest error correction under a logo", () => {
-    const r = validateQrStyle(style({ fg: "#1A2B3C", logo: { key: "abcdefghij0123456789.png", size: 0.2 }, level: "L", caption: "  Scan for the guide  " }));
+    const r = validateQrStyle(style({ fg: "#1A2B3C", logo: { key: "abcdefghij0123456789.png", size: 0.2 }, level: "L", caption: "  Scan for the guide  " })); // gitleaks:allow (made-up logo key)
     expect(r).toMatchObject({ ok: true, style: { fg: "#1a2b3c", level: "H", caption: "Scan for the guide" } });
   });
 
@@ -19,7 +19,7 @@ describe("designs", () => {
     [{ margin: 0 }, "quiet zone"],
     [{ modules: "stars" }, "module shape"],
     [{ logo: { key: "../x.png", size: 0.2 } }, "logo"],
-    [{ logo: { key: "abcdefghij0123456789.png", size: 0.5 } }, "logo"],
+    [{ logo: { key: "abcdefghij0123456789.png", size: 0.5 } }, "logo"], // gitleaks:allow (made-up logo key)
   ])("rejects %o", (over, message) => {
     const r = validateQrStyle({ ...style(), ...over });
     expect(r.ok).toBe(false);

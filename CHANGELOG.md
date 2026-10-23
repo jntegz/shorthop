@@ -7,17 +7,42 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
-- Links: **Link no longer working**. Mark a link whose destination is gone and optionally pick a replacement link. Visitors get a 410 page with a button to the replacement's short link. Without a usable replacement, they're sent after a few seconds to the site set in Settings. The visit still counts for the original link. A "Not working" badge and status filter, `broken` and `replacement` in the API (`PATCH /links/:domain/:slug`, `GET /links?status=broken`, `GET /links/:domain/:slug/dependents`) and in the links CSV.
+- **Deploy to Cloudflare button** in the README: copies Shorthop into your GitHub or GitLab account, creates the KV namespace and the D1 database, asks for an admin password and deploys with Workers Builds. It starts on `workers.dev` with password-only sign-in; [docs/SETUP.md](docs/SETUP.md#deploy-button) shows how to add a domain, statistics, Access and email. Its config is `wrangler.toml`, generated from the same template as `wrangler.example.jsonc`.
+- The owners' password can be the plain `ADMIN_PASSWORD` secret (at least 9 characters) when `ADMIN_PASSWORD_HASH` isn't set. Without the `SESSION_SECRET` or `VISITOR_SALT` secret, a random value is generated once and kept in D1.
+- Links: **Link no longer working**. Mark a link whose destination is gone and optionally pick a replacement link. Visitors get a 410 page with a button to the replacement's short link. Without a usable replacement, they're sent after a few seconds to the site set in Settings. The visit still counts for the original link. The link shows as **Replaced** or **Retired**, with a status filter. In the API: `broken` and `replacement` (`PATCH /links/:domain/:slug`, `GET /links?status=broken`, `GET /links/:domain/:slug/dependents`), and in the links CSV.
 - Settings: a **"Link no longer working" page** card for the wording of both versions, where to send visitors, and the delay (3–60 seconds, 7 by default). A live preview can show the page with one of your links. The replacement itself is chosen per link, in its settings.
 - **Full statistics** (`/_admin/stats`): every breakdown for all links together, the top 20 links, recent hits and a CSV export. API: `GET /stats/account`.
 - Date ranges: Today · 7 days · 30 days · 90 days · **Custom…**, which offers 6, 9 and 12 months, All time, or any from–to dates (UTC). Used on Overview, Full statistics, link stats and Misses. The API takes `range=custom&from=YYYY-MM-DD&to=YYYY-MM-DD`.
+- **Comparison with the previous period** on all stats pages, and a previous-period line on the charts.
+- Stats pages say when new clicks appear, have a Refresh button, and refresh every minute while in use.
+- **Link health → Destinations:** once you press **Activate automatic checking** and choose how often (once a day, every 3 days, once a week, or 1 hour to 30 days), destinations are checked as they come due, with redirects followed safely.
+  - After 3 failures in a row a destination counts as not working: one email, a badge on the link, and a Fix dialog.
+  - Sites that refuse automated checks show as "can't check" and never alert.
+  - Each link has a switch to leave it out. **Check now** works while automatic checking is off. Link health has a Refresh button.
+- **History** on every link: each change is a version with who made it, and you can restore any earlier version. Deleted links can be restored for 90 days (Links → Recently deleted, or Undo after deleting).
+- **Smart routing:** rules by device (iPhone & iPad, Android, desktop, other) and country, first match wins, with A/B splits across up to 10 weighted destinations.
+  - A simulator in the editor, results per rule and variant on the link page, and `{variant}` in UTM templates.
+  - Bots and previews get the default destination; no cookies.
+- **Social previews:** your own title, description and image for LinkedIn, Slack, X, iMessage and other link previews, with mockups while editing and a button to start from the destination's own preview.
+- **UTM builder and presets:** one field per parameter, saved presets, and a preview of the final URL.
+- **QR studio:** colours with a contrast check, dot and corner shapes, a logo, frames with a caption, a live scan test, SVG/PNG up to 4096 px, print sheets, per-link and default designs, and a ZIP of every link's QR code.
+- **Password-protected links** and **click limits**, counted exactly by a Durable Object. Bots and previews don't count.
+- **Webhooks:** signed events for link created, updated, deleted, destination down or back, and click milestones, with retries and a delivery log.
+- **People and roles:** add people in Settings → Access & security as admins, managers or users, and tick what each user may do (create, edit or delete links, statistics, Link health, workspace settings, API keys). Each person chooses their own password from a one-time invite link. Requires Cloudflare Access; without it, there's only the owner.
+- **Personal API keys** in Settings → API & webhooks. Each is limited to what you allow and never more than its owner can do, with optional expiry and "last used".
+- Settings are split into tabs, with an **API** card (base URL, every endpoint, and what the older API token may do) and **My account**.
 - The status banner can be closed. It comes back when the set of problems changes.
 
 ### Changed
 
+- **Keep misses for** offers 30 days, 2 months or 3 months.
 - Misses: separate switches for **human misses** (on by default), **scanner probes** and **bot-only misses**, each with its own limit. Saving removes stored misses of a kind you turn off.
 - Misses: an address the browser loads while you type it counts as a human miss. For a working link, it still isn't counted as a click.
 - A past custom period no longer includes today's live data.
+- Recent logins shows the last 10, with who signed in. "Log out everywhere" is now **Log out everyone**.
+- `API_TOKEN` is optional, and `npm run setup` no longer creates one: personal API keys are the recommended way to use the API. An existing token keeps working, with its scope.
+- With the API token, domain removal and the email setup's secrets stay off limits; they're for people signed in to the admin.
+- Until `SHORT_DOMAINS` has a domain, links can't be created or imported, and Settings → Short domains explains how to add one.
 
 ### Fixed
 
@@ -25,8 +50,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Upgrading
 
-- Run the new database migration (`npm run setup -- upgrade` does this) **before** the Worker is deployed. Otherwise saving a link fails.
+- Run `npm run setup -- upgrade` **before** deploying. It applies migrations 0002–0012 and adds what the new version needs to `wrangler.jsonc` (your values are kept, and you see the diff first):
+  - the cron `"*/30 * * * *"`;
+  - the `LINK_PASSWORD_LIMITER` rate limiter;
+  - the `CLICK_CAPS` Durable Object with its `migrations` entry.
+
+  A plain `npm run deploy` refuses an older `wrangler.jsonc` and names what's missing. The first deploy creates the Durable Object.
+- Everyone signs in once more after deploying (new session cookie). People other than the owners are added in Settings → Access & security, and their emails must also be in the Access policy.
+- Automatic destination checks start off. Turn them on under Link health → **Activate automatic checking** and choose how often.
+- "Keep misses for: 6 months" is no longer offered. It reads as 3 months, and misses older than that are removed after the next nightly rollup. To keep them, export them first: Link health → Missed visits → Export CSV.
 - Saved miss-tracking settings are converted when they're read: "scanner probes and bot-only misses" becomes the two new switches, and human misses stay on.
+- The visitor privacy notice ([docs/PRIVACY.md](docs/PRIVACY.md)) now mentions the cookie that password-protected links set. Update yours if you use password-protected links.
+- Scripts and the iOS Shortcut can keep using `API_TOKEN`, or switch to a personal API key ([docs/ios-shortcut.md](docs/ios-shortcut.md)). Error messages now say "API key".
 
 ## [1.0.2] - 2026-10-22
 
