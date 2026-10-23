@@ -259,8 +259,37 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
         ) : null}
 
         {!editing ? (
-          <Field label="Custom slug (your own link ending)" htmlFor="slug" hint={`Optional. Type your own word or phrase to go after ${domain || "sh.example"}/, e.g. webinar-2026. Leave blank for a random one.`} error={errors.slug} info={LINK_HELP.slug}>
-            <div className="flex items-center overflow-hidden rounded-lg border border-line bg-bg focus-within:ring-2 focus-within:ring-accent/25"><span className="flex shrink-0 items-center gap-2 pl-3 text-sm text-muted"><Link2 className="size-4" />{domain || "sh.example"}/</span><Input id="slug" className="border-0 bg-transparent shadow-none focus:ring-0" placeholder="type-your-own-slug" value={f.slug} onChange={(e) => set("slug", e.target.value)} autoComplete="off" aria-invalid={Boolean(errors.slug)} /></div>
+          <Field
+            label="Custom slug (your own link ending)"
+            htmlFor="slug"
+            hint={
+              f.slug.trim() ? (
+                <>
+                  Your short link: <span className="font-medium text-fg">{domain || "your-domain"}/{f.slug.trim()}</span>
+                </>
+              ) : (
+                `Optional. Type your own word or phrase to go after ${domain || "your-domain"}/, e.g. webinar-2026. Leave blank for a random one.`
+              )
+            }
+            error={errors.slug}
+            info={LINK_HELP.slug}
+          >
+            {/* The fixed domain sits in a tinted add-on so the white part reads as the field to type in. */}
+            <div className="flex h-10 items-stretch overflow-hidden rounded-lg border border-line bg-surface focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/25">
+              <span className="flex shrink-0 items-center gap-2 border-r border-line bg-surface-2 px-3 text-sm text-muted">
+                <Link2 className="size-4" />
+                {domain || "your-domain"}/
+              </span>
+              <Input
+                id="slug"
+                className="h-full rounded-none border-0 bg-transparent shadow-none focus:ring-0"
+                placeholder="type-your-own-slug"
+                value={f.slug}
+                onChange={(e) => set("slug", e.target.value)}
+                autoComplete="off"
+                aria-invalid={Boolean(errors.slug)}
+              />
+            </div>
           </Field>
         ) : null}
 
