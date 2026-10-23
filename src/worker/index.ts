@@ -1,13 +1,13 @@
 import { utcDate } from "../shared/dates";
 import { NOT_FOUND_IMAGE_PATH, NOT_FOUND_PREVIEW_PATH } from "../shared/not-found";
-import { DIGEST_CRON } from "../shared/schedule";
+import { CHECKS_CRON, DIGEST_CRON } from "../shared/schedule";
 import { serveAdmin } from "./admin";
 import { pruneDaySalts } from "./analytics";
 import { app } from "./app";
 import { nowSec } from "./db";
 import { SERVED_BY_HEADER } from "./dns-check";
 import { resolveSite } from "./domains";
-import { scheduledDaily, scheduledDigest } from "./health";
+import { scheduledDaily, scheduledDigest, scheduledLinkChecks } from "./health";
 import { loginApp } from "./login";
 import { notFoundResponse, serveNotFoundImage } from "./not-found";
 import { handleRedirect, redirectTo } from "./redirect";
@@ -45,6 +45,7 @@ export default {
   async scheduled(controller, env, ctx) {
     const now = new Date(controller.scheduledTime);
     if (controller.cron === DIGEST_CRON) ctx.waitUntil(scheduledDigest(env, now));
+    else if (controller.cron === CHECKS_CRON) ctx.waitUntil(scheduledLinkChecks(env));
     else {
       ctx.waitUntil(scheduledDaily(env, now));
       ctx.waitUntil(pruneLoginState(env.DB, nowSec()));

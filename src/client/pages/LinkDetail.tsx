@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import type { Period } from "../../shared/types";
 import { api, call, keys } from "../api";
 import { Breakdown, ClicksChart, StatTiles } from "../components/Charts";
+import { DestinationCheck } from "../components/DestinationCheck";
 import { LinkForm } from "../components/LinkForm";
 import { PeriodPicker, periodQuery } from "../components/PeriodPicker";
 import { QrDialog } from "../components/QrDialog";
@@ -23,6 +24,8 @@ export function LinkDetail() {
   const label = labelOf({ domain, slug });
   const [period, setPeriod] = useState<Period>({ range: "30d" });
   const [editing, setEditing] = useState(false);
+  /** Opens the editor with "Link no longer working" already switched on. */
+  const [markBroken, setMarkBroken] = useState(false);
   const [qr, setQr] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const navigate = useNavigate();
@@ -35,10 +38,14 @@ export function LinkDetail() {
   });
   const { hash } = useLocation();
   const loaded = Boolean(linkQ.data);
-  // "Statistics" on the links list opens this page at #stats.
+  // "Statistics" on the links list opens this page at #stats; Link health's "Fix" at #edit.
   useEffect(() => {
     if (loaded && hash === "#stats") requestAnimationFrame(() => document.getElementById("stats")?.scrollIntoView({ behavior: "smooth" }));
-  }, [loaded, hash]);
+    if (loaded && hash === "#edit") {
+      setEditing(true);
+      navigate({ hash: "" }, { replace: true });
+    }
+  }, [loaded, hash, navigate]);
   const stats = useQuery({
     queryKey: keys.linkStats(domain, slug, period),
     queryFn: () => call(api.stats.links[":domain"][":slug"].$get({ param: { domain, slug }, query: periodQuery(period) })),
@@ -166,6 +173,13 @@ export function LinkDetail() {
           </Badge>
         ))}
       </div>
+      <DestinationCheck
+        link={link}
+        onMarkBroken={() => {
+          setMarkBroken(true);
+          setEditing(true);
+        }}
+      />
       {link.notes ? <p className="mb-4 rounded-lg bg-surface-2 px-3 py-2 text-sm whitespace-pre-wrap text-fg">{link.notes}</p> : null}
 
       <div id="stats" className="mb-4 flex scroll-mt-6 flex-wrap items-center justify-between gap-2">
@@ -255,7 +269,15 @@ export function LinkDetail() {
         )}
       </Card>
 
-      <LinkForm open={editing} onOpenChange={setEditing} link={link} />
+      <LinkForm
+        open={editing}
+        onOpenChange={(o) => {
+          setEditing(o);
+          if (!o) setMarkBroken(false);
+        }}
+        link={link}
+        markBroken={markBroken}
+      />
       <QrDialog open={qr} onOpenChange={setQr} shortUrl={link.shortUrl} label={label} />
       <Dialog open={confirmDelete} onOpenChange={setConfirmDelete} title={`Delete ${label}?`} description="The short link stops working and its slug becomes free. Stats already collected stay in the rollups. To stop a link temporarily, disable it instead.">
         {dependents.data?.links.length ? (

@@ -9,9 +9,30 @@ import { DownloadButton } from "../components/DownloadButton";
 import { LinkForm } from "../components/LinkForm";
 import { PeriodPicker, periodParams, periodQuery } from "../components/PeriodPicker";
 import { SystemStatus } from "../components/SystemStatus";
+import { CHECK_STYLE } from "../components/CheckBadge";
 import { Button, buttonClass, Card, CardHeader, Empty, Notice, PageHeader, Spinner } from "../components/ui";
 import { day, hostOf, num } from "../lib/format";
 import { linkKey, linkPath, useLinkLabel } from "../lib/links";
+import { cn } from "../lib/utils";
+
+/** One line on whether destinations still load, linking to the matching filter. */
+function DestinationSummary({ down, warning, total }: { down: number; warning: number; total: number }) {
+  if (!total) return null;
+  const state = down ? "down" : warning ? "warning" : "ok";
+  const Icon = CHECK_STYLE[state].icon;
+  const text = down
+    ? `${num(down)} ${down === 1 ? "destination isn't" : "destinations aren't"} working`
+    : warning
+      ? `${num(warning)} ${warning === 1 ? "destination is" : "destinations are"} being rechecked`
+      : `All ${num(total)} checked destinations load`;
+  return (
+    <Link to={state === "ok" ? "/health" : `/health?state=${state}`} className="mx-5 mb-3 flex items-center gap-2 rounded-lg border border-line px-3 py-2 text-sm hover:border-accent/40">
+      <Icon className={cn("size-4 shrink-0", CHECK_STYLE[state].text)} aria-hidden />
+      <span className="min-w-0 flex-1 truncate text-fg">{text}</span>
+      <ArrowUpRight className="size-3.5 shrink-0 text-subtle" aria-hidden />
+    </Link>
+  );
+}
 
 export function Dashboard() {
   const [period, setPeriod] = useState<Period>({ range: "30d" });
@@ -23,6 +44,8 @@ export function Dashboard() {
   const o = overview.data;
   const maxTop = Math.max(1, ...(o?.topLinks.map((l) => l.clicks) ?? [1]));
   const humanMisses = misses.data?.rows.filter((r) => r.hits > 0 && !r.probe).slice(0, 5) ?? [];
+  const checks = useQuery({ queryKey: keys.checks, queryFn: () => call(api.checks.$get()) });
+  const failing = (state: "down" | "warning") => checks.data?.items.filter((i) => i.state === state).length ?? 0;
 
   return <>
     <PageHeader title="A little link. A bigger picture." description="See where your links go, and who they bring closer."
@@ -60,7 +83,8 @@ export function Dashboard() {
           <Breakdown title="Around the world" description="Human clicks by country" rows={o.countries} kind="country" limit={5} />
           <Breakdown title="Devices" description="How your audience connects" rows={o.devices} kind="device" limit={5} />
           <Card>
-            <CardHeader title="Link health" description="Missing links · Last 7 days" action={<Link to="/misses" className="text-accent" aria-label="View link health"><ArrowUpRight className="size-4" /></Link>} />
+            <CardHeader title="Link health" description="Destinations · Missing links in the last 7 days" action={<Link to="/health" className="text-accent" aria-label="View link health"><ArrowUpRight className="size-4" /></Link>} />
+            {checks.data ? <DestinationSummary down={failing("down")} warning={failing("warning")} total={checks.data.items.length} /> : null}
             {misses.isPending ? <div className="flex justify-center py-8"><Spinner /></div>
               : misses.isError ? <div className="px-5 pb-5 text-sm text-muted">Link health couldn’t load. <button className="text-accent underline" onClick={() => void misses.refetch()}>Retry</button></div>
               : humanMisses.length === 0 ? <Empty icon={<ShieldCheck />} title="Looking good"><p>No missing links in the available data this week.</p></Empty>

@@ -52,8 +52,9 @@
   ],
 
   "triggers": {
-    // Daily rollup at 01:15 UTC, weekly digest Mondays 07:00 UTC (src/shared/schedule.ts).
-    "crons": ["15 1 * * *", "0 7 * * 1"]
+    // Daily rollup at 01:15 UTC, weekly digest Mondays 07:00 UTC, destination
+    // checks every 30 minutes (src/shared/schedule.ts).
+    "crons": ["15 1 * * *", "0 7 * * 1", "*/30 * * * *"]
   },
 
   "vars": {

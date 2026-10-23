@@ -15,6 +15,7 @@ import {
 } from "../../shared/types";
 import { api, call, keys } from "../api";
 import { DownloadButton } from "../components/DownloadButton";
+import { HealthTabs } from "../components/HealthTabs";
 import { LinkForm } from "../components/LinkForm";
 import { PeriodPicker, periodParams, periodQuery } from "../components/PeriodPicker";
 import { Badge, Button, Card, CardHeader, Dialog, Empty, Field, InfoTip, Notice, PageHeader, Pagination, Select, SortHeader, Spinner, Switch } from "../components/ui";
@@ -295,6 +296,7 @@ export function Misses() {
           </>
         }
       />
+      <HealthTabs />
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-line bg-surface px-4 py-3 text-sm">
         <span className="text-muted">{policySummary(policy)}</span>
         <Button variant="outline" size="sm" onClick={() => setTracking(true)} disabled={!q.data}>

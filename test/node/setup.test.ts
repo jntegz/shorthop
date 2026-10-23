@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import { args } from "../../scripts/lib";
-import { DIGEST_CRON, ROLLUP_CRON } from "../../src/shared/schedule";
+import { CHECKS_CRON, DIGEST_CRON, ROLLUP_CRON } from "../../src/shared/schedule";
 import { configFromText, deployProblems, EXAMPLE_CONFIG, EXAMPLE_FILE, parseJsonc, renderConfig, routeHosts, type SetupConfig } from "../../scripts/setup/template";
 import {
   datasetProblem,
@@ -66,7 +66,7 @@ describe("config template", () => {
 
   it("writes the crons the Worker dispatches on, and routes for every host", () => {
     const raw = parseJsonc(renderConfig(REAL), "x") as { triggers: { crons: string[] }; routes: { pattern: string }[]; send_email?: unknown };
-    assert.deepEqual(raw.triggers.crons, [ROLLUP_CRON, DIGEST_CRON]);
+    assert.deepEqual(raw.triggers.crons, [ROLLUP_CRON, DIGEST_CRON, CHECKS_CRON]);
     assert.deepEqual(raw.routes.map((r) => r.pattern), ["go.example.net", "example.org", "admin.example.net"]);
     assert.equal(raw.send_email, undefined);
     assert.deepEqual(routeHosts({ ...REAL, adminHost: "example.org" }), ["go.example.net", "example.org"]);

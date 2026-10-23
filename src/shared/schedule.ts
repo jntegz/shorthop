@@ -5,3 +5,5 @@
 export const ROLLUP_CRON = "15 1 * * *";
 /** Mondays at 07:00 UTC: the weekly digest. */
 export const DIGEST_CRON = "0 7 * * 1";
+/** Every 30 minutes: the destination checks that are due. */
+export const CHECKS_CRON = "*/30 * * * *";

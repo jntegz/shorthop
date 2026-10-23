@@ -95,4 +95,6 @@ export const keys = {
   recent: (domain?: string, slug?: string) => ["stats", "recent", domain ?? "*", slug ?? "*"] as const,
   settings: ["settings"] as const,
   health: ["settings", "health"] as const,
+  checks: ["checks"] as const,
+  linkCheck: (domain: string, slug: string) => ["checks", domain, slug] as const,
 };

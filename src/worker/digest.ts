@@ -5,6 +5,7 @@ import { APP_NAME } from "../shared/brand";
 import { addDays, isoWeek, utcDate } from "../shared/dates";
 import { linkLabel } from "../shared/domains";
 import { escapeHtml } from "../shared/html";
+import { isCheckProblem, problemText } from "../shared/link-check";
 import { isProbePath } from "../shared/slug";
 import { getSetting, setSettingStmt } from "./db";
 import { domainsOf } from "./domains";
@@ -23,6 +24,8 @@ export interface DigestData {
   sources: { value: string; clicks: number }[];
   newLinks: { domain: string; slug: string; target: string }[];
   misses: { domain: string; slug: string; hits: number }[];
+  /** Live links whose destination failed its checks (Link health). */
+  notWorking: { domain: string; slug: string; target: string; problem: string }[];
 }
 
 type Num = number | null;
@@ -38,7 +41,7 @@ export async function digestData(env: Env, now: Date = new Date()): Promise<Dige
   const missFrom = cleared.all !== null && cleared.all >= from ? addDays(cleared.all, 1) : from;
   const sumTotals = `SELECT SUM(clicks) AS clicks, SUM(uniques) AS uniques, SUM(bots) AS bots FROM daily_dims
                      WHERE dim = 'total' AND date BETWEEN ?1 AND ?2`;
-  const [cur, prev, top, countries, sources, newLinks, misses] = await db.batch<Record<string, string | Num>>([
+  const [cur, prev, top, countries, sources, newLinks, misses, notWorking] = await db.batch<Record<string, string | Num>>([
     db.prepare(sumTotals).bind(from, to),
     db.prepare(sumTotals).bind(prevFrom, prevTo),
     db
@@ -73,6 +76,10 @@ export async function digestData(env: Env, now: Date = new Date()): Promise<Dige
          GROUP BY d.domain, d.slug HAVING hits > 0 ORDER BY hits DESC LIMIT 50`,
       )
       .bind(missFrom, to, JSON.stringify(cleared.links)),
+    db.prepare(
+      `SELECT l.domain, l.slug, l.target, c.problem, c.http_status FROM target_checks c JOIN links l ON l.target = c.target
+       WHERE c.status = 'down' AND l.active = 1 AND l.broken = 0 AND l.monitor = 1 ORDER BY c.since, l.domain, l.slug LIMIT 10`,
+    ),
   ]);
   const t = (r: Record<string, string | Num> | undefined) => ({
     clicks: Number(r?.clicks ?? 0),
@@ -99,6 +106,12 @@ export async function digestData(env: Env, now: Date = new Date()): Promise<Dige
       .map((r) => ({ domain: String(r.domain), slug: String(r.slug), hits: Number(r.hits) }))
       .filter((m) => !isProbePath(m.slug))
       .slice(0, 5),
+    notWorking: (notWorking?.results ?? []).map((r) => ({
+      domain: String(r.domain),
+      slug: String(r.slug),
+      target: String(r.target),
+      problem: problemText(isCheckProblem(r.problem) ? r.problem : null, r.http_status === null ? null : Number(r.http_status)),
+    })),
   };
 }
 
@@ -137,6 +150,7 @@ export function renderDigest(
     "",
     `New links: ${d.newLinks.length ? d.newLinks.map(label).join(", ") : "none"}`,
     d.misses.length ? `Most-hit missing slugs: ${d.misses.map((m) => `${label(m)} (${fmt(m.hits)})`).join(", ")}` : "",
+    d.notWorking.length ? `Destinations not working: ${d.notWorking.map((n) => `${label(n)} (${n.problem})`).join(", ")}` : "",
     "",
     `Dashboard: ${adminUrl}`,
   ]
@@ -195,6 +209,13 @@ export function renderDigest(
     d.misses.length
       ? `<p style="font-size:14px;margin:0 0 8px;"><strong>Most-hit missing slugs:</strong> ${d.misses
           .map((m) => `${escapeHtml(label(m))} (${fmt(m.hits)})`)
+          .join(", ")}</p>`
+      : ""
+  }
+  ${
+    d.notWorking.length
+      ? `<p style="font-size:14px;margin:0 0 8px;"><strong>Destinations not working:</strong> ${d.notWorking
+          .map((n) => `<a href="${escapeHtml(adminUrl)}health" style="color:#6554c0;text-decoration:none;">${escapeHtml(label(n))}</a> (${escapeHtml(n.problem)})`)
           .join(", ")}</p>`
       : ""
   }

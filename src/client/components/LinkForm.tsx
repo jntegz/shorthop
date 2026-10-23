@@ -23,6 +23,8 @@ interface Props {
   /** Prefill the domain when creating; defaults to the primary domain. */
   initialDomain?: string;
   onSaved?: (link: LinkDTO) => void;
+  /** Editing only: open with "Link no longer working" switched on (from a failed destination check). */
+  markBroken?: boolean;
 }
 
 interface FormState {
@@ -38,6 +40,7 @@ interface FormState {
   utm: boolean;
   utmTemplate: string;
   passQuery: boolean;
+  monitor: boolean;
   broken: boolean;
   /** "domain/slug" of the replacement, or "" for none. */
   replacement: string;
@@ -56,12 +59,13 @@ function initial(link?: LinkDTO, slug = "", domain = ""): FormState {
     utm: link?.utm ?? false,
     utmTemplate: link?.utmTemplate ?? "",
     passQuery: link?.passQuery ?? false,
+    monitor: link?.monitor ?? true,
     broken: link?.broken ?? false,
     replacement: link?.replacement ? linkKey(link.replacement.domain, link.replacement.slug) : "",
   };
 }
 
-export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain, onSaved }: Props) {
+export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain, onSaved, markBroken }: Props) {
   const qc = useQueryClient();
   const editing = Boolean(link);
   const { domains, primary, multiple } = useDomains();
@@ -72,11 +76,11 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
 
   useEffect(() => {
     if (open) {
-      setF(initial(link, initialSlug, initialDomain));
+      setF({ ...initial(link, initialSlug, initialDomain), ...(link && markBroken ? { broken: true } : {}) });
       setTouched(false);
       setAdvanced(Boolean(link));
     }
-  }, [open, link, initialSlug, initialDomain]);
+  }, [open, link, initialSlug, initialDomain, markBroken]);
 
   const domain = f.domain || primary;
 
@@ -112,6 +116,7 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
         utm: f.utm,
         utmTemplate: f.utm && f.utmTemplate.trim() ? f.utmTemplate.trim() : null,
         passQuery: f.passQuery,
+        monitor: f.monitor,
       };
       if (link) {
         const cut = f.replacement.indexOf("/");
@@ -307,6 +312,14 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
             label="Pass query parameters through"
             description="Forwards extra ?params from the short link (except s and q=1) to the destination."
             info={LINK_HELP.passQuery}
+          />
+          <Switch
+            id="monitor"
+            checked={f.monitor}
+            onCheckedChange={(v) => set("monitor", v)}
+            label="Check that the destination works"
+            description="Visits the destination about twice a day and alerts you if it stops loading. Turn off for pages behind a login."
+            info={LINK_HELP.monitor}
           />
         </div>
 

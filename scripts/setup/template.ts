@@ -4,7 +4,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { parse, printParseErrorCode, type ParseError } from "jsonc-parser";
-import { DIGEST_CRON, ROLLUP_CRON } from "../../src/shared/schedule";
+import { CHECKS_CRON, DIGEST_CRON, ROLLUP_CRON } from "../../src/shared/schedule";
 import { DIGEST_PROVIDERS as PROVIDERS, type DigestProvider } from "../../src/shared/types";
 
 export const CONFIG_FILE = "wrangler.jsonc";
@@ -153,8 +153,9 @@ ${routes}
   ],
 ${sendEmail}
   "triggers": {
-    // Daily rollup at 01:15 UTC, weekly digest Mondays 07:00 UTC (src/shared/schedule.ts).
-    "crons": [${j(ROLLUP_CRON)}, ${j(DIGEST_CRON)}]
+    // Daily rollup at 01:15 UTC, weekly digest Mondays 07:00 UTC, destination
+    // checks every 30 minutes (src/shared/schedule.ts).
+    "crons": [${j(ROLLUP_CRON)}, ${j(DIGEST_CRON)}, ${j(CHECKS_CRON)}]
   },
 
   "vars": {

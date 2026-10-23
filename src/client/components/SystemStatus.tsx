@@ -11,7 +11,7 @@ import { cn } from "../lib/utils";
 import { Badge, Button, Card, CardHeader, Spinner } from "./ui";
 
 /** Rechecked every 5 minutes while the admin is open. */
-function useSystemHealth() {
+export function useSystemHealth() {
   return useQuery({ queryKey: keys.health, queryFn: () => call(api.settings.health.$get()), refetchInterval: 5 * 60_000, staleTime: 60_000 });
 }
 

@@ -16,9 +16,10 @@ import { domainsOf } from "./domains";
 import { runDigest } from "./digest";
 import { MailerError, mailerStatus, providerName, sendMail, withMailSettings } from "./mailer";
 import { runRollup, type RollupResult } from "./rollup";
+import { getCheckSettings, runLinkChecks } from "./link-check";
 import { loginConfig } from "./session";
 
-type Job = "rollup" | "digest" | "alert";
+type Job = "rollup" | "digest" | "alert" | "links";
 const JOBS_KEY = "job_runs";
 const ALERT_KEY = "health_alert";
 /** A problem that stays unresolved is reported again after a week. */
@@ -27,6 +28,9 @@ const REMIND_AFTER_SEC = 7 * 86400;
 const ROLLUP_DUE_HOUR = 2;
 const MIN_API_TOKEN = 32;
 const MIN_SALT = 16;
+
+/** The checks cron runs every 30 minutes; this much silence means it stopped. */
+const LINK_CHECKS_LATE_SEC = 3 * 3600;
 
 const RANK: Record<HealthStatus, number> = { ok: 0, warn: 1, error: 2 };
 
@@ -46,6 +50,22 @@ export async function recordJob(db: D1Database, job: Job, ok: boolean, error?: s
     await setSettingStmt(db, JOBS_KEY, JSON.stringify(runs)).run();
   } catch (err) {
     console.error(JSON.stringify({ message: "job record failed", job, error: String(err) }));
+  }
+}
+
+export async function lastJobRun(db: D1Database, job: Job): Promise<JobRun | null> {
+  return (await jobRuns(db))[job] ?? null;
+}
+
+/** The half-hourly cron: due destination checks, with the outcome recorded. */
+export async function scheduledLinkChecks(env: Env): Promise<void> {
+  try {
+    const r = await runLinkChecks(env);
+    if (!r.skipped) await recordJob(env.DB, "links", true);
+    console.log(JSON.stringify({ message: "link checks", ...r, newlyDown: r.newlyDown.length, recovered: r.recovered.length }));
+  } catch (err) {
+    console.error(JSON.stringify({ message: "link checks failed", error: String(err) }));
+    await recordJob(env.DB, "links", false, String(err));
   }
 }
 
@@ -173,6 +193,19 @@ export async function systemHealth(env: Env, now = new Date()): Promise<SystemHe
   // With email off, an old failed alert is no longer something to fix.
   if (alert && !alert.ok && mail.provider !== "off") {
     add("alert", "Alert email", "error", `The last alert (${when(alert.at)}) couldn't be sent: ${alert.error}`);
+  }
+
+  // Destination checks (the half-hourly cron).
+  const checkSettings = await getCheckSettings(env.DB).catch(() => null);
+  const linksRun = runs.links;
+  if (checkSettings && !checkSettings.enabled) {
+    add("links", "Destination checks", "ok", "Turned off on the Link health page.");
+  } else if (linksRun && !linksRun.ok) {
+    add("links", "Destination checks", "error", `The last run (${when(linksRun.at)}) failed: ${linksRun.error}`);
+  } else if (linksRun && nowSec() - linksRun.at > LINK_CHECKS_LATE_SEC) {
+    add("links", "Destination checks", "warn", `The last run was ${when(linksRun.at)}; they run every 30 minutes. Check that the cron triggers are deployed.`);
+  } else {
+    add("links", "Destination checks", "ok", linksRun ? `Last run ${when(linksRun.at)}.` : "The first run starts within 30 minutes.");
   }
 
   setupChecks(env, add);

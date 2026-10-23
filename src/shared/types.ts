@@ -1,5 +1,7 @@
 // Response shapes of the admin API, shared by the Worker and the SPA.
 
+import type { CheckProblem, CheckState } from "./link-check";
+
 export type LinkSource = "native" | "import";
 
 export interface LinkDTO {
@@ -24,6 +26,8 @@ export interface LinkDTO {
   broken: boolean;
   /** The link that notice points to; null sends visitors to the site set in Settings. */
   replacement: { domain: string; slug: string } | null;
+  /** Whether the destination is checked on a schedule (Link health). */
+  monitor: boolean;
   createdAt: number;
   updatedAt: number;
 }
@@ -37,6 +41,54 @@ export interface LinkListItem extends LinkDTO {
   clicksPeriod: number;
   /** All-time human clicks tracked here (the previous shortener's are in importedClicks). */
   clicksTotal: number;
+  /** The destination's last check; null when it was never checked. */
+  check: { state: CheckState; problem: CheckProblem | null; httpStatus: number | null; checkedAt: number } | null;
+}
+
+/** Link health → destination checks. */
+export interface CheckSettings {
+  /** Check destinations on a schedule. */
+  enabled: boolean;
+  /** Email when a destination stops (or starts) working. */
+  notify: boolean;
+}
+
+/** One destination and the live links that point to it. */
+export interface TargetCheckDTO {
+  target: string;
+  state: CheckState;
+  httpStatus: number | null;
+  problem: CheckProblem | null;
+  /** Where redirects ended, when not at the target itself. */
+  finalUrl: string | null;
+  hops: number;
+  ms: number | null;
+  /** Failed checks in a row. */
+  fails: number;
+  /** Unix seconds; null until the first check. */
+  checkedAt: number | null;
+  lastOkAt: number | null;
+  /** When the state last changed. */
+  since: number | null;
+  nextAt: number | null;
+  links: { domain: string; slug: string; title: string | null }[];
+}
+
+export interface LinkChecksDTO {
+  settings: CheckSettings;
+  items: TargetCheckDTO[];
+  /** Live links with checks turned off. */
+  excluded: number;
+  /** Destinations waiting more than an hour past due, or never checked. */
+  overdue: number;
+  /** Most destinations the schedule can check in a day. */
+  capacityPerDay: number;
+  lastRun: JobRun | null;
+}
+
+export interface CheckRunDTO {
+  checked: number;
+  remaining: number;
 }
 
 export interface ImportRowResult {

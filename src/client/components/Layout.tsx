@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { ArrowUpRight, BarChart3, ChartNoAxesCombined, ChevronRight, Cloud, Globe2, Link2, LogOut, Plus, Search, Settings, Unlink, Upload } from "lucide-react";
 import { useEffect, useState, type FormEvent } from "react";
-import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router";
+import { Link, Outlet, useLocation, useNavigate } from "react-router";
 import { api, call, keys } from "../api";
 import { APP_NAME, AUTHOR_NAME, AUTHOR_URL, REPO_URL } from "../../shared/brand";
 import { linkPath, useDomains } from "../lib/links";
@@ -14,10 +14,17 @@ const NAV = [
   { to: "/", label: "Overview", icon: ChartNoAxesCombined, end: true },
   { to: "/stats", label: "Full statistics", icon: BarChart3, end: false },
   { to: "/links", label: "All links", icon: Link2, end: false },
-  { to: "/misses", label: "Link health", icon: Unlink, end: false },
+  // Destinations (/health) and missed visits (/misses) are its two tabs.
+  { to: "/health", label: "Link health", icon: Unlink, end: false, also: "/misses" },
   { to: "/import", label: "Import links", icon: Upload, end: false },
   { to: "/settings", label: "Settings", icon: Settings, end: false },
 ] as const;
+
+/** A nav entry is current on its own path and, for Link health, on its other tab. */
+function isCurrent(n: (typeof NAV)[number], pathname: string): boolean {
+  if (n.end) return pathname === n.to;
+  return pathname.startsWith(n.to) || ("also" in n && pathname.startsWith(n.also));
+}
 
 function Brand() {
   return <Link to="/" className="flex items-center gap-2.5 text-xl font-semibold tracking-[-0.04em] text-fg">
@@ -43,7 +50,7 @@ export function Layout() {
   const settings = useQuery({ queryKey: keys.settings, queryFn: () => call(api.settings.$get()) });
   const identity = settings.data?.security?.email ?? "";
   const passwordOnly = settings.data?.security?.mode === "password";
-  const current = NAV.find((n) => n.end ? pathname === n.to : pathname.startsWith(n.to));
+  const current = NAV.find((n) => isCurrent(n, pathname));
 
   useEffect(() => {
     document.title = `${current?.label ?? "Workspace"} · ${APP_NAME}`;
@@ -67,10 +74,10 @@ export function Layout() {
       <Button className="mt-5 w-full shrink-0" onClick={() => setCreating(true)}><Plus /> Create link</Button>
       <p className="mt-8 mb-3 px-3 text-[10px] font-semibold tracking-[0.16em] text-subtle">WORKSPACE</p>
       <nav className="flex flex-col gap-1" aria-label="Main">
-        {NAV.map(({ to, label, icon: Icon, end }, i) => <NavLink key={to} to={to} end={end}
-          className={({ isActive }) => cn("flex items-center gap-3 rounded-xl px-3 py-3 text-[13px] font-medium transition-colors", i === 3 && "mt-5", isActive ? "bg-accent-soft text-accent" : "text-muted hover:bg-surface-2 hover:text-fg")}>
+        {NAV.map((n, i) => { const { to, label, icon: Icon } = n; return <Link key={to} to={to} aria-current={isCurrent(n, pathname) ? "page" : undefined}
+          className={cn("flex items-center gap-3 rounded-xl px-3 py-3 text-[13px] font-medium transition-colors", i === 3 && "mt-5", isCurrent(n, pathname) ? "bg-accent-soft text-accent" : "text-muted hover:bg-surface-2 hover:text-fg")}>
           <Icon className="size-[18px]" strokeWidth={1.8} />{label}
-        </NavLink>)}
+        </Link>; })}
       </nav>
       <div className="mt-auto pt-8">
         <div className="rounded-xl border border-line bg-bg p-4">
@@ -106,8 +113,8 @@ export function Layout() {
         <footer className="mx-auto mt-8 flex max-w-[1320px] flex-wrap items-center justify-between gap-2 border-t border-line pt-5 text-[11px] text-muted"><span>Made for meaningful connections.</span><span><a href={REPO_URL} target="_blank" rel="noopener noreferrer" className="font-medium text-accent hover:underline">{APP_NAME}</a> by <a href={AUTHOR_URL} target="_blank" rel="noopener noreferrer" className="font-medium text-accent hover:underline">{AUTHOR_NAME}</a> · MIT</span><span>Analytics in UTC · No tracking cookies</span></footer>
       </main>
     </div>
-    <nav className="mobile-nav fixed inset-x-0 bottom-0 z-30 grid grid-cols-5 border-t border-line bg-surface/95 backdrop-blur md:hidden" aria-label="Main">
-      {NAV.map(({ to, label, icon: Icon, end }) => <NavLink key={to} to={to} end={end} className={({ isActive }) => cn("flex min-h-16 flex-col items-center justify-center gap-1 text-[10px] font-medium", isActive ? "text-accent" : "text-muted")}><Icon className="size-5" />{label}</NavLink>)}
+    <nav className="mobile-nav fixed inset-x-0 bottom-0 z-30 grid grid-cols-6 border-t border-line bg-surface/95 backdrop-blur md:hidden" aria-label="Main">
+      {NAV.map((n) => { const { to, label, icon: Icon } = n; return <Link key={to} to={to} aria-current={isCurrent(n, pathname) ? "page" : undefined} className={cn("flex min-h-16 flex-col items-center justify-center gap-1 text-[10px] font-medium", isCurrent(n, pathname) ? "text-accent" : "text-muted")}><Icon className="size-5" />{label}</Link>; })}
     </nav>
     <LinkForm open={creating} onOpenChange={setCreating} onSaved={(l) => navigate(linkPath(l))} />
   </div>;

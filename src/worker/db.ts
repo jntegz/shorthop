@@ -21,6 +21,8 @@ export interface LinkRow {
   broken: number;
   /** "domain/slug" of the link shown instead, when broken. */
   replacement: string | null;
+  /** 0 when its destination is never checked. */
+  monitor: number;
   created_at: number;
   updated_at: number;
 }
@@ -108,6 +110,7 @@ export function toDTO(row: LinkRow, origin: string): LinkDTO {
     importedClicks: row.imported_clicks,
     broken: row.broken === 1,
     replacement: splitKey(row.replacement),
+    monitor: row.monitor !== 0,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

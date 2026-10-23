@@ -1,0 +1,303 @@
+import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { DOWN_AFTER_FAILS, isFetchableUrl, MAX_HOPS, nextRecord, type CheckOutcome } from "../src/shared/link-check";
+import type { LinkChecksDTO, LinkListItem, TargetCheckDTO } from "../src/shared/types";
+import { systemHealth } from "../src/worker/health";
+import worker from "../src/worker/index";
+import { checkUrl, runLinkChecks } from "../src/worker/link-check";
+import { API, bearer, call, json, resetData } from "./helpers";
+
+type Route = (url: string, init: RequestInit) => Response | Promise<Response>;
+let routes: Record<string, Route>;
+let fetchMock: ReturnType<typeof vi.fn>;
+/** Requests made to sites, as "METHOD url" (email API calls excluded). */
+const visited = () =>
+  fetchMock.mock.calls
+    .map(([u, init]) => `${(init as RequestInit | undefined)?.method ?? "GET"} ${String(u)}`)
+    .filter((c) => !c.includes("api.resend.com"));
+const emails = () =>
+  fetchMock.mock.calls
+    .filter(([u]) => String(u).includes("api.resend.com"))
+    .map(([, init]) => JSON.parse((init as RequestInit).body as string) as { subject: string; text: string });
+
+beforeEach(async () => {
+  await resetData();
+  routes = {};
+  fetchMock = vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
+    const url = String(input);
+    if (url.startsWith("https://api.resend.com")) return new Response(JSON.stringify({ id: "msg" }), { status: 200 });
+    const route = routes[url];
+    if (!route) throw new TypeError(`unexpected fetch ${url}`);
+    return route(url, init);
+  });
+  vi.spyOn(globalThis, "fetch").mockImplementation(fetchMock as unknown as typeof fetch);
+});
+afterEach(() => vi.restoreAllMocks());
+
+// Response() only takes 200–599, but real servers send others (LinkedIn's 999).
+const status = (code: number, headers: Record<string, string> = {}) => () =>
+  code > 599 ? ({ status: code, headers: new Headers(headers), body: null } as unknown as Response) : new Response(null, { status: code, headers });
+const redirect = (location: string, code = 301) => status(code, { Location: location });
+/** HEAD answers `head`, GET answers `get`. */
+const byMethod = (head: number, get: number): Route => (_u, init) => new Response(null, { status: init.method === "HEAD" ? head : get });
+
+const mailEnv = { ...env, DIGEST_PROVIDER: "resend", DIGEST_API_KEY: "re_key" } as unknown as Env;
+
+async function createLink(slug: string, target: string, extra: Record<string, unknown> = {}) {
+  const res = await call(`${API}/links`, json({ slug, target, ...extra }));
+  expect(res.status).toBe(201);
+}
+/** Makes every stored check due again, as if time had passed. */
+const makeDue = () => env.DB.prepare("UPDATE target_checks SET next_at = 0").run();
+const row = (target: string) => env.DB.prepare("SELECT * FROM target_checks WHERE target = ?").bind(target).first<Record<string, unknown>>();
+
+describe("outbound URL safety", () => {
+  it.each([
+    ["https://example.com/a", true],
+    ["http://example.com:8080/", true],
+    ["https://example.com:22/", false],
+    ["ftp://example.com/", false],
+    ["https://user:pw@example.com/", false],
+    ["http://localhost/", false],
+    ["http://intranet/", false],
+    ["http://printer.local/", false],
+    ["http://127.0.0.1/", false],
+    ["http://2130706433/", false],
+    ["http://10.1.2.3/", false],
+    ["http://172.20.0.1/", false],
+    ["http://192.168.1.1/", false],
+    ["http://169.254.169.254/latest/meta-data", false],
+    ["http://100.64.0.1/", false],
+    ["http://8.8.8.8/", true],
+    ["http://[::1]/", false],
+    ["http://[fd00::1]/", false],
+    ["http://[fe80::1]/", false],
+    ["http://[::ffff:127.0.0.1]/", false],
+    ["http://[2606:4700::1111]/", true],
+  ])("%s → %s", (url, ok) => {
+    expect(isFetchableUrl(new URL(url))).toBe(ok);
+  });
+});
+
+describe("status model", () => {
+  const fail: CheckOutcome = { kind: "fail", httpStatus: 404, problem: "not_found", finalUrl: null, hops: 0, ms: 5 };
+  const ok: CheckOutcome = { kind: "ok", httpStatus: 200, problem: null, finalUrl: null, hops: 0, ms: 5 };
+
+  it("needs repeated failures before a destination counts as not working", () => {
+    let rec = nextRecord(null, fail, 1000);
+    expect(rec).toMatchObject({ status: "warning", fails: 1, since: 1000 });
+    expect(rec.nextAt - 1000).toBe(3600);
+    for (let i = 2; i <= DOWN_AFTER_FAILS; i++) rec = nextRecord(rec, fail, 1000 * i);
+    expect(rec).toMatchObject({ status: "down", fails: DOWN_AFTER_FAILS, since: 1000 * DOWN_AFTER_FAILS, lastOkAt: null });
+    const again = nextRecord({ ...rec, notified: true }, fail, 9000);
+    expect(again).toMatchObject({ status: "down", since: rec.since, notified: true });
+  });
+
+  it("recovers on one success and never escalates sites that refuse checks", () => {
+    const down = { status: "down" as const, fails: 4, since: 1, lastOkAt: null, notified: true };
+    expect(nextRecord(down, ok, 50)).toMatchObject({ status: "ok", fails: 0, since: 50, lastOkAt: 50, notified: false });
+    const blocked: CheckOutcome = { ...fail, kind: "blocked", httpStatus: 403, problem: "refused" };
+    expect(nextRecord(nextRecord(null, blocked, 1), blocked, 2)).toMatchObject({ status: "blocked", fails: 0, since: 1 });
+  });
+});
+
+describe("checking one destination", () => {
+  const T = "https://site.example/page";
+  const check = (budget = { left: 40 }) => checkUrl(T, budget);
+
+  it("accepts a plain 200 with a single HEAD request", async () => {
+    routes[T] = status(200);
+    const budget = { left: 40 };
+    expect(await check(budget)).toMatchObject({ kind: "ok", httpStatus: 200, hops: 0, finalUrl: null });
+    expect(visited()).toEqual([`HEAD ${T}`]);
+    expect(budget.left).toBe(39);
+  });
+
+  it("retries with GET when HEAD isn't supported", async () => {
+    routes[T] = byMethod(405, 200);
+    expect(await check()).toMatchObject({ kind: "ok", httpStatus: 200 });
+    expect(visited()).toEqual([`HEAD ${T}`, `GET ${T}`]);
+  });
+
+  it.each([
+    [404, "fail", "not_found"],
+    [410, "fail", "gone"],
+    [500, "fail", "server_error"],
+    [400, "fail", "client_error"],
+    [530, "fail", "dns"],
+    [526, "fail", "tls"],
+    [403, "blocked", "refused"],
+    [429, "blocked", "refused"],
+    [999, "blocked", "refused"],
+  ])("HTTP %i is %s (%s)", async (code, kind, problem) => {
+    routes[T] = status(code);
+    expect(await check()).toMatchObject({ kind, problem, httpStatus: code });
+  });
+
+  it("treats a Cloudflare challenge as a site refusing checks", async () => {
+    routes[T] = status(503, { "cf-mitigated": "challenge" });
+    expect(await check()).toMatchObject({ kind: "blocked", problem: "refused" });
+  });
+
+  it("follows relative redirects and reports where they end", async () => {
+    routes[T] = redirect("/new");
+    routes["https://site.example/new"] = status(200);
+    expect(await check()).toMatchObject({ kind: "ok", hops: 1, finalUrl: "https://site.example/new" });
+  });
+
+  it("never follows a redirect to a private address", async () => {
+    routes[T] = redirect("http://169.254.169.254/latest/meta-data");
+    expect(await check()).toMatchObject({ kind: "fail", problem: "unsafe_redirect", hops: 1 });
+    expect(visited()).toEqual([`HEAD ${T}`]);
+  });
+
+  it("gives up after too many redirects", async () => {
+    routes[T] = redirect(T);
+    expect(await check()).toMatchObject({ kind: "fail", problem: "too_many_redirects", hops: MAX_HOPS });
+    expect(visited()).toHaveLength(MAX_HOPS + 1);
+  });
+
+  it("names network errors and timeouts", async () => {
+    routes[T] = () => {
+      throw new TypeError("Network connection lost.");
+    };
+    expect(await check()).toMatchObject({ kind: "fail", problem: "network", httpStatus: null });
+    routes[T] = () => {
+      throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
+    };
+    expect(await check()).toMatchObject({ kind: "fail", problem: "timeout" });
+  });
+
+  it("stops without a verdict when the budget runs out", async () => {
+    routes[T] = redirect("/next");
+    routes["https://site.example/next"] = status(200);
+    expect(await check({ left: 1 })).toBeNull();
+  });
+});
+
+describe("scheduled runs", () => {
+  it("checks each live destination once and skips links that shouldn't be checked", async () => {
+    routes["https://a.example/"] = status(200);
+    routes["https://b.example/"] = status(404);
+    await createLink("one", "https://a.example/");
+    await createLink("two", "https://a.example/");
+    await createLink("three", "https://b.example/");
+    await createLink("off", "https://c.example/", { active: false });
+    await createLink("quiet", "https://d.example/", { monitor: false });
+    await createLink("old", "https://e.example/", { expiresAt: 1_000_000 });
+
+    const r = await runLinkChecks(env);
+    expect(r).toMatchObject({ checked: 2, remaining: 0 });
+    expect(visited().sort()).toEqual(["GET https://b.example/", "HEAD https://a.example/", "HEAD https://b.example/"]);
+    expect(await row("https://a.example/")).toMatchObject({ status: "ok", http_status: 200 });
+    expect(await row("https://b.example/")).toMatchObject({ status: "warning", problem: "not_found", fails: 1 });
+
+    // Nothing is due again until its time comes.
+    fetchMock.mockClear();
+    expect(await runLinkChecks(env)).toMatchObject({ checked: 0 });
+    expect(visited()).toEqual([]);
+  });
+
+  it("emails once when a destination is confirmed down, and again when it works", async () => {
+    routes["https://gone.example/"] = status(404);
+    await createLink("gone", "https://gone.example/");
+    for (let i = 1; i < DOWN_AFTER_FAILS; i++) {
+      await runLinkChecks(mailEnv);
+      await makeDue();
+    }
+    expect(emails()).toHaveLength(0);
+    const r = await runLinkChecks(mailEnv);
+    expect(r.newlyDown).toEqual(["https://gone.example/"]);
+    expect(emails()).toHaveLength(1);
+    expect(emails()[0]).toMatchObject({ subject: "Shorthop: a link stopped working", text: expect.stringContaining("/gone") });
+    expect(emails()[0]!.text).toContain("Page not found (HTTP 404)");
+    expect(await row("https://gone.example/")).toMatchObject({ status: "down", notified: 1 });
+
+    await makeDue();
+    await runLinkChecks(mailEnv);
+    expect(emails()).toHaveLength(1); // still down: not repeated
+
+    routes["https://gone.example/"] = status(200);
+    await makeDue();
+    await runLinkChecks(mailEnv);
+    expect(emails()).toHaveLength(2);
+    expect(emails()[1]!.subject).toBe("Shorthop: a link works again");
+  });
+
+  it("does nothing while turned off, and forgets destinations no link uses", async () => {
+    routes["https://a.example/"] = status(200);
+    await createLink("one", "https://a.example/");
+    await call(`${API}/checks/settings`, { ...json({ enabled: false, notify: true }), method: "PUT" });
+    expect(await runLinkChecks(env)).toMatchObject({ checked: 0, skipped: expect.any(String) });
+
+    await call(`${API}/checks/settings`, { ...json({ enabled: true, notify: true }), method: "PUT" });
+    await runLinkChecks(env);
+    expect(await row("https://a.example/")).not.toBeNull();
+    await call(`${API}/links/sh.example/one`, { method: "DELETE", headers: bearer });
+    await runLinkChecks(env);
+    expect(await row("https://a.example/")).toBeNull();
+  });
+
+  it("runs from the half-hourly cron and shows in the system status", async () => {
+    routes["https://a.example/"] = status(200);
+    await createLink("one", "https://a.example/");
+    const ctx = createExecutionContext();
+    await worker.scheduled({ cron: "*/30 * * * *", scheduledTime: Date.now(), noRetry() {} } as ScheduledController, env, ctx);
+    await waitOnExecutionContext(ctx);
+    expect(await row("https://a.example/")).toMatchObject({ status: "ok" });
+    const check = (await systemHealth(env)).checks.find((c) => c.id === "links");
+    expect(check).toMatchObject({ status: "ok", detail: expect.stringContaining("Last run") });
+  });
+});
+
+describe("checks API", () => {
+  it("lists destinations with their links, and filters the links list by problems", async () => {
+    routes["https://a.example/"] = status(200);
+    routes["https://b.example/"] = status(500);
+    await createLink("one", "https://a.example/");
+    await createLink("two", "https://a.example/", { title: "Second" });
+    await createLink("three", "https://b.example/");
+    await createLink("quiet", "https://d.example/", { monitor: false });
+    await runLinkChecks(env);
+
+    const list = (await (await call(`${API}/checks`, { headers: bearer })).json()) as LinkChecksDTO;
+    expect(list.settings).toEqual({ enabled: true, notify: true });
+    expect(list.excluded).toBe(1);
+    expect(list.lastRun).toBeNull(); // only the cron records a run
+    const a = list.items.find((i) => i.target === "https://a.example/")!;
+    expect(a).toMatchObject({ state: "ok", httpStatus: 200 });
+    expect(a.links.map((l) => l.slug)).toEqual(["one", "two"]);
+    expect(list.items.find((i) => i.target === "https://b.example/")).toMatchObject({ state: "warning", problem: "server_error" });
+
+    const failing = (await (await call(`${API}/links?status=failing`, { headers: bearer })).json()) as { links: LinkListItem[] };
+    expect(failing.links.map((l) => l.slug)).toEqual(["three"]);
+    expect(failing.links[0]!.check).toMatchObject({ state: "warning", problem: "server_error", httpStatus: 500 });
+  });
+
+  it("checks one link on demand and explains links that aren't checked", async () => {
+    routes["https://a.example/"] = status(200);
+    await createLink("one", "https://a.example/");
+    const before = (await (await call(`${API}/checks/links/sh.example/one`, { headers: bearer })).json()) as { check: TargetCheckDTO; monitored: boolean };
+    expect(before).toMatchObject({ monitored: true, check: { state: "unchecked" } });
+
+    const res = await call(`${API}/checks/links/sh.example/one`, { method: "POST", headers: bearer });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ monitored: true, check: { state: "ok", httpStatus: 200 } });
+
+    await call(`${API}/links/sh.example/one`, { ...json({ monitor: false }), method: "PATCH" });
+    const off = await (await call(`${API}/checks/links/sh.example/one`, { headers: bearer })).json();
+    expect(off).toMatchObject({ monitored: false, reason: "Checks are turned off for this link." });
+    expect((await call(`${API}/checks/links/sh.example/nope`, { headers: bearer })).status).toBe(404);
+  });
+
+  it("rechecks problems on request", async () => {
+    routes["https://b.example/"] = status(404);
+    await createLink("three", "https://b.example/");
+    await runLinkChecks(env);
+    fetchMock.mockClear();
+    routes["https://b.example/"] = status(200);
+    const res = await call(`${API}/checks/recheck`, { method: "POST", headers: bearer });
+    expect(await res.json()).toEqual({ checked: 1, remaining: 0 });
+    expect(await row("https://b.example/")).toMatchObject({ status: "ok" });
+  });
+});

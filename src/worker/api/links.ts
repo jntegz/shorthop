@@ -1,6 +1,7 @@
 import { Hono, type Context } from "hono";
 import { linkKey } from "../../shared/domains";
 import { createLinkSchema, importSchema, linkParamSchema, listQuerySchema, resyncQuerySchema, updateLinkSchema } from "../../shared/schemas";
+import { isCheckProblem, type CheckStatus } from "../../shared/link-check";
 import { generateSlug, validateSlug } from "../../shared/slug";
 import { normalizeTarget, validateUtmTemplate } from "../../shared/target";
 import type { ImportResult, ImportRowResult, LinkDTO, LinkListItem } from "../../shared/types";
@@ -63,6 +64,10 @@ export const linksApi = new Hono<AppEnv>()
     if (status === "broken") where.push(`active = 1 AND (expires_at IS NULL OR expires_at > ${now}) AND broken = 1`);
     if (status === "disabled") where.push("active = 0");
     if (status === "expired") where.push(`expires_at IS NOT NULL AND expires_at <= ${now}`);
+    if (status === "failing") {
+      where.push(`active = 1 AND (expires_at IS NULL OR expires_at > ${now}) AND broken = 0 AND monitor = 1`);
+      where.push("target IN (SELECT target FROM target_checks WHERE status IN ('warning', 'down'))");
+    }
     const counts = Promise.all([clicksByLink(c.env, "all"), period === "all" ? null : clicksByLink(c.env, period)]);
     let order = sort === "slug" ? "slug COLLATE NOCASE ASC, domain" : sort === "updated" ? "updated_at DESC" : "created_at DESC";
     let join = "";
@@ -81,16 +86,30 @@ export const linksApi = new Hono<AppEnv>()
       order = "r.key IS NULL, r.key, created_at DESC";
     }
     const sql = `SELECT links.* FROM links${join} ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY ${order} LIMIT ${LIST_LIMIT}`;
-    const [{ results }, [totals, inPeriod]] = await Promise.all([
+    const [{ results }, [totals, inPeriod], checks] = await Promise.all([
       c.env.DB.prepare(sql)
         .bind(...params)
         .all<LinkRow>(),
       counts,
+      c.env.DB.prepare("SELECT target, status, problem, http_status, checked_at FROM target_checks").all<{
+        target: string;
+        status: CheckStatus;
+        problem: string | null;
+        http_status: number | null;
+        checked_at: number;
+      }>(),
     ]);
     const clicks = inPeriod ?? totals;
+    const checkOf = new Map(checks.results.map((r) => [r.target, r]));
     let links: LinkListItem[] = results.map((r) => {
       const key = linkKey(r.domain, r.slug);
-      return { ...dto(c, r), clicksPeriod: clicks.get(key) ?? 0, clicksTotal: totals.get(key) ?? 0 };
+      const ch = r.monitor ? checkOf.get(r.target) : undefined;
+      return {
+        ...dto(c, r),
+        clicksPeriod: clicks.get(key) ?? 0,
+        clicksTotal: totals.get(key) ?? 0,
+        check: ch ? { state: ch.status, problem: isCheckProblem(ch.problem) ? ch.problem : null, httpStatus: ch.http_status, checkedAt: ch.checked_at } : null,
+      };
     });
     if (sort === "clicks") links = links.sort((a, b) => b.clicksPeriod - a.clicksPeriod || b.clicksTotal - a.clicksTotal);
     return c.json({ links });
@@ -123,6 +142,7 @@ export const linksApi = new Hono<AppEnv>()
       imported_clicks: null,
       broken: 0,
       replacement: null,
+      monitor: body.monitor === false ? 0 : 1,
       created_at: now,
       updated_at: now,
     };
@@ -138,8 +158,8 @@ export const linksApi = new Hono<AppEnv>()
       const candidate: LinkRow = { slug: custom || generateSlug(6), ...base };
       try {
         await c.env.DB.prepare(
-          `INSERT INTO links (domain, slug, target, active, expires_at, utm, utm_template, pass_query, title, tags, notes, source, imported_clicks, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO links (domain, slug, target, active, expires_at, utm, utm_template, pass_query, title, tags, notes, source, imported_clicks, monitor, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
           .bind(
             candidate.domain,
@@ -155,6 +175,7 @@ export const linksApi = new Hono<AppEnv>()
             candidate.notes,
             candidate.source,
             candidate.imported_clicks,
+            candidate.monitor,
             candidate.created_at,
             candidate.updated_at,
           )
@@ -215,6 +236,7 @@ export const linksApi = new Hono<AppEnv>()
     if (body.active !== undefined) next.active = body.active ? 1 : 0;
     if (body.utm !== undefined) next.utm = body.utm ? 1 : 0;
     if (body.passQuery !== undefined) next.pass_query = body.passQuery ? 1 : 0;
+    if (body.monitor !== undefined) next.monitor = body.monitor ? 1 : 0;
     if (body.broken !== undefined) next.broken = body.broken ? 1 : 0;
     if (body.replacement !== undefined) {
       const r = body.replacement;
@@ -228,7 +250,7 @@ export const linksApi = new Hono<AppEnv>()
     // RETURNING: a link deleted since the read above must not be published back to KV.
     const saved = await c.env.DB.prepare(
       `UPDATE links SET target = ?, active = ?, expires_at = ?, utm = ?, utm_template = ?, pass_query = ?,
-       title = ?, tags = ?, notes = ?, broken = ?, replacement = ?, updated_at = ? WHERE domain = ? AND slug = ? RETURNING *`,
+       title = ?, tags = ?, notes = ?, broken = ?, replacement = ?, monitor = ?, updated_at = ? WHERE domain = ? AND slug = ? RETURNING *`,
     )
       .bind(
         next.target,
@@ -242,6 +264,7 @@ export const linksApi = new Hono<AppEnv>()
         next.notes,
         next.broken,
         next.replacement,
+        next.monitor,
         next.updated_at,
         next.domain,
         next.slug,
@@ -371,6 +394,7 @@ export const linksApi = new Hono<AppEnv>()
         imported_clicks: r.clicks ?? null,
         broken: 0,
         replacement: null,
+        monitor: 1,
         created_at: r.createdAt ?? now,
         updated_at: now,
       });
@@ -468,7 +492,7 @@ export const linksApi = new Hono<AppEnv>()
       return Number.isFinite(d.getTime()) ? d.toISOString() : "";
     };
     const body = csv([
-      ["domain", "slug", "short_url", "target", "active", "expires_at", "utm", "utm_template", "pass_query", "title", "tags", "notes", "source", "imported_clicks", "created_at", "updated_at", "broken", "replacement"],
+      ["domain", "slug", "short_url", "target", "active", "expires_at", "utm", "utm_template", "pass_query", "title", "tags", "notes", "source", "imported_clicks", "created_at", "updated_at", "broken", "replacement", "monitor"],
       ...results.map((r) => [
         r.domain,
         r.slug,
@@ -488,6 +512,7 @@ export const linksApi = new Hono<AppEnv>()
         iso(r.updated_at),
         r.broken,
         r.replacement,
+        r.monitor,
       ]),
     ]);
     return c.body(body, 200, {

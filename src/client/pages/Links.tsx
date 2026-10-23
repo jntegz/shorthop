@@ -6,6 +6,8 @@ import { toast } from "sonner";
 import type { LinkDTO, LinkListItem, ListPeriod } from "../../shared/types";
 import { api, call, keys } from "../api";
 
+import { problemText } from "../../shared/link-check";
+import { CheckBadge } from "../components/CheckBadge";
 import { DownloadButton } from "../components/DownloadButton";
 import { LinkForm } from "../components/LinkForm";
 import { Badge, Button, buttonClass, Card, Empty, Input, Notice, PageHeader, Pagination, Select, SortHeader, Spinner } from "../components/ui";
@@ -16,7 +18,7 @@ import { copy } from "../lib/utils";
 
 const QrDialog = lazy(() => import("../components/QrDialog").then((module) => ({ default: module.QrDialog })));
 
-type Status = "all" | "active" | "disabled" | "expired" | "broken";
+type Status = "all" | "active" | "disabled" | "expired" | "broken" | "failing";
 type Sort = "created" | "updated" | "slug" | "target" | "total" | "clicks" | "status";
 
 const PERIODS: { value: ListPeriod; label: string; short: string }[] = [
@@ -175,6 +177,7 @@ export function Links() {
           <option value="disabled">Disabled</option>
           <option value="expired">Expired</option>
           <option value="broken">Not working</option>
+          <option value="failing">Destination problems</option>
         </Select>
         <Select className="w-auto" value={sort} onChange={(e) => setParam("sort", e.target.value, "created")} aria-label="Sort">
           <option value="created">Newest</option>
@@ -266,7 +269,19 @@ export function Links() {
                   </td>
                   {period.value === "all" ? null : <td className="tabular hidden text-muted md:px-4 md:py-5 md:text-right lg:table-cell">{num(l.clicksPeriod)}</td>}
                   <td className="md:px-4 md:py-5">
-                    <StateBadge link={l} />
+                    <div className="flex flex-wrap items-start gap-1 md:flex-col">
+                      <StateBadge link={l} />
+                      {l.check && (l.check.state === "down" || l.check.state === "warning") && linkState(l) === "active" ? (
+                        <Link
+                          to={`/health?state=${l.check.state}`}
+                          onClick={(e) => e.stopPropagation()}
+                          title={problemText(l.check.problem, l.check.httpStatus)}
+                          className="rounded-full focus-visible:outline-offset-1"
+                        >
+                          <CheckBadge state={l.check.state} label={l.check.state === "down" ? "Destination down" : "Destination issue"} />
+                        </Link>
+                      ) : null}
+                    </div>
                   </td>
                   <td className="hidden text-xs text-muted md:px-4 md:py-5 xl:table-cell">{ago(l.createdAt)}</td>
                   <td className="ml-auto md:px-2 md:py-5" onClick={(e) => e.stopPropagation()}>

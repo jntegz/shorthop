@@ -2,6 +2,7 @@
 // describe; numbers come from shared constants where one exists.
 
 import * as L from "../../shared/login-policy";
+import { BLOCKED_INTERVAL, CHECK_TIMEOUT_MS, DOWN_AFTER_FAILS, MAX_HOPS, OK_INTERVAL } from "../../shared/link-check";
 import { SCANNER_PATHS_PER_DAY } from "../../shared/types";
 
 export interface Help {
@@ -66,6 +67,10 @@ export const LINK_HELP = {
     "Custom UTM template",
     "Replaces the default template for this link only: key=value pairs joined by &, ASCII only, without spaces, ? or #, up to 512 characters. {slug} becomes the slug, {domain} the short domain. {source} becomes the ?s= tag, qr for QR scans, the in-app browser (li, fb, ig, x), the referrer or direct. Leave empty to follow the default, including later changes to it.",
     "utm_source=linkedin&utm_campaign={slug}&utm_content={source}",
+  ),
+  monitor: h(
+    "Check the destination",
+    `Shorthop visits the destination about every ${duration(OK_INTERVAL)} and lists it under Link health. After ${DOWN_AFTER_FAILS} failed checks in a row it counts as not working and you get an email. Turn off for pages that only work when signed in, or that you know block automated visitors.`,
   ),
   passQuery: h(
     "Pass query parameters through",
@@ -134,3 +139,17 @@ export const PROBE_HELP = h(
   "Scanner probe",
   "Automated scanners request paths like /.env, /wp-login.php or /config.json on every site, looking for leaked secrets or vulnerable software. They get the not-found page; nothing is exposed.",
 );
+export const CHECKS_HELP = {
+  overview: h(
+    "Destination checks",
+    `Every 30 minutes Shorthop checks the destinations that are due: a working one about every ${duration(OK_INTERVAL)}, one with a problem again after 1 and then 4 hours. It sends a HEAD request (then a GET if the server doesn't answer HEAD properly), follows up to ${MAX_HOPS} redirects, and waits up to ${CHECK_TIMEOUT_MS / 1000} seconds. Page contents are never downloaded or stored. Links that are disabled, expired, marked as no longer working, or have checks turned off are skipped. A destination shared by several links is checked once.`,
+  ),
+  states: h(
+    "What each state means",
+    `Working: the last check loaded the page (HTTP 2xx, after any redirects). Problem, confirming: it failed once or twice; one bad check can be a short outage, so it's rechecked sooner. Not working: ${DOWN_AFTER_FAILS} failures in a row, usually over about 5 hours; you get one email. Can't check: the site answered but refused an automated visitor (HTTP 401, 403, 429, LinkedIn's 999, or a Cloudflare challenge). People can usually still open it; it's rechecked every ${duration(BLOCKED_INTERVAL)} and never alerts.`,
+  ),
+  email: h(
+    "Email alerts",
+    "One email when destinations become “not working”, listing every link that uses them, and one when they work again. Nothing is repeated while a destination stays down. Alerts use the same email setup as the weekly digest, and the digest lists destinations that are still down.",
+  ),
+} satisfies Record<string, Help>;

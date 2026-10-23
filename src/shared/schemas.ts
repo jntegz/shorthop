@@ -39,6 +39,8 @@ export const createLinkSchema = z
     utm: z.boolean().optional(),
     utmTemplate: z.string().trim().max(512).nullish(),
     passQuery: z.boolean().optional(),
+    /** Check the destination on a schedule (default true). */
+    monitor: z.boolean().optional(),
   })
   .refine((v) => v.target || v.url, { message: "target is required", path: ["target"] });
 
@@ -52,6 +54,7 @@ export const updateLinkSchema = z.object({
   utm: z.boolean().optional(),
   utmTemplate: z.string().trim().max(512).nullish(),
   passQuery: z.boolean().optional(),
+  monitor: z.boolean().optional(),
   broken: z.boolean().optional(),
   /** The link visitors are pointed to while this one is marked broken; null for none. */
   replacement: z.object({ domain: z.string().regex(HOSTNAME_RE), slug: z.string().regex(IMPORT_SLUG_RE) }).nullish(),
@@ -79,7 +82,7 @@ export const listQuerySchema = z.object({
   domain: domain.optional(),
   q: z.string().max(200).optional(),
   tag: z.string().max(100).optional(),
-  status: z.enum(["all", "active", "disabled", "expired", "broken"]).default("all"),
+  status: z.enum(["all", "active", "disabled", "expired", "broken", "failing"]).default("all"),
   sort: z.enum(["created", "updated", "slug", "clicks"]).default("created"),
   period: z.enum(LIST_PERIODS).default("7d"),
 });
@@ -137,6 +140,11 @@ export const missExportQuerySchema = z.object({
 }).refine(customHasDates, customDatesError);
 
 export const rangeQuerySchema = z.object(period).refine(customHasDates, customDatesError);
+
+export const checkSettingsSchema = z.object({
+  enabled: z.boolean(),
+  notify: z.boolean(),
+});
 
 export const settingsSchema = z.object({
   defaultUtm: z.string().trim().min(1).max(512),
