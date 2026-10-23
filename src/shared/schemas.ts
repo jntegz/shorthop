@@ -293,6 +293,9 @@ export const personUpdateSchema = z.object({
 
 export const personParamSchema = z.object({ email });
 
+/** Pause someone's access: until a time, or (null) until someone resumes them. */
+export const pauseSchema = z.object({ until: z.number().int().positive().nullable() });
+
 export const API_KEY_EXPIRY_DAYS = [30, 90, 365] as const;
 
 export const apiKeySchema = z.object({

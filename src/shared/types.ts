@@ -455,9 +455,12 @@ export interface PersonDTO {
   owner: boolean;
   /** What they can do (everything for admins). */
   permissions: Permission[];
-  /** invited: waiting for them to choose a password; expired: the invite ran out. */
-  status: "owner" | "active" | "invited" | "expired";
+  /** invited: waiting for them to choose a password; expired: the invite ran out; paused: can't sign in for now. */
+  status: "owner" | "active" | "invited" | "expired" | "paused";
   inviteExpiresAt: number | null;
+  /** While paused: when it lifts by itself, or null until someone resumes them. */
+  pausedUntil: number | null;
+  pausedBy: string | null;
   lastLoginAt: number | null;
   createdAt: number | null;
   createdBy: string | null;

@@ -2,7 +2,7 @@
 // after the same Access check the API uses.
 
 import { verifyAdmin } from "./auth";
-import { forbiddenPage } from "./pages";
+import { forbiddenPage, noticePage } from "./pages";
 
 const CSP = [
   "default-src 'self'",
@@ -33,6 +33,7 @@ export async function serveAdmin(request: Request, env: Env, url: URL): Promise<
       const next = encodeURIComponent(`${url.pathname}${url.search}`);
       return new Response(null, { status: 303, headers: { Location: `/_admin/login?next=${next}`, "Cache-Control": "no-store" } });
     }
+    if (auth.code === "paused") return noticePage("Access paused", "Your access is paused", auth.reason, 403);
     return forbiddenPage(auth.reason);
   }
 

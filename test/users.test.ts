@@ -198,3 +198,109 @@ describe("invite links and passwords", () => {
     expect((await me("anna@example.com", b)).status).toBe(401);
   });
 });
+
+describe("pausing and signing out", () => {
+  const pause = (email: string, until: number | null, by = "") => adminCall(by, `/users/${encodeURIComponent(email)}/pause`, { body: { until } });
+  const status = async (email: string) => (await (await adminCall("", "/users")).json<PeopleDTO>()).people.find((p) => p.email === email);
+
+  it("invite links last 24 hours", async () => {
+    const res = await adminCall("", "/users", { body: { email: "anna@example.com", role: "user" } });
+    const invite = await res.json<InviteDTO>();
+    expect(invite.inviteExpiresAt - nowSec()).toBeGreaterThan(24 * 3600 - 60);
+    expect(invite.inviteExpiresAt - nowSec()).toBeLessThanOrEqual(24 * 3600);
+  });
+
+  it("blocks sign-in and API keys until resumed, without removing anything", async () => {
+    await addUser("ben@example.com", "user", ["api.use"], { password: PASSWORD });
+    const { secret } = await (await adminCall("ben@example.com", "/keys", { body: { name: "Script" } })).json<{ secret: string }>();
+    const key = { headers: { Authorization: `Bearer ${secret}` } };
+
+    const paused = await pause("ben@example.com", null);
+    expect(paused.status).toBe(200);
+    expect(await status("ben@example.com")).toMatchObject({ status: "paused", pausedUntil: null, pausedBy: "dev@localhost", keys: 1 });
+    const blocked = await adminCall("ben@example.com", "/me");
+    expect(blocked.status).toBe(403);
+    expect(await blocked.json()).toMatchObject({ code: "paused" });
+    expect((await call(`${API}/links`, key)).status).toBe(401);
+
+    expect((await adminCall("", "/users/ben%40example.com/resume", { method: "POST" })).status).toBe(200);
+    expect((await adminCall("ben@example.com", "/me")).status).toBe(200);
+    expect((await call(`${API}/links`, key)).status).toBe(200);
+    expect((await status("ben@example.com"))?.status).toBe("active");
+  });
+
+  it("lifts a pause with an end time by itself", async () => {
+    await addUser("ben@example.com", "user", [], { password: PASSWORD });
+    expect((await pause("ben@example.com", nowSec() - 10)).status).toBe(400);
+    const until = nowSec() + 3600;
+    expect((await pause("ben@example.com", until)).status).toBe(200);
+    expect(await status("ben@example.com")).toMatchObject({ status: "paused", pausedUntil: until });
+    const blocked = await adminCall("ben@example.com", "/me");
+    expect((await blocked.json<{ error: string }>()).error).toContain("until");
+
+    await env.DB.prepare("UPDATE users SET paused_until = ? WHERE email = ?").bind(nowSec() - 1, "ben@example.com").run();
+    expect((await adminCall("ben@example.com", "/me")).status).toBe(200);
+    expect((await status("ben@example.com"))?.status).toBe("active");
+  });
+
+  it("follows the same rules as other changes to people", async () => {
+    await addUser("mia@example.com", "manager", ["links.create"]);
+    await addUser("ada@example.com", "admin");
+    await addUser("ben@example.com");
+    expect((await pause("ada@example.com", null, "mia@example.com")).status).toBe(403);
+    expect((await pause("mia@example.com", null, "mia@example.com")).status).toBe(403);
+    expect((await pause(OWNER, null, "ada@example.com")).status).toBe(404);
+    expect((await pause("ben@example.com", null, "mia@example.com")).status).toBe(200);
+    expect((await adminCall("mia@example.com", "/users/ben%40example.com/sign-out", { method: "POST" })).status).toBe(200);
+    expect((await adminCall("mia@example.com", "/users/ada%40example.com/sign-out", { method: "POST" })).status).toBe(403);
+  });
+});
+
+describe("paused people at the login", () => {
+  let HASH: string;
+  beforeAll(async () => {
+    HASH = await hashPassword("owner-password-0123", 10_000);
+  });
+  const withLogin = (email: string) => as(email, { ADMIN_PASSWORD_HASH: HASH, LOGIN_LIMITER: { limit: async () => ({ success: true }) } as RateLimit });
+  const form = (fields: Record<string, string>) => ({
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded", "Sec-Fetch-Site": "same-origin" },
+    body: new URLSearchParams(fields).toString(),
+  });
+  const login = (email: string) => call(new Request(`${LOCAL}/_admin/login`, form({ password: PASSWORD })), undefined, withLogin(email));
+  const me = (email: string, cookie: string) => call(new Request(`${LOCAL}/_admin/api/me`, { headers: { Cookie: cookie } }), undefined, withLogin(email));
+  const cookieOf = (res: Response) => (res.headers.get("Set-Cookie") ?? "").split(";")[0]!;
+
+  it("signs someone out everywhere but keeps their password", async () => {
+    await addUser("anna@example.com", "user", [], { password: PASSWORD });
+    const cookie = cookieOf(await login("anna@example.com"));
+    expect((await me("anna@example.com", cookie)).status).toBe(200);
+    expect((await adminCall("", "/users/anna%40example.com/sign-out", { method: "POST" })).status).toBe(200);
+    expect((await me("anna@example.com", cookie)).status).toBe(401);
+    expect((await login("anna@example.com")).status).toBe(303);
+  });
+
+  it("tells a paused person so, without counting a failed attempt, and keeps old sessions dead after a resume", async () => {
+    await addUser("anna@example.com", "user", [], { password: PASSWORD });
+    const cookie = cookieOf(await login("anna@example.com"));
+    await adminCall("", "/users/anna%40example.com/pause", { body: { until: null } });
+
+    const page = await call(new Request(`${LOCAL}/_admin/login`), undefined, withLogin("anna@example.com"));
+    expect(page.status).toBe(403);
+    expect(await page.text()).toContain("Your access is paused");
+    const post = await login("anna@example.com");
+    expect(post.status).toBe(403);
+    expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM auth_failures").first<{ n: number }>())?.n).toBe(0);
+
+    await adminCall("", "/users/anna%40example.com/resume", { method: "POST" });
+    expect((await me("anna@example.com", cookie)).status).toBe(401);
+    expect((await login("anna@example.com")).status).toBe(303);
+  });
+
+  it("refuses a paused person's invite link", async () => {
+    await addUser("anna@example.com", "user", [], { inviteToken: TOKEN });
+    await env.DB.prepare("UPDATE users SET paused_at = ? WHERE email = ?").bind(nowSec(), "anna@example.com").run();
+    const res = await call(new Request(`${LOCAL}/_admin/invite/${TOKEN}`), undefined, withLogin("anna@example.com"));
+    expect(res.status).toBe(403);
+  });
+});

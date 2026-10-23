@@ -17,12 +17,18 @@ export interface UserRow {
   created_at: number;
   updated_at: number;
   last_login_at: number | null;
+  paused_at: number | null;
+  /** NULL while paused: until someone resumes them. */
+  paused_until: number | null;
+  paused_by: string | null;
+  reset_hash: string | null;
+  reset_expires: number | null;
 }
 
 /** The per-person part of an owner's session cookie (owners have no users row). */
 export const OWNER_EPOCH = "owner";
 /** Invite links work this long. */
-export const INVITE_TTL_SEC = 7 * 24 * 60 * 60;
+export const INVITE_TTL_SEC = 24 * 60 * 60;
 export const MAX_KEYS_PER_PERSON = 20;
 /** Shortest password someone can choose for themselves. */
 export const MIN_USER_PASSWORD = 12;
@@ -44,6 +50,21 @@ export function ownerEmails(env: Env): string[] {
 /** An owner's email, or the password-only identity while Access is off (whose keys stop working once it's on). */
 export function isOwner(env: Env, email: string): boolean {
   return ownerEmails(env).includes(email) || (env.ADMIN_AUTH === "password" && email === PASSWORD_IDENTITY);
+}
+
+/** Whether their access is paused right now. A pause with an end time lifts by itself. */
+export function isPaused(row: Pick<UserRow, "paused_at" | "paused_until">, now: number): boolean {
+  return row.paused_at !== null && (row.paused_until === null || row.paused_until > now);
+}
+
+/** 1793750400 → "3 November 2026, 07:00 UTC". */
+export function utcText(sec: number): string {
+  return `${new Intl.DateTimeFormat("en-GB", { dateStyle: "long", timeStyle: "short", timeZone: "UTC" }).format(sec * 1000)} UTC`;
+}
+
+/** What a paused person is told. */
+export function pausedReason(row: Pick<UserRow, "paused_until">): string {
+  return `Your access is paused${row.paused_until ? ` until ${utcText(row.paused_until)}` : ""}. Ask an admin or manager if you need it sooner.`;
 }
 
 export function ownerActor(email: string): Actor {
@@ -108,18 +129,21 @@ interface KeyLookup {
   user_name: string | null;
   user_role: Role | null;
   user_permissions: string | null;
+  user_paused_at: number | null;
+  user_paused_until: number | null;
 }
 
 /**
  * The Actor for a personal key, or null when it's unknown, expired, or its
- * owner is gone or may no longer use the API. The key's permissions are
+ * owner is gone, paused or may no longer use the API. The key's permissions are
  * limited to what its owner can do right now.
  */
 export async function findApiKey(env: Env, presented: string, now: number): Promise<{ actor: Actor; lastUsedAt: number | null } | null> {
   if (!KEY_RE.test(presented)) return null;
   const row = await env.DB.prepare(
     `SELECT k.id, k.owner, k.name, k.permissions, k.expires_at, k.last_used_at,
-            u.email AS user_email, u.name AS user_name, u.role AS user_role, u.permissions AS user_permissions
+            u.email AS user_email, u.name AS user_name, u.role AS user_role, u.permissions AS user_permissions,
+            u.paused_at AS user_paused_at, u.paused_until AS user_paused_until
      FROM api_keys k LEFT JOIN users u ON u.email = k.owner WHERE k.hash = ?`,
   )
     .bind(await sha256Hex(presented))
@@ -129,6 +153,7 @@ export async function findApiKey(env: Env, presented: string, now: number): Prom
   let person: Actor;
   if (isOwner(env, row.owner)) person = ownerActor(row.owner);
   else if (row.user_email && row.user_role) {
+    if (isPaused({ paused_at: row.user_paused_at, paused_until: row.user_paused_until }, now)) return null;
     person = userActor({ email: row.user_email, name: row.user_name ?? "", role: row.user_role, permissions: row.user_permissions ?? "" } as UserRow);
   } else return null;
   if (!person.permissions.includes("api.use")) return null;

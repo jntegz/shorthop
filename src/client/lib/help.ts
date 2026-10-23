@@ -133,7 +133,7 @@ export const SETTINGS_HELP = {
   ),
   people: h(
     "People and roles",
-    "Owners are set in ADMIN_EMAIL (wrangler.jsonc) and can do everything; they can't be changed here. Admins can do everything too, including adding admins. Managers add, change and remove users, and can only give permissions they have themselves. Users view and copy links, plus what's ticked for them. Changes apply on their next click. Removing someone ends their sessions and API keys at once, but also take them out of your Cloudflare Access policy. People are told apart by their Access email, so with ADMIN_AUTH set to \"password\" there are only owners.",
+    "Owners are set in ADMIN_EMAIL (wrangler.jsonc) and can do everything; they can't be changed here. Admins can do everything too, including adding admins. Managers add, change and remove users, and can only give permissions they have themselves. Users view and copy links, plus what's ticked for them. Changes apply on their next click. Pausing someone stops their sign-in and API keys until a date or until resumed, and keeps everything. Removing someone ends their sessions and API keys at once, but also take them out of your Cloudflare Access policy. People are told apart by their Access email, so with ADMIN_AUTH set to \"password\" there are only owners.",
   ),
   security: h(
     "Security",

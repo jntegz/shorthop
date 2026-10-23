@@ -31,7 +31,7 @@ import {
   verifyPassword,
   verifyPasswordHash,
 } from "./session";
-import { getUser, INVITE_TOKEN_RE, MIN_USER_PASSWORD, OWNER_EPOCH, sha256Hex, type UserRow } from "./users";
+import { getUser, INVITE_TOKEN_RE, isPaused, MIN_USER_PASSWORD, OWNER_EPOCH, pausedReason, sha256Hex, type UserRow } from "./users";
 
 const MAX_BODY_BYTES = 4096;
 const DEFAULT_NEXT = "/_admin/";
@@ -74,6 +74,8 @@ async function readForm(c: Context<AppEnv>): Promise<URLSearchParams | Response>
 const choosePasswordFirst = () =>
   noticePage("Choose a password", "Choose your password first", "Open the invite link you were sent to choose a password. If it has expired, ask an admin or manager for a new one.", 403);
 
+const pausedNotice = (user: Pick<UserRow, "paused_until">) => noticePage("Access paused", "Your access is paused", pausedReason(user), 403);
+
 const inviteInvalid = () =>
   noticePage("Invite link", "This invite link doesn't work", "It has expired, was already used, or belongs to a different account. Ask an admin or manager for a new one.", 410);
 
@@ -99,6 +101,7 @@ loginApp.get("/_admin/login", async (c) => {
   const next = safeNext(c.req.query("next"), url.origin);
   const session = await verifySession(req, c.env, access);
   if (session.ok) return seeOther(next);
+  if (session.code === "paused") return noticePage("Access paused", "Your access is paused", session.reason, 403);
   if (session.code !== "login_required") return forbiddenPage(session.reason);
   if (!access.owner && !(await getUser(c.env.DB, access.email))?.password_hash) return choosePasswordFirst();
   if (c.req.header("Sec-Fetch-Site") === "cross-site" && c.req.query("b") !== "1") {
@@ -123,7 +126,8 @@ loginApp.post("/_admin/login", async (c) => {
   if (form instanceof Response) return form;
   const next = safeNext(form.get("next"), url.origin);
   const password = form.get("password") ?? "";
-  // Nothing to guess yet: not counted.
+  // Nothing to guess yet, or nothing to win: not counted.
+  if (user && isPaused(user, nowSec())) return pausedNotice(user);
   if (user && !user.password_hash) return choosePasswordFirst();
 
   const now = nowSec();
@@ -199,8 +203,10 @@ loginApp.get("/_admin/invite/:token", async (c) => {
   if (!access.ok) return forbiddenPage(access.reason);
   if (access.owner) return forbiddenPage("Invite links are for other people. Owners sign in with the admin password.");
   if (!loginConfig(c.env)) return forbiddenPage("Admin password is not configured.");
-  const user = await findInvite(c.env.DB, access.email, c.req.param("token"), nowSec());
+  const now = nowSec();
+  const user = await findInvite(c.env.DB, access.email, c.req.param("token"), now);
   if (!user) return inviteInvalid();
+  if (isPaused(user, now)) return pausedNotice(user);
   return invitePage({ action: new URL(c.req.url).pathname, email: access.email, minLength: MIN_USER_PASSWORD, status: 200 });
 });
 
@@ -227,6 +233,7 @@ loginApp.post("/_admin/invite/:token", async (c) => {
   // A cheap check before hashing the password.
   const user = await findInvite(env.DB, access.email, token, now);
   if (!user) return inviteInvalid();
+  if (isPaused(user, now)) return pausedNotice(user);
   const action = new URL(c.req.url).pathname;
   const password = form.get("password") ?? "";
   const retry = (error: string) => invitePage({ action, email: access.email, minLength: MIN_USER_PASSWORD, error, status: 400 });

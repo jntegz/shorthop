@@ -1,14 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUpRight, Copy, KeyRound, Pencil, ShieldCheck, Trash2, UserPlus, UserRound } from "lucide-react";
+import { ArrowUpRight, Copy, Ellipsis, KeyRound, LogOut, Pause, Pencil, Play, ShieldCheck, Trash2, UserPlus, UserRound } from "lucide-react";
 import { useState, type FormEvent } from "react";
 import { toast } from "sonner";
 import { PERMISSION_INFO, PERMISSION_PRESETS, PERMISSIONS, ROLE_INFO, type Permission, type Role } from "../../shared/permissions";
 import type { InviteDTO, MeDTO, PersonDTO } from "../../shared/types";
 import { api, call, keys } from "../api";
-import { ago, whenFull } from "../lib/format";
+import { ago, fromLocalInput, toLocalInput, whenFull } from "../lib/format";
 import { SETTINGS_HELP } from "../lib/help";
 import { cn, copy } from "../lib/utils";
-import { Badge, Button, Card, CardHeader, Dialog, Field, Input, Notice, Segmented, Spinner } from "./ui";
+import { Badge, Button, Card, CardHeader, Dialog, Field, Input, Menu, MenuItem, MenuSeparator, Notice, Segmented, Spinner } from "./ui";
 
 const ZERO_TRUST = "https://one.dash.cloudflare.com/";
 
@@ -24,6 +24,13 @@ function RoleBadge({ person }: { person: Pick<PersonDTO, "role" | "owner"> }) {
 }
 
 function Status({ person }: { person: PersonDTO }) {
+  if (person.status === "paused") {
+    return (
+      <Badge tone="danger" title={person.pausedBy ? `Paused by ${person.pausedBy}` : undefined}>
+        {person.pausedUntil ? `Paused until ${whenFull(person.pausedUntil)}` : "Paused until resumed"}
+      </Badge>
+    );
+  }
   if (person.status === "invited") return <Badge tone="warn">Invited · link expires {person.inviteExpiresAt ? ago(person.inviteExpiresAt) : "soon"}</Badge>;
   if (person.status === "expired") return <Badge tone="danger">Invite expired</Badge>;
   return (
@@ -40,6 +47,7 @@ export function PeopleCard({ me }: { me: MeDTO }) {
   const [editing, setEditing] = useState<PersonDTO | "new" | null>(null);
   const [invite, setInvite] = useState<InviteDTO | null>(null);
   const [removing, setRemoving] = useState<PersonDTO | null>(null);
+  const [pausing, setPausing] = useState<PersonDTO | null>(null);
 
   const reinvite = useMutation({
     mutationFn: (p: PersonDTO) => call(api.users[":email"].invite.$post({ param: { email: encodeURIComponent(p.email) } })),
@@ -49,6 +57,22 @@ export function PeopleCard({ me }: { me: MeDTO }) {
     },
     onError: (e) => toast.error(e.message),
   });
+  const resume = useMutation({
+    mutationFn: (p: PersonDTO) => call(api.users[":email"].resume.$post({ param: { email: encodeURIComponent(p.email) } })),
+    onSuccess: (_r, p) => {
+      void qc.invalidateQueries({ queryKey: keys.people });
+      toast.success(`${p.name || p.email} can sign in again`, { description: "Their API keys work again too. They sign in with their password." });
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  const signOut = useMutation({
+    mutationFn: (p: PersonDTO) => call(api.users[":email"]["sign-out"].$post({ param: { email: encodeURIComponent(p.email) } })),
+    onSuccess: (_r, p) => toast.success(`${p.name || p.email} signed out everywhere`, { description: "Their password and API keys stay as they are." }),
+    onError: (e) => toast.error(e.message),
+  });
+  const busy = (p: PersonDTO) =>
+    [reinvite, resume, signOut].some((m) => m.isPending && m.variables?.email === p.email);
+
   const remove = useMutation({
     mutationFn: (p: PersonDTO) => call(api.users[":email"].$delete({ param: { email: encodeURIComponent(p.email) } })),
     onSuccess: (r, p) => {
@@ -106,19 +130,35 @@ export function PeopleCard({ me }: { me: MeDTO }) {
                     <Button variant="ghost" size="icon-sm" aria-label={`Edit ${p.email}`} title="Change role and permissions" onClick={() => setEditing(p)}>
                       <Pencil />
                     </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      aria-label={`New invite link for ${p.email}`}
-                      title={p.status === "active" ? "Reset password: a new invite link (signs them out)" : "New invite link"}
-                      onClick={() => reinvite.mutate(p)}
-                      loading={reinvite.isPending && reinvite.variables?.email === p.email}
+                    <Menu
+                      trigger={
+                        <Button variant="ghost" size="icon-sm" aria-label={`More for ${p.email}`} title="Pause, sign out, reset password, remove" loading={busy(p)}>
+                          {busy(p) ? null : <Ellipsis />}
+                        </Button>
+                      }
                     >
-                      {reinvite.isPending && reinvite.variables?.email === p.email ? null : <KeyRound />}
-                    </Button>
-                    <Button variant="ghost" size="icon-sm" aria-label={`Remove ${p.email}`} title="Remove" onClick={() => setRemoving(p)}>
-                      <Trash2 />
-                    </Button>
+                      {p.status === "paused" ? (
+                        <MenuItem icon={<Play />} onSelect={() => resume.mutate(p)}>
+                          Resume access
+                        </MenuItem>
+                      ) : (
+                        <MenuItem icon={<Pause />} onSelect={() => setPausing(p)}>
+                          Pause access…
+                        </MenuItem>
+                      )}
+                      {p.status === "active" ? (
+                        <MenuItem icon={<LogOut />} onSelect={() => signOut.mutate(p)}>
+                          Sign out everywhere
+                        </MenuItem>
+                      ) : null}
+                      <MenuItem icon={<KeyRound />} onSelect={() => reinvite.mutate(p)}>
+                        {p.status === "invited" || p.status === "expired" ? "New invite link" : "Reset password (new invite link)"}
+                      </MenuItem>
+                      <MenuSeparator />
+                      <MenuItem icon={<Trash2 />} tone="danger" onSelect={() => setRemoving(p)}>
+                        Remove…
+                      </MenuItem>
+                    </Menu>
                   </div>
                 ) : null}
               </li>
@@ -147,8 +187,12 @@ export function PeopleCard({ me }: { me: MeDTO }) {
             </ol>
           </div>
           <div>
-            <p className="mb-1.5 text-xs font-semibold tracking-wide text-muted uppercase">Remove someone</p>
-            <p className="text-muted">Remove them here: their sessions and API keys stop working at once. Then take them out of the Access policy too.</p>
+            <p className="mb-1.5 text-xs font-semibold tracking-wide text-muted uppercase">Pause or remove someone</p>
+            <p className="text-muted">
+              In a person's <Ellipsis className="inline size-4 align-text-bottom" aria-label="more" /> menu: <strong className="text-fg">Pause access</strong> stops their sign-in and API
+              keys until a date or until you resume them, and keeps everything. <strong className="text-fg">Sign out everywhere</strong> ends their sessions but keeps their
+              password. <strong className="text-fg">Remove</strong> deletes them and their API keys; then take them out of the Access policy too.
+            </p>
           </div>
         </div>
       </div>
@@ -164,6 +208,7 @@ export function PeopleCard({ me }: { me: MeDTO }) {
         />
       ) : null}
       <InviteDialog invite={invite} onClose={() => setInvite(null)} />
+      {pausing ? <PauseDialog key={pausing.email} person={pausing} onClose={() => setPausing(null)} /> : null}
       <Dialog
         open={removing !== null}
         onOpenChange={(o) => !o && setRemoving(null)}
@@ -295,6 +340,68 @@ function PersonDialog({
   );
 }
 
+/** Pause someone: until a time, or until someone resumes them (a block). */
+function PauseDialog({ person, onClose }: { person: PersonDTO; onClose: () => void }) {
+  const qc = useQueryClient();
+  const [mode, setMode] = useState<"resume" | "date">("resume");
+  const [until, setUntil] = useState(() => toLocalInput(Math.floor(Date.now() / 1000) + 7 * 86400));
+  const untilSec = fromLocalInput(until);
+  const error = mode === "date" && (untilSec === null || untilSec <= Date.now() / 1000) ? "Choose a time in the future." : null;
+  const who = person.name || person.email;
+
+  const save = useMutation({
+    mutationFn: () => call(api.users[":email"].pause.$post({ param: { email: encodeURIComponent(person.email) }, json: { until: mode === "date" ? untilSec : null } })),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: keys.people });
+      onClose();
+      toast.success(`${who} paused`, {
+        description: mode === "date" && untilSec ? `Signed out, with API keys off, until ${whenFull(untilSec)}.` : "Signed out, with API keys off, until you resume them.",
+      });
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    if (!error) save.mutate();
+  };
+
+  return (
+    <Dialog
+      open
+      onOpenChange={(o) => !o && onClose()}
+      title={`Pause ${who}?`}
+      description="They're signed out at once, can't sign in, and their API keys stop working. Nothing is deleted: their account, keys and links stay."
+    >
+      <form onSubmit={submit} className="space-y-4">
+        <Segmented
+          label="How long"
+          value={mode}
+          onChange={setMode}
+          options={[
+            { value: "resume", label: "Until I resume them" },
+            { value: "date", label: "Until a date" },
+          ]}
+        />
+        {mode === "date" ? (
+          <Field label="Paused until" htmlFor="pause-until" hint="Their access comes back by itself at this time." error={error}>
+            <Input id="pause-until" type="datetime-local" value={until} onChange={(e) => setUntil(e.target.value)} required />
+          </Field>
+        ) : (
+          <p className="text-xs text-muted">Like a block: their access stays off until someone chooses Resume access in their menu.</p>
+        )}
+        <div className="flex justify-end gap-2">
+          <Button type="button" variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit" variant="danger" loading={save.isPending} disabled={Boolean(error)}>
+            Pause access
+          </Button>
+        </div>
+      </form>
+    </Dialog>
+  );
+}
+
 /** The one-time invite link, with what to do next. */
 function InviteDialog({ invite, onClose }: { invite: InviteDTO | null; onClose: () => void }) {
   return (
@@ -302,7 +409,7 @@ function InviteDialog({ invite, onClose }: { invite: InviteDTO | null; onClose: 
       open={invite !== null}
       onOpenChange={(o) => !o && onClose()}
       title={`Invite ${invite?.person.name || invite?.person.email}`}
-      description="This link is shown only now. It works once, for 7 days, and only for this email."
+      description="This link is shown only now. It works once, for 24 hours, and only for this email."
       wide
     >
       {invite ? (

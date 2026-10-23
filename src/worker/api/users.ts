@@ -5,17 +5,18 @@
 
 import { Hono, type Context } from "hono";
 import { assignableRoles, canManage, formatPermissions, parsePermissions, type Actor, type Permission, type Role } from "../../shared/permissions";
-import { personParamSchema, personSchema, personUpdateSchema } from "../../shared/schemas";
+import { pauseSchema, personParamSchema, personSchema, personUpdateSchema } from "../../shared/schemas";
 import type { InviteDTO, PeopleDTO, PersonDTO } from "../../shared/types";
 import { adminAuthMode } from "../auth";
 import { nowSec } from "../db";
 import { validate, type AppEnv } from "../hono";
-import { getUser, INVITE_TTL_SEC, mergeManagedPermissions, ownerEmails, randomToken, sha256Hex, userActor, type UserRow } from "../users";
+import { getUser, INVITE_TTL_SEC, isPaused, mergeManagedPermissions, ownerEmails, randomToken, sha256Hex, userActor, type UserRow } from "../users";
 
 const PASSWORD_ONLY = "Turn on Cloudflare Access to add people with their own permissions: without it, everyone who signs in is the owner.";
 
 function personOf(row: UserRow, actor: Actor, now: number, keys: number): PersonDTO {
-  const status = row.password_hash ? "active" : row.invite_expires !== null && row.invite_expires > now ? "invited" : "expired";
+  const paused = isPaused(row, now);
+  const status = paused ? "paused" : row.password_hash ? "active" : row.invite_expires !== null && row.invite_expires > now ? "invited" : "expired";
   return {
     email: row.email,
     name: row.name,
@@ -24,6 +25,8 @@ function personOf(row: UserRow, actor: Actor, now: number, keys: number): Person
     permissions: userActor(row).permissions,
     status,
     inviteExpiresAt: row.password_hash ? null : row.invite_expires,
+    pausedUntil: paused ? row.paused_until : null,
+    pausedBy: paused ? row.paused_by : null,
     lastLoginAt: row.last_login_at,
     createdAt: row.created_at,
     createdBy: row.created_by,
@@ -41,6 +44,8 @@ function ownerOf(email: string, lastLoginAt: number | null, keys: number): Perso
     permissions: userActor({ role: "admin", permissions: "" } as UserRow).permissions,
     status: "owner",
     inviteExpiresAt: null,
+    pausedUntil: null,
+    pausedBy: null,
     lastLoginAt,
     createdAt: null,
     createdBy: null,
@@ -66,6 +71,17 @@ function beyondOwn(actor: Actor, wanted: readonly Permission[]): boolean {
 }
 
 const roleLabel = (r: Role) => (r === "admin" ? "an admin" : r === "manager" ? "a manager" : "a user");
+
+const CHANGED = "Someone else changed this person. Reload and try again.";
+
+/** The person `verb` would act on, or why the caller can't. */
+async function managedTarget(c: Context<AppEnv>, email: string, verb: string): Promise<UserRow | { error: string; status: 403 | 404 }> {
+  const actor = c.get("actor");
+  const target = ownerEmails(c.env).includes(email) ? null : await getUser(c.env.DB, email);
+  if (!target) return { error: "Not found", status: 404 };
+  if (!canManage(actor, target)) return { error: target.email === actor.email ? `You can't ${verb} yourself. Ask an admin.` : `You can't ${verb} this person.`, status: 403 };
+  return target;
+}
 
 export const usersApi = new Hono<AppEnv>()
   .get("/", async (c) => {
@@ -148,7 +164,7 @@ export const usersApi = new Hono<AppEnv>()
     )
       .bind(body.name ?? target.name, role, permissions, now, email)
       .run();
-    if (!res.meta.changes) return c.json({ error: "Someone else changed this person. Reload and try again." }, 409);
+    if (!res.meta.changes) return c.json({ error: CHANGED }, 409);
     const row = (await getUser(c.env.DB, email))!;
     console.log(JSON.stringify({ message: "person changed", email, role, permissions, by: actor.email }));
     return c.json({ person: personOf(row, actor, now, await keyCount(c.env.DB, email)) });
@@ -166,7 +182,7 @@ export const usersApi = new Hono<AppEnv>()
       c.env.DB.prepare(`DELETE FROM users WHERE email = ?1${actor.role === "admin" ? "" : " AND role = 'user'"}`).bind(email),
       c.env.DB.prepare("DELETE FROM api_keys WHERE owner = ?1 AND NOT EXISTS (SELECT 1 FROM users WHERE email = ?1)").bind(email),
     ]);
-    if (!removed?.meta.changes) return c.json({ error: "Someone else changed this person. Reload and try again." }, 409);
+    if (!removed?.meta.changes) return c.json({ error: CHANGED }, 409);
     console.log(JSON.stringify({ message: "person removed", email, by: actor.email }));
     return c.json({ removed: true, keysRevoked: keys?.meta.changes ?? 0 });
   })
@@ -189,9 +205,71 @@ export const usersApi = new Hono<AppEnv>()
     )
       .bind(invite.hash, invite.expires, crypto.randomUUID(), now, email)
       .run();
-    if (!res.meta.changes) return c.json({ error: "Someone else changed this person. Reload and try again." }, 409);
+    if (!res.meta.changes) return c.json({ error: CHANGED }, 409);
     const row = (await getUser(c.env.DB, email))!;
     console.log(JSON.stringify({ message: "invite created", email, by: actor.email }));
     const result: InviteDTO = { person: personOf(row, actor, now, await keyCount(c.env.DB, email)), inviteUrl: invite.url, inviteExpiresAt: invite.expires };
     return c.json(result);
+  })
+
+  // Pause: they can't sign in, their sessions end and their API keys stop
+  // working, until the time given or until someone resumes them. Nothing is
+  // deleted. The new session epoch keeps old sessions dead after a resume.
+  .post("/:email/pause", validate("param", personParamSchema), validate("json", pauseSchema), async (c) => {
+    const actor = c.get("actor");
+    const { email } = c.req.valid("param");
+    const { until } = c.req.valid("json");
+    const target = await managedTarget(c, email, "pause");
+    if ("error" in target) return c.json({ error: target.error }, target.status);
+    const now = nowSec();
+    if (until !== null && until <= now) return c.json({ error: "Choose a time in the future." }, 400);
+
+    const res = await c.env.DB.prepare(
+      `UPDATE users SET paused_at = ?1, paused_until = ?2, paused_by = ?3, session_epoch = ?4, updated_at = ?1
+       WHERE email = ?5${actor.role === "admin" ? "" : " AND role = 'user'"}`,
+    )
+      .bind(now, until, actor.email, crypto.randomUUID(), email)
+      .run();
+    if (!res.meta.changes) return c.json({ error: CHANGED }, 409);
+    const row = (await getUser(c.env.DB, email))!;
+    console.log(JSON.stringify({ message: "person paused", email, until, by: actor.email }));
+    return c.json({ person: personOf(row, actor, now, await keyCount(c.env.DB, email)) });
+  })
+
+  .post("/:email/resume", validate("param", personParamSchema), async (c) => {
+    const actor = c.get("actor");
+    const { email } = c.req.valid("param");
+    const target = await managedTarget(c, email, "resume");
+    if ("error" in target) return c.json({ error: target.error }, target.status);
+
+    const now = nowSec();
+    const res = await c.env.DB.prepare(
+      `UPDATE users SET paused_at = NULL, paused_until = NULL, paused_by = NULL, updated_at = ?1
+       WHERE email = ?2${actor.role === "admin" ? "" : " AND role = 'user'"}`,
+    )
+      .bind(now, email)
+      .run();
+    if (!res.meta.changes) return c.json({ error: CHANGED }, 409);
+    const row = (await getUser(c.env.DB, email))!;
+    console.log(JSON.stringify({ message: "person resumed", email, by: actor.email }));
+    return c.json({ person: personOf(row, actor, now, await keyCount(c.env.DB, email)) });
+  })
+
+  // Ends every session they have; their password and API keys stay.
+  .post("/:email/sign-out", validate("param", personParamSchema), async (c) => {
+    const actor = c.get("actor");
+    const { email } = c.req.valid("param");
+    const target = await managedTarget(c, email, "sign out");
+    if ("error" in target) return c.json({ error: target.error }, target.status);
+
+    const now = nowSec();
+    const res = await c.env.DB.prepare(
+      `UPDATE users SET session_epoch = ?1, updated_at = ?2 WHERE email = ?3${actor.role === "admin" ? "" : " AND role = 'user'"}`,
+    )
+      .bind(crypto.randomUUID(), now, email)
+      .run();
+    if (!res.meta.changes) return c.json({ error: CHANGED }, 409);
+    const row = (await getUser(c.env.DB, email))!;
+    console.log(JSON.stringify({ message: "person signed out", email, by: actor.email }));
+    return c.json({ person: personOf(row, actor, now, await keyCount(c.env.DB, email)) });
   });

@@ -11,9 +11,9 @@ import { PERMISSIONS, type Actor } from "../shared/permissions";
 import { nowSec } from "./db";
 import { isLocalHost } from "./domains";
 import { chargeAttempt, ipBucket, lock, loginConfig, parseSessionCookie, sessionState } from "./session";
-import { actorLabel, findApiKey, OWNER_EPOCH, ownerActor, ownerEmails, PASSWORD_IDENTITY, touchApiKeyStmt, userActor } from "./users";
+import { actorLabel, findApiKey, isPaused, OWNER_EPOCH, ownerActor, ownerEmails, PASSWORD_IDENTITY, pausedReason, touchApiKeyStmt, userActor } from "./users";
 
-type AuthFailure = { ok: false; status: 401 | 403 | 429 | 500; reason: string; code?: "login_required" | "not_allowed" };
+type AuthFailure = { ok: false; status: 401 | 403 | 429 | 500; reason: string; code?: "login_required" | "not_allowed" | "paused" };
 
 export type AuthResult = { ok: true; actor: Actor; identity: string; sessionExp?: number } | AuthFailure;
 
@@ -120,8 +120,8 @@ async function verifyAccess(request: Request, env: Env): Promise<AccessResult> {
 /**
  * The password session for an identity, with one D1 round trip: the global
  * epoch, whether this session was logged out, and the person's row unless
- * they're an owner. Roles and permissions are read on every request, so
- * changes apply at once. On localhost with the dev bypass, the password is
+ * they're an owner. Roles, permissions and pauses are read on every request,
+ * so changes apply at once. On localhost with the dev bypass, the password is
  * still required when ADMIN_PASSWORD_HASH is set, so the login can be tested.
  */
 export async function verifySession(request: Request, env: Env, access: { email: string; owner: boolean }): Promise<AuthResult> {
@@ -140,6 +140,7 @@ export async function verifySession(request: Request, env: Env, access: { email:
 
   const { epoch, revoked, user } = await sessionState(env.DB, cookie?.mac ?? null, access.email);
   if (!user) return NOT_ALLOWED;
+  if (isPaused(user, nowSec())) return { ok: false, status: 403, reason: pausedReason(user), code: "paused" };
   if (!cfg) return unconfigured ?? { ok: true, actor: userActor(user), identity: user.email };
   if (!cookie || revoked || cookie.global !== epoch || cookie.user !== user.session_epoch) return LOGIN_REQUIRED;
   return { ok: true, actor: userActor(user), identity: user.email, sessionExp: cookie.exp };

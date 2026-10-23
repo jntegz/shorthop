@@ -18,15 +18,15 @@ async function adminFetch(input: RequestInfo | URL, init?: RequestInit): Promise
     window.location.reload();
     throw new ApiError("Your session expired. Reloading…", 401);
   }
-  // Removed from People since the page loaded: reload to show why.
+  // Removed or paused in People since the page loaded: reload to show why.
   if (res.status === 403) {
     const body = (await res
       .clone()
       .json()
       .catch(() => null)) as { code?: string } | null;
-    if (body?.code === "not_allowed") {
+    if (body?.code === "not_allowed" || body?.code === "paused") {
       window.location.reload();
-      throw new ApiError("Your access was removed. Reloading…", 403);
+      throw new ApiError(body.code === "paused" ? "Your access was paused. Reloading…" : "Your access was removed. Reloading…", 403);
     }
   }
   // An expired password session: back to the login page, then here again.

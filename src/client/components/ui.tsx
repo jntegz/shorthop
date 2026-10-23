@@ -2,7 +2,7 @@
 
 import { cva, type VariantProps } from "class-variance-authority";
 import { ArrowDown, ArrowUp, ArrowUpDown, Check, ChevronDown, ChevronLeft, ChevronRight, Info, Loader2, Search, X } from "lucide-react";
-import { Dialog as D, Popover as P, Switch as S } from "radix-ui";
+import { Dialog as D, DropdownMenu as M, Popover as P, Switch as S } from "radix-ui";
 import {
   createContext,
   useContext,
@@ -301,6 +301,47 @@ export function Dialog({
       </D.Portal>
     </D.Root>
   );
+}
+
+/**
+ * A short list of actions behind a button, such as a row's "⋯". Not modal, so
+ * an item can open a Dialog without the two fighting over focus.
+ */
+export function Menu({ trigger, children }: { trigger: ReactNode; children: ReactNode }) {
+  return (
+    <M.Root modal={false}>
+      <M.Trigger asChild>{trigger}</M.Trigger>
+      <M.Portal>
+        <M.Content
+          align="end"
+          sideOffset={4}
+          collisionPadding={12}
+          className="z-[60] min-w-52 rounded-xl border border-line bg-surface p-1 text-sm shadow-xl focus:outline-none"
+        >
+          {children}
+        </M.Content>
+      </M.Portal>
+    </M.Root>
+  );
+}
+
+export function MenuItem({ icon, tone, onSelect, children }: { icon?: ReactNode; tone?: "danger"; onSelect: () => void; children: ReactNode }) {
+  return (
+    <M.Item
+      onSelect={onSelect}
+      className={cn(
+        "flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 outline-none select-none data-[disabled]:opacity-50 data-[highlighted]:bg-surface-2 [&_svg]:size-4 [&_svg]:shrink-0",
+        tone === "danger" ? "text-danger" : "text-fg",
+      )}
+    >
+      {icon}
+      {children}
+    </M.Item>
+  );
+}
+
+export function MenuSeparator() {
+  return <M.Separator className="my-1 h-px bg-line" />;
 }
 
 export function Segmented<T extends string>({
