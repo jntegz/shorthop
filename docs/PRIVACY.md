@@ -20,7 +20,7 @@ Each request to a short domain becomes one Analytics Engine data point, written 
 ## What is not recorded
 
 - **IP addresses.** They're used during the request (Cloudflare derives the location from them) and for the visitor hash, but never stored.
-- **Cookies.** Visitors get none: a short link is a redirect.
+- **Cookies.** Visitors get none: a short link is a redirect. The one exception is a password-protected link: after the right password, a functional cookie for that link only (`sh_access`, scoped to the link's path) remembers it for 12 hours, so the visitor isn't asked again. It holds no personal data, only a signed expiry.
 - **Full referrer URLs.** Only the host name is kept.
 
 ## How unique visitors are counted
@@ -46,6 +46,6 @@ The admin's login log keeps the time, the result, the country and a keyed hash o
 
 Adapt this to your service and your jurisdiction:
 
-> When you open a short link on go.example.com, we record the time, the link, your approximate location (country, region and city, derived from your IP address by our hosting provider Cloudflare), your network operator, your device type, operating system, browser and preferred language, and the website that sent you. To count unique visitors, we compute a one-way code from your IP address and browser that changes every day; the random value behind each day's codes is deleted once the day is over. We don't store your IP address and don't set cookies. Detailed records are deleted after about 90 days; daily totals without any personal reference are kept longer. We use this information to understand how our links are used (legitimate interest). Contact: privacy@example.com.
+> When you open a short link on go.example.com, we record the time, the link, your approximate location (country, region and city, derived from your IP address by our hosting provider Cloudflare), your network operator, your device type, operating system, browser and preferred language, and the website that sent you. To count unique visitors, we compute a one-way code from your IP address and browser that changes every day; the random value behind each day's codes is deleted once the day is over. We don't store your IP address and don't set cookies, except on a password-protected link: once you enter its password, a cookie for that link only remembers it for 12 hours so you aren't asked again. Detailed records are deleted after about 90 days; daily totals without any personal reference are kept longer. We use this information to understand how our links are used (legitimate interest). Contact: privacy@example.com.
 
 Link the notice from your website. The not-found page's button can point to it (Settings → Not-found page).
