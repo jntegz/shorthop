@@ -13,6 +13,7 @@ import { fromLocalInput, toLocalInput } from "../lib/format";
 import { LINK_HELP } from "../lib/help";
 import { linkKey, linkState, useDomains, useLinkLabel } from "../lib/links";
 import { cn, copy } from "../lib/utils";
+import { LinkUtm } from "./LinkUtm";
 import { PreviewEditor } from "./PreviewEditor";
 import { RoutingEditor } from "./RoutingEditor";
 import { Button, Dialog, Field, InfoTip, Input, Select, Switch, Textarea } from "./ui";
@@ -52,6 +53,10 @@ interface FormState {
   rules: RouteRule[];
   /** Custom social preview; null lets platforms read the destination's own. */
   preview: LinkPreview | null;
+  /** UTM: this link's own template (utmTemplate) rather than the default. */
+  utmCustom: boolean;
+  /** Why the custom UTM fields can't be saved, from the builder. */
+  utmProblem: string | null;
 }
 
 function initial(link?: LinkDTO, slug = "", domain = ""): FormState {
@@ -72,6 +77,8 @@ function initial(link?: LinkDTO, slug = "", domain = ""): FormState {
     replacement: link?.replacement ? linkKey(link.replacement.domain, link.replacement.slug) : "",
     rules: link?.routing?.rules ?? [],
     preview: link?.preview ?? null,
+    utmCustom: Boolean(link?.utmTemplate),
+    utmProblem: null,
   };
 }
 
@@ -114,7 +121,7 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
   const errors = {
     target: !f.target ? "Enter the destination URL." : targetCheck && !targetCheck.ok ? targetCheck.error : null,
     slug: !editing && f.slug ? validateSlug(f.slug, "native") : null,
-    utmTemplate: f.utm && f.utmTemplate ? validateUtmTemplate(f.utmTemplate) : null,
+    utmTemplate: f.utm && f.utmCustom ? (f.utmProblem ?? (f.utmTemplate ? validateUtmTemplate(f.utmTemplate) : "Fill in at least one parameter.")) : null,
   };
   const routingCheck = f.rules.length ? validateRouting({ rules: f.rules }, { selfHosts: domains }) : null;
   const routingErrors = routingCheck && !routingCheck.ok ? routingCheck.errors : [];
@@ -132,7 +139,7 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
         expiresAt: fromLocalInput(f.expires),
         active: f.active,
         utm: f.utm,
-        utmTemplate: f.utm && f.utmTemplate.trim() ? f.utmTemplate.trim() : null,
+        utmTemplate: f.utm && f.utmCustom && f.utmTemplate.trim() ? f.utmTemplate.trim() : null,
         passQuery: f.passQuery,
         monitor: f.monitor,
         routing: f.rules.length ? { rules: f.rules } : null,
@@ -353,15 +360,20 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
             info={LINK_HELP.utm}
           />
           {f.utm ? (
-            <Field label="Custom UTM template" htmlFor="utmTemplate" hint="Leave empty to use the default from Settings. Placeholders: {slug}, {source}, {domain}, {variant}." error={errors.utmTemplate} info={LINK_HELP.utmTemplate}>
-              <Input
-                id="utmTemplate"
-                className="font-mono text-xs"
-                placeholder="utm_source={domain}&utm_campaign={slug}"
-                value={f.utmTemplate}
-                onChange={(e) => set("utmTemplate", e.target.value)}
-              />
-            </Field>
+            <LinkUtm
+              custom={f.utmCustom}
+              onCustom={(v) => setF((s) => ({ ...s, utmCustom: v, utmProblem: v ? s.utmProblem : null }))}
+              template={f.utmTemplate}
+              onTemplate={(t, problem) => setF((s) => ({ ...s, utmTemplate: t, utmProblem: problem }))}
+              target={targetCheck?.ok ? targetCheck.url : ""}
+              slug={link?.slug ?? f.slug.trim()}
+              onClose={() => onOpenChange(false)}
+            />
+          ) : null}
+          {touched && errors.utmTemplate ? (
+            <p role="alert" className="text-xs text-danger">
+              UTM: {errors.utmTemplate}
+            </p>
           ) : null}
           <Switch
             id="passQuery"

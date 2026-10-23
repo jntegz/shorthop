@@ -99,8 +99,8 @@ export const SETTINGS_HELP = {
     "The Cloudflare services this app runs on and what their plans include. It's a static guide, not live usage: check Workers requests and CPU, KV writes and D1 rows in the Cloudflare dashboard.",
   ),
   defaultUtm: h(
-    "Default UTM template",
-    "Used by every link that has UTM turned on and no custom template. Saving republishes those links, at one KV write each (the Free plan allows 1,000 writes a day). Links with UTM off, such as imported links, aren't touched.",
+    "UTM parameters",
+    "The default template is used by every link that has UTM turned on and no template of its own. Saving it republishes those links, at one KV write each (the Free plan allows 1,000 writes a day). Links with UTM off, such as imported links, aren't touched. Presets are saved templates you can apply to a link in one click; the link gets a copy, so editing or deleting a preset never changes links. Placeholders: {slug}, {source} (the ?s= tag, qr, the app or referrer), {domain} (the short domain) and {variant} (the smart-routing destination's name). Parameters the destination already has are never overwritten.",
     "utm_source={domain}&utm_medium=shortlink&utm_campaign={slug}",
   ),
   publishing: h(

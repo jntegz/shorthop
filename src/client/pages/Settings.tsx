@@ -2,15 +2,15 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { LogOut, Mail, RefreshCw, Settings2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { validateUtmTemplate } from "../../shared/target";
 import { api, call, keys } from "../api";
 import { CloudflareFeatures } from "../components/CloudflareFeatures";
 import { DownloadButton } from "../components/DownloadButton";
 import { MailSetup } from "../components/MailSetup";
 import { DeadLinkEditor } from "../components/DeadLinkEditor";
 import { NotFoundEditor } from "../components/NotFoundEditor";
+import { UtmSettings } from "../components/UtmSettings";
 import { ShortDomains } from "../components/ShortDomains";
-import { Badge, Button, Card, CardHeader, Dialog, Field, Input, Notice, PageHeader, Spinner } from "../components/ui";
+import { Badge, Button, Card, CardHeader, Dialog, Notice, PageHeader, Spinner } from "../components/ui";
 import { countryName, day, flag, num, when } from "../lib/format";
 import { SETTINGS_HELP } from "../lib/help";
 
@@ -35,17 +35,10 @@ function span(from: string, to: string): string {
 export function Settings() {
   const qc = useQueryClient();
   const settings = useQuery({ queryKey: keys.settings, queryFn: () => call(api.settings.$get()) });
-  const [utm, setUtm] = useState("");
   const [resyncing, setResyncing] = useState<number | null>(null);
   const [preview, setPreview] = useState<{ subject: string; html: string } | null>(null);
   const [confirmRevoke, setConfirmRevoke] = useState(false);
   const [mailSetup, setMailSetup] = useState(false);
-
-  // Follow the saved template only when it changes, so a refetch doesn't discard an unsaved edit.
-  const savedUtm = settings.data?.defaultUtm;
-  useEffect(() => {
-    if (savedUtm !== undefined) setUtm(savedUtm);
-  }, [savedUtm]);
 
   // Scroll to #section once, when the page first has content.
   const loaded = settings.isSuccess;
@@ -67,7 +60,7 @@ export function Settings() {
   };
 
   const saveUtm = useMutation({
-    mutationFn: () => call(api.settings.$put({ json: { defaultUtm: utm.trim() } })),
+    mutationFn: (template: string) => call(api.settings.$put({ json: { defaultUtm: template.trim() } })),
     onSuccess: async () => {
       void qc.invalidateQueries({ queryKey: keys.settings });
       toast.success("Default UTM template saved");
@@ -122,7 +115,6 @@ export function Settings() {
   if (settings.isError) return <Notice tone="danger">{settings.error.message}</Notice>;
   const s = settings.data;
   const security = s.security;
-  const utmError = utm ? validateUtmTemplate(utm) : "Template is required.";
   const origin = s.publicOrigin;
 
   return (
@@ -131,19 +123,7 @@ export function Settings() {
       <div className="grid gap-5 lg:grid-cols-2">
         <ShortDomains domains={s.domains} primary={s.primaryDomain} adminHost={s.adminHost} linksPerDomain={s.linksPerDomain} demo={s.demo} />
         <CloudflareFeatures />
-        <Card className="lg:col-span-2">
-          <CardHeader title="Default UTM template" description="Appended to links that have UTM turned on and no custom template. Saving republishes those links." info={SETTINGS_HELP.defaultUtm} />
-          <div className="flex flex-col gap-3 px-5 pb-5 sm:flex-row sm:items-start">
-            <div className="flex-1">
-              <Field label="Template" htmlFor="utm" hint="Placeholders: {slug}, {source} (the ?s= tag or detected source) and {domain} (the short domain)." error={utm !== s.defaultUtm ? utmError : null}>
-                <Input id="utm" className="font-mono text-xs" value={utm} onChange={(e) => setUtm(e.target.value)} />
-              </Field>
-            </div>
-            <Button className="sm:mt-6" onClick={() => saveUtm.mutate()} disabled={utm === s.defaultUtm || Boolean(utmError)} loading={saveUtm.isPending}>
-              Save
-            </Button>
-          </div>
-        </Card>
+        <UtmSettings key={s.defaultUtm} defaultUtm={s.defaultUtm} onSaveDefault={(t) => saveUtm.mutate(t)} saving={saveUtm.isPending || resyncing !== null} />
 
         <NotFoundEditor domain={s.primaryDomain} />
 

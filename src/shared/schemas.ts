@@ -192,6 +192,11 @@ export const checkSettingsSchema = z.object({
   notify: z.boolean(),
 });
 
+export const utmPresetSchema = z.object({
+  name: z.string().trim().min(1, "Name the preset").max(40),
+  template: z.string().trim().min(1).max(512),
+});
+
 export const settingsSchema = z.object({
   defaultUtm: z.string().trim().min(1).max(512),
 });

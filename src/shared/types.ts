@@ -93,6 +93,15 @@ export interface LinkChecksDTO {
   lastRun: JobRun | null;
 }
 
+export interface UtmPresetDTO {
+  id: number;
+  name: string;
+  template: string;
+  /** Links whose custom template is exactly this preset's. */
+  links: number;
+  updatedAt: number;
+}
+
 /** One saved state of a link (Link page → History). */
 export interface VersionDTO {
   id: number;
