@@ -43,8 +43,19 @@ export interface CheckRecord {
 /** Failed checks in a row before a destination counts as not working. */
 export const DOWN_AFTER_FAILS = 3;
 const HOUR = 3600;
-/** A working destination is checked again after this long. */
-export const OK_INTERVAL = 12 * HOUR;
+/** How often a working destination is checked unless someone chooses otherwise, in hours. */
+export const DEFAULT_EVERY_HOURS = 24;
+/** The range a custom frequency may take: 1 hour to 30 days. */
+export const MIN_EVERY_HOURS = 1;
+export const MAX_EVERY_HOURS = 720;
+/** The frequencies offered besides a custom one. */
+export const CHECK_EVERY_PRESETS = [
+  { hours: 24, label: "Once a day" },
+  { hours: 72, label: "Every 3 days" },
+  { hours: 168, label: "Once a week" },
+] as const;
+/** A working destination is checked again after this long, by default. */
+export const OK_INTERVAL = DEFAULT_EVERY_HOURS * HOUR;
 /** Sites that refuse automated checks are retried less often. */
 export const BLOCKED_INTERVAL = 24 * HOUR;
 /** After the 1st and 2nd failure: confirm soon, but not within one short outage. */
@@ -58,13 +69,21 @@ export const CHECK_TIMEOUT_MS = 10_000;
 export const MAX_PER_HOST_PER_RUN = 2;
 
 /**
- * How often a working destination is checked. Normally OK_INTERVAL; with more
- * destinations than the schedule can cover that often, it stretches so the
- * schedule never falls behind (a quarter of the capacity is kept for retries).
+ * How often a working destination is checked, in seconds. Normally the chosen
+ * `base`; with more destinations than the schedule can cover that often, it
+ * stretches so the schedule never falls behind (a quarter of the capacity is
+ * kept for retries).
  */
-export function okIntervalFor(destinations: number, capacityPerDay: number): number {
+export function okIntervalFor(destinations: number, capacityPerDay: number, base = OK_INTERVAL): number {
   const needed = Math.ceil(((destinations / (capacityPerDay * 0.75)) * 86400) / HOUR) * HOUR;
-  return Math.max(OK_INTERVAL, needed);
+  return Math.max(base, needed);
+}
+
+/** 24 → "once a day", 72 → "every 3 days", 168 → "once a week", 12 → "every 12 hours". */
+export function everyText(hours: number): string {
+  if (hours === 168) return "once a week";
+  if (hours % 24 === 0) return hours === 24 ? "once a day" : `every ${hours / 24} days`;
+  return hours === 1 ? "every hour" : `every ${hours} hours`;
 }
 
 /** Picks up to `limit` items in order, at most `perHost` per site. */

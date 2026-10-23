@@ -2,7 +2,7 @@
 // describe; numbers come from shared constants where one exists.
 
 import * as L from "../../shared/login-policy";
-import { BLOCKED_INTERVAL, CHECK_TIMEOUT_MS, DOWN_AFTER_FAILS, MAX_HOPS, OK_INTERVAL } from "../../shared/link-check";
+import { BLOCKED_INTERVAL, CHECK_TIMEOUT_MS, DOWN_AFTER_FAILS, MAX_HOPS } from "../../shared/link-check";
 import { SCANNER_PATHS_PER_DAY } from "../../shared/types";
 
 export interface Help {
@@ -79,7 +79,7 @@ export const LINK_HELP = {
   ),
   monitor: h(
     "Check the destination",
-    `Shorthop visits the destination about every ${duration(OK_INTERVAL)} and lists it under Link health. After ${DOWN_AFTER_FAILS} failed checks in a row it counts as not working and you get an email. Turn off for pages that only work when signed in, or that you know block automated visitors.`,
+    `With automatic checking on (Link health), Shorthop visits the destination as often as chosen there and lists it under Link health. After ${DOWN_AFTER_FAILS} failed checks in a row it counts as not working and you get an email. Turn off for pages that only work when signed in, or that you know block automated visitors.`,
   ),
   passQuery: h(
     "Pass query parameters through",
@@ -170,7 +170,7 @@ export const STATS_HELP = {
 export const CHECKS_HELP = {
   overview: h(
     "Destination checks",
-    `Every 30 minutes Shorthop checks the destinations that are due: a working one about every ${duration(OK_INTERVAL)}, one with a problem again after 1 and then 4 hours. It sends a HEAD request (then a GET if the server doesn't answer HEAD properly), follows up to ${MAX_HOPS} redirects, and waits up to ${CHECK_TIMEOUT_MS / 1000} seconds. Page contents are never downloaded or stored. Links that are disabled, expired, marked as no longer working, or have checks turned off are skipped. A destination shared by several links is checked once.`,
+    `Automatic checking is off until someone turns it on here (Activate automatic checking). Then every 30 minutes Shorthop checks the destinations that are due: a working one as often as chosen (once a day, every 3 days, once a week, or anything from 1 hour to 30 days), one with a problem again after 1 and then 4 hours. Check now works either way. It sends a HEAD request (then a GET if the server doesn't answer HEAD properly), follows up to ${MAX_HOPS} redirects, and waits up to ${CHECK_TIMEOUT_MS / 1000} seconds. Page contents are never downloaded or stored. Links that are disabled, expired, marked as no longer working, or have checks turned off are skipped. A destination shared by several links is checked once.`,
   ),
   states: h(
     "What each state means",
@@ -178,7 +178,7 @@ export const CHECKS_HELP = {
   ),
   limits: h(
     "Limits that keep checks cheap and polite",
-    `Checks run on a schedule, never on a visitor's click, so they can't slow down or block your links or the API. Each half-hourly run checks at most 25 destinations and makes at most 40 outbound requests (the Free plan allows 50 per run). Links sharing a destination are checked once. At most 2 pages of one site are checked per run, so a site with hundreds of your links (LinkedIn, Amazon) isn't hammered and doesn't block the checker. With more destinations than twice-daily checks can cover (about 450), working ones are checked less often instead of falling behind: about daily at 1,000, about every 5 days at 5,000. The cost on Cloudflare is small: 48 Worker runs a day, about 1,200 database writes and a few thousand row reads per run, all inside the Free plan.`,
+    `Checks run on a schedule, never on a visitor's click, so they can't slow down or block your links or the API. Each half-hourly run checks at most 25 destinations and makes at most 40 outbound requests (the Free plan allows 50 per run), about 900 routine checks a day with room left for rechecks. Links sharing a destination are checked once. At most 2 pages of one site are checked per run, so a site with hundreds of your links (LinkedIn, Amazon) isn't hammered and doesn't block the checker. With more destinations than the schedule can check as often as you chose, working ones are checked less often instead of falling behind: about daily at 900, about every 5 days at 4,500. Checks are free: outbound visits aren't billed, and the half-hourly cron runs anyway (for webhooks). They never count as clicks.`,
   ),
   email: h(
     "Email alerts",

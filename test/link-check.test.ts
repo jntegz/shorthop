@@ -1,11 +1,11 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { DOWN_AFTER_FAILS, isFetchableUrl, MAX_HOPS, nextRecord, OK_INTERVAL, okIntervalFor, spreadByHost, type CheckOutcome } from "../src/shared/link-check";
+import { DOWN_AFTER_FAILS, everyText, isFetchableUrl, MAX_HOPS, nextRecord, OK_INTERVAL, okIntervalFor, spreadByHost, type CheckOutcome } from "../src/shared/link-check";
 import type { LinkChecksDTO, LinkListItem, TargetCheckDTO } from "../src/shared/types";
 import { systemHealth } from "../src/worker/health";
 import worker from "../src/worker/index";
 import { checkUrl, runLinkChecks } from "../src/worker/link-check";
-import { API, bearer, call, json, resetData } from "./helpers";
+import { API, bearer, call, enableChecks, json, resetData } from "./helpers";
 
 type Route = (url: string, init: RequestInit) => Response | Promise<Response>;
 let routes: Record<string, Route>;
@@ -103,10 +103,14 @@ describe("status model", () => {
 
 describe("guardrails for large collections", () => {
   it("stretches the interval only when the schedule can't keep up", () => {
-    expect(okIntervalFor(100, 1200)).toBe(OK_INTERVAL); // 12 hours
-    expect(okIntervalFor(450, 1200)).toBe(OK_INTERVAL);
-    expect(okIntervalFor(1000, 1200)).toBe(27 * 3600); // about once a day, with room for retries
+    expect(okIntervalFor(100, 1200)).toBe(OK_INTERVAL); // 24 hours
+    expect(okIntervalFor(900, 1200)).toBe(OK_INTERVAL);
+    expect(okIntervalFor(1000, 1200)).toBe(27 * 3600); // a little over a day, with room for retries
     expect(okIntervalFor(5000, 1200)).toBe(134 * 3600);
+    // The chosen frequency is the floor; capacity can only stretch it.
+    expect(okIntervalFor(100, 1200, 168 * 3600)).toBe(168 * 3600);
+    expect(okIntervalFor(1000, 1200, 24 * 3600)).toBe(27 * 3600);
+    expect(okIntervalFor(10, 1200, 3600)).toBe(3600);
     const ok: CheckOutcome = { kind: "ok", httpStatus: 200, problem: null, finalUrl: null, hops: 0, ms: 5 };
     expect(nextRecord(null, ok, 0, 27 * 3600).nextAt).toBe(27 * 3600);
   });
@@ -192,7 +196,69 @@ describe("checking one destination", () => {
   });
 });
 
+describe("frequency wording", () => {
+  it("says how often in words", () => {
+    expect([1, 12, 24, 48, 72, 168, 336].map(everyText)).toEqual(["every hour", "every 12 hours", "once a day", "every 2 days", "every 3 days", "once a week", "every 14 days"]);
+  });
+});
+
+describe("automatic checking", () => {
+  it("is off until activated, while Check now still works", async () => {
+    routes["https://a.example/"] = status(200);
+    await createLink("one", "https://a.example/");
+    const list = (await (await call(`${API}/checks`, { headers: bearer })).json()) as LinkChecksDTO;
+    expect(list.settings).toEqual({ enabled: false, notify: true, everyHours: 24 });
+    expect(await runLinkChecks(env)).toMatchObject({ checked: 0, skipped: expect.any(String) });
+
+    const ctx = createExecutionContext();
+    await worker.scheduled({ cron: "*/30 * * * *", scheduledTime: Date.now(), noRetry() {} } as ScheduledController, env, ctx);
+    await waitOnExecutionContext(ctx);
+    expect(await row("https://a.example/")).toBeNull();
+    expect((await systemHealth(env)).checks.find((c) => c.id === "links")).toMatchObject({ status: "ok", detail: expect.stringContaining("Activate automatic checking") });
+
+    const now = await call(`${API}/checks/links/sh.example/one`, { method: "POST", headers: bearer });
+    expect(await now.json()).toMatchObject({ automatic: false, check: { state: "ok" } });
+  });
+
+  it("schedules working destinations at the chosen frequency", async () => {
+    routes["https://a.example/"] = status(200);
+    await createLink("one", "https://a.example/");
+    await enableChecks(72);
+    await runLinkChecks(env);
+    const r = (await row("https://a.example/")) as { next_at: number; checked_at: number };
+    expect(r.next_at - r.checked_at).toBeGreaterThanOrEqual(72 * 3600);
+    expect(r.next_at - r.checked_at).toBeLessThan(72 * 3600 + 1800);
+  });
+
+  it("reschedules working destinations when the frequency changes, but not failing ones", async () => {
+    routes["https://a.example/"] = status(200);
+    routes["https://b.example/"] = status(404);
+    await createLink("one", "https://a.example/");
+    await createLink("two", "https://b.example/");
+    await enableChecks(168);
+    await runLinkChecks(env);
+    const warningBefore = (await row("https://b.example/"))!.next_at;
+
+    await enableChecks(24);
+    const ok = (await row("https://a.example/")) as { next_at: number; checked_at: number };
+    expect(ok.next_at - ok.checked_at).toBeGreaterThanOrEqual(24 * 3600);
+    expect(ok.next_at - ok.checked_at).toBeLessThan(24 * 3600 + 1800);
+    expect((await row("https://b.example/"))!.next_at).toBe(warningBefore);
+  });
+
+  it("validates the frequency and keeps what isn't sent", async () => {
+    await enableChecks(72);
+    const put = (body: unknown) => call(`${API}/checks/settings`, { ...json(body), method: "PUT" });
+    expect((await put({ everyHours: 0 })).status).toBe(400);
+    expect((await put({ everyHours: 721 })).status).toBe(400);
+    const res = await put({ enabled: true, notify: false });
+    expect(await res.json()).toEqual({ settings: { enabled: true, notify: false, everyHours: 72 } });
+  });
+});
+
 describe("scheduled runs", () => {
+  beforeEach(() => enableChecks());
+
   it("checks each live destination once and skips links that shouldn't be checked", async () => {
     routes["https://a.example/"] = status(200);
     routes["https://b.example/"] = status(404);
@@ -282,6 +348,8 @@ describe("scheduled runs", () => {
 });
 
 describe("checks API", () => {
+  beforeEach(() => enableChecks());
+
   it("lists destinations with their links, and filters the links list by problems", async () => {
     routes["https://a.example/"] = status(200);
     routes["https://b.example/"] = status(500);
@@ -292,7 +360,7 @@ describe("checks API", () => {
     await runLinkChecks(env);
 
     const list = (await (await call(`${API}/checks`, { headers: bearer })).json()) as LinkChecksDTO;
-    expect(list.settings).toEqual({ enabled: true, notify: true });
+    expect(list.settings).toEqual({ enabled: true, notify: true, everyHours: 24 });
     expect(list.excluded).toBe(1);
     expect(list.lastRun).toBeNull(); // only the cron records a run
     const a = list.items.find((i) => i.target === "https://a.example/")!;

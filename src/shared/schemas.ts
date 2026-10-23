@@ -2,6 +2,7 @@ import { z } from "zod";
 import { isDay } from "./dates";
 import { DEAD_LINK_MAX_DELAY, DEAD_LINK_MIN_DELAY } from "./dead-link";
 import { HOSTNAME_RE } from "./domains";
+import { MAX_EVERY_HOURS, MIN_EVERY_HOURS } from "./link-check";
 import { HEX_COLOR_RE } from "./not-found";
 import { PERMISSIONS, ROLES } from "./permissions";
 import { LINK_PASSWORD_MAX, LINK_PASSWORD_MIN, MAX_CLICK_LIMIT } from "./protection";
@@ -199,9 +200,11 @@ export const missExportQuerySchema = z.object({
 
 export const rangeQuerySchema = z.object(period).refine(customHasDates, customDatesError);
 
+/** Partial: what's left out keeps its saved value (older callers send only enabled and notify). */
 export const checkSettingsSchema = z.object({
-  enabled: z.boolean(),
-  notify: z.boolean(),
+  enabled: z.boolean().optional(),
+  notify: z.boolean().optional(),
+  everyHours: z.number().int().min(MIN_EVERY_HOURS, "Check at most every hour").max(MAX_EVERY_HOURS, "Check at least every 30 days").optional(),
 });
 
 export const utmPresetSchema = z.object({

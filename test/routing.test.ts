@@ -14,7 +14,7 @@ import {
 } from "../src/shared/routing";
 import type { LinkDTO, LinkListItem, VersionDTO } from "../src/shared/types";
 import { runLinkChecks } from "../src/worker/link-check";
-import { API, bearer, call, captureClicks, json, ORIGIN, resetData } from "./helpers";
+import { API, bearer, call, captureClicks, enableChecks, json, ORIGIN, resetData } from "./helpers";
 
 const IPHONE = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1";
 const ANDROID = "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Mobile Safari/537.36";
@@ -225,6 +225,7 @@ describe("API", () => {
       new Response(null, { status: String(input).includes("cz-b") ? 404 : 200 }),
     );
     // Three pages of example.com: the per-site limit spreads them over two runs.
+    await enableChecks();
     await runLinkChecks(env);
     await runLinkChecks(env);
     const fetched = fetchMock.mock.calls.map(([u]) => String(u));

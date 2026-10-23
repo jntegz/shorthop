@@ -447,7 +447,7 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
             checked={f.monitor}
             onCheckedChange={(v) => set("monitor", v)}
             label="Check that the destination works"
-            description="Visits the destination about twice a day and alerts you if it stops loading. Turn off for pages behind a login."
+            description="Includes this link in automatic checks (Link health) and alerts you if it stops loading. Turn off for pages behind a login."
             info={LINK_HELP.monitor}
           />
         </div>

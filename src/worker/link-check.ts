@@ -14,8 +14,12 @@
 import { linkLabel } from "../shared/domains";
 import { escapeHtml } from "../shared/html";
 import {
+  BLOCKED_INTERVAL,
   CHECK_TIMEOUT_MS,
+  DEFAULT_EVERY_HOURS,
   DOWN_AFTER_FAILS,
+  MAX_EVERY_HOURS,
+  MIN_EVERY_HOURS,
   classifyStatus,
   isCheckProblem,
   isFetchableUrl,
@@ -55,7 +59,10 @@ export const CHECK_USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36 ShorthopLinkCheck/1.0";
 
 const SETTINGS_KEY = "link_checks";
-export const DEFAULT_CHECK_SETTINGS: CheckSettings = { enabled: true, notify: true };
+/** Off until someone presses "Activate automatic checking" on Link health. */
+export const DEFAULT_CHECK_SETTINGS: CheckSettings = { enabled: false, notify: true, everyHours: DEFAULT_EVERY_HOURS };
+
+const validEvery = (h: unknown): h is number => Number.isInteger(h) && (h as number) >= MIN_EVERY_HOURS && (h as number) <= MAX_EVERY_HOURS;
 
 export async function getCheckSettings(db: D1Database): Promise<CheckSettings> {
   try {
@@ -63,14 +70,39 @@ export async function getCheckSettings(db: D1Database): Promise<CheckSettings> {
     return {
       enabled: typeof saved.enabled === "boolean" ? saved.enabled : DEFAULT_CHECK_SETTINGS.enabled,
       notify: typeof saved.notify === "boolean" ? saved.notify : DEFAULT_CHECK_SETTINGS.notify,
+      everyHours: validEvery(saved.everyHours) ? saved.everyHours : DEFAULT_CHECK_SETTINGS.everyHours,
     };
   } catch {
     return { ...DEFAULT_CHECK_SETTINGS };
   }
 }
 
-export async function saveCheckSettings(db: D1Database, s: CheckSettings): Promise<void> {
-  await setSettingStmt(db, SETTINGS_KEY, JSON.stringify(s)).run();
+/**
+ * Saves what's given over the saved settings. A new frequency applies now:
+ * working (and refusing) destinations are rescheduled from their last check in
+ * the same batch, while failing ones keep their retry times.
+ */
+export async function saveCheckSettings(db: D1Database, input: Partial<CheckSettings>): Promise<CheckSettings> {
+  const prev = await getCheckSettings(db);
+  const next: CheckSettings = {
+    enabled: input.enabled ?? prev.enabled,
+    notify: input.notify ?? prev.notify,
+    everyHours: input.everyHours ?? prev.everyHours,
+  };
+  const writes = [setSettingStmt(db, SETTINGS_KEY, JSON.stringify(next))];
+  if (next.everyHours !== prev.everyHours) {
+    const { okInterval } = await schedule(db, nowSec(), next.everyHours);
+    writes.push(
+      db
+        .prepare(
+          `UPDATE target_checks SET next_at = checked_at + CASE WHEN status = 'blocked' THEN MAX(?2, ?1) ELSE ?1 END + abs(random()) % ?3
+           WHERE status IN ('ok', 'blocked')`,
+        )
+        .bind(okInterval, BLOCKED_INTERVAL, JITTER_SEC),
+    );
+  }
+  await db.batch(writes);
+  return next;
 }
 
 /** Outbound requests left in this invocation. */
@@ -214,22 +246,23 @@ export interface CheckRunResult {
   recovered: string[];
 }
 
-/** Checks the given targets (in order, within the budget) and stores the results. */
-/** Distinct destinations that are checked, and how often a working one is (stretched for large collections). */
-async function schedule(db: D1Database, now: number): Promise<{ destinations: number; okInterval: number }> {
+/** Distinct destinations that are checked, and how often a working one is: the chosen frequency, stretched for large collections. */
+async function schedule(db: D1Database, now: number, everyHours: number): Promise<{ destinations: number; okInterval: number }> {
   const row = await db.prepare(`SELECT COUNT(DISTINCT url) AS n FROM link_destinations WHERE ${MONITORED("?1")}`).bind(now).first<{ n: number }>();
   const destinations = row?.n ?? 0;
-  return { destinations, okInterval: okIntervalFor(destinations, RUNS_PER_DAY * RUN_LIMIT) };
+  return { destinations, okInterval: okIntervalFor(destinations, RUNS_PER_DAY * RUN_LIMIT, everyHours * 3600) };
 }
 
+/** Checks the given targets (in order, within the budget) and stores the results. */
 async function checkAndStore(
   env: Env,
   items: { target: string; row: CheckRow | null }[],
   budget: Budget,
   fetcher: typeof fetch,
+  settings: CheckSettings,
 ): Promise<CheckRunResult> {
   const now = nowSec();
-  const { okInterval } = await schedule(env.DB, now);
+  const { okInterval } = await schedule(env.DB, now, settings.everyHours);
   const queue = [...items];
   const results: { target: string; prev: CheckRow | null; outcome: CheckOutcome }[] = [];
   const worker = async () => {
@@ -309,7 +342,7 @@ export async function runLinkChecks(env: Env, opts: { budget?: Budget; fetcher?:
   const budget = opts.budget ?? { left: RUN_BUDGET };
   // Look further ahead than one run's worth, so a site with many links can't fill the run.
   const due = spreadByHost(await dueTargets(env.DB, nowSec(), RUN_LIMIT * 4), RUN_LIMIT, MAX_PER_HOST_PER_RUN);
-  const result = await checkAndStore(env, due, budget, opts.fetcher ?? fetch);
+  const result = await checkAndStore(env, due, budget, opts.fetcher ?? fetch, settings);
   await env.DB.prepare("DELETE FROM target_checks WHERE target NOT IN (SELECT url FROM link_destinations)").run();
   if (settings.notify) await notifyChanges(env);
   return result;
@@ -317,9 +350,10 @@ export async function runLinkChecks(env: Env, opts: { budget?: Budget; fetcher?:
 
 /** "Check problems now": warnings, failures and never-checked targets, as far as one request's budget goes. */
 export async function recheckProblems(env: Env, fetcher: typeof fetch = fetch): Promise<CheckRunResult> {
+  const settings = await getCheckSettings(env.DB);
   const items = spreadByHost(await dueTargets(env.DB, nowSec(), 200, "problems"), 200, MAX_PER_HOST_PER_RUN * 2);
-  const result = await checkAndStore(env, items, { left: RUN_BUDGET }, fetcher);
-  if ((await getCheckSettings(env.DB)).notify) await notifyChanges(env);
+  const result = await checkAndStore(env, items, { left: RUN_BUDGET }, fetcher, settings);
+  if (settings.notify) await notifyChanges(env);
   return result;
 }
 
@@ -457,7 +491,7 @@ export async function listChecks(env: Env): Promise<Omit<LinkChecksDTO, "lastRun
   }
   const items = [...grouped.entries()].map(([target, links]) => toDTO(target, byTarget.get(target), links));
   const overdue = items.filter((i) => i.nextAt !== null && i.nextAt < now - 3600).length + items.filter((i) => i.state === "unchecked").length;
-  const { okInterval } = await schedule(db, now);
+  const { okInterval } = await schedule(db, now, settings.everyHours);
   return { settings, items, excluded: excluded?.n ?? 0, overdue, capacityPerDay: RUNS_PER_DAY * RUN_LIMIT, intervalHours: okInterval / 3600, perHostPerRun: MAX_PER_HOST_PER_RUN };
 }
 
@@ -466,8 +500,9 @@ export async function linkCheck(
   env: Env,
   domain: string,
   slug: string,
-): Promise<{ check: TargetCheckDTO | null; routed: TargetCheckDTO[]; monitored: boolean; reason: string | null } | null> {
+): Promise<{ check: TargetCheckDTO | null; routed: TargetCheckDTO[]; monitored: boolean; reason: string | null; automatic: boolean } | null> {
   const now = nowSec();
+  const automatic = (await getCheckSettings(env.DB)).enabled;
   const link = await env.DB.prepare("SELECT target, active, broken, monitor, expires_at FROM links WHERE domain = ? AND slug = ?")
     .bind(domain, slug)
     .first<{ target: string; active: number; broken: number; monitor: number; expires_at: number | null }>();
@@ -499,6 +534,7 @@ export async function linkCheck(
     routed: reason ? [] : urls.map((u) => dto(u.url)),
     monitored: reason === null,
     reason,
+    automatic,
   };
 }
 
@@ -510,7 +546,8 @@ export async function checkLinkNow(env: Env, domain: string, slug: string, fetch
   )
     .bind(domain, slug)
     .all<CheckRow & { status: CheckStatus | null }>();
-  const result = await checkAndStore(env, results.map((r) => ({ target: r.target, row: r.status === null ? null : r })), { left: RUN_BUDGET }, fetcher);
-  if (result.checked && (await getCheckSettings(env.DB)).notify) await notifyChanges(env);
+  const settings = await getCheckSettings(env.DB);
+  const result = await checkAndStore(env, results.map((r) => ({ target: r.target, row: r.status === null ? null : r })), { left: RUN_BUDGET }, fetcher, settings);
+  if (result.checked && settings.notify) await notifyChanges(env);
   return result.checked > 0;
 }

@@ -1,9 +1,20 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BellOff, CornerDownRight, ExternalLink, Globe2, RefreshCw, Search, Settings2, Wrench, X } from "lucide-react";
+import { BellOff, CornerDownRight, ExternalLink, Globe2, Power, RefreshCw, Search, Settings2, Wrench, X } from "lucide-react";
 import { useDeferredValue, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { toast } from "sonner";
-import { DOWN_AFTER_FAILS, problemText, STATE_LABEL, type CheckState } from "../../shared/link-check";
+import {
+  CHECK_EVERY_PRESETS,
+  DEFAULT_EVERY_HOURS,
+  DOWN_AFTER_FAILS,
+  everyText,
+  MAX_EVERY_HOURS,
+  MIN_EVERY_HOURS,
+  okIntervalFor,
+  problemText,
+  STATE_LABEL,
+  type CheckState,
+} from "../../shared/link-check";
 import type { CheckSettings, TargetCheckDTO } from "../../shared/types";
 import { api, call, keys } from "../api";
 import { useCan } from "../lib/me";
@@ -11,7 +22,7 @@ import { CHECK_STYLE, CheckBadge, STATE_ORDER } from "../components/CheckBadge";
 import { HealthTabs } from "../components/HealthTabs";
 import { StatsFreshness } from "../components/StatsFreshness";
 import { useSystemHealth } from "../components/SystemStatus";
-import { Button, buttonClass, Card, CardHeader, Dialog, Empty, InfoTip, Input, Notice, PageHeader, Pagination, SortHeader, Spinner, Switch } from "../components/ui";
+import { Button, buttonClass, Card, CardHeader, Dialog, Empty, Field, InfoTip, Input, Notice, PageHeader, Pagination, Segmented, Select, SortHeader, Spinner, Switch } from "../components/ui";
 import { ago, hostOf, num } from "../lib/format";
 import { CHECKS_HELP } from "../lib/help";
 import { linkKey, linkPath, useLinkLabel } from "../lib/links";
@@ -48,8 +59,8 @@ function UrlText({ url, className }: { url: string; className?: string }) {
 }
 
 /** What the last check found, in one or two short lines. */
-function Finding({ item }: { item: TargetCheckDTO }) {
-  if (item.state === "unchecked") return <span className="text-xs text-muted">Checked within 30 minutes</span>;
+function Finding({ item, automatic }: { item: TargetCheckDTO; automatic: boolean }) {
+  if (item.state === "unchecked") return <span className="text-xs text-muted">{automatic ? "Checked within 30 minutes" : "Not checked yet"}</span>;
   const detail = item.state === "ok" ? (item.httpStatus ? `HTTP ${item.httpStatus}` : "") : problemText(item.problem, item.httpStatus);
   return (
     <span className="block text-xs leading-relaxed text-muted">
@@ -80,34 +91,99 @@ function LinkChips({ links }: { links: TargetCheckDTO["links"] }) {
   );
 }
 
-function SettingsDialog({ open, onOpenChange, settings }: { open: boolean; onOpenChange: (o: boolean) => void; settings: CheckSettings }) {
+type EveryMode = "24" | "72" | "168" | "custom";
+const EVERY_OPTIONS: { value: EveryMode; label: string }[] = [...CHECK_EVERY_PRESETS.map((p) => ({ value: String(p.hours) as EveryMode, label: p.label })), { value: "custom", label: "Custom" }];
+
+/** The starting choice for a saved frequency: a preset, or a custom number (in days when it's whole days). */
+function everyChoice(hours: number): { mode: EveryMode; amount: string; unit: "hours" | "days" } {
+  const preset = CHECK_EVERY_PRESETS.find((p) => p.hours === hours);
+  if (preset) return { mode: String(preset.hours) as EveryMode, amount: "2", unit: "days" };
+  return hours % 24 === 0 ? { mode: "custom", amount: String(hours / 24), unit: "days" } : { mode: "custom", amount: String(hours), unit: "hours" };
+}
+
+function SettingsDialog({
+  open,
+  onOpenChange,
+  settings,
+  activate,
+  destinations,
+  capacityPerDay,
+}: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  settings: CheckSettings;
+  /** Opened from "Activate automatic checking": starts switched on. */
+  activate: boolean;
+  destinations: number;
+  capacityPerDay: number;
+}) {
   const qc = useQueryClient();
-  const [draft, setDraft] = useState(settings);
+  const [draft, setDraft] = useState<CheckSettings>(() => (activate ? { ...settings, enabled: true } : settings));
+  const initial = everyChoice(settings.everyHours);
+  const [mode, setMode] = useState<EveryMode>(initial.mode);
+  const [amount, setAmount] = useState(initial.amount);
+  const [unit, setUnit] = useState<"hours" | "days">(initial.unit);
   const health = useSystemHealth();
   const alertsTo = health.data?.alertsTo ?? null;
+
+  const customHours = Number(amount) * (unit === "days" ? 24 : 1);
+  const everyHours = mode === "custom" ? customHours : Number(mode);
+  const everyError =
+    mode !== "custom" || !draft.enabled
+      ? null
+      : !Number.isInteger(customHours) || customHours < MIN_EVERY_HOURS || customHours > MAX_EVERY_HOURS
+        ? "Choose between 1 hour and 30 days."
+        : null;
+  const effective = Math.round(okIntervalFor(destinations, capacityPerDay, (everyHours || DEFAULT_EVERY_HOURS) * 3600) / 3600);
+
   const save = useMutation({
-    mutationFn: () => call(api.checks.settings.$put({ json: draft })),
+    mutationFn: () => call(api.checks.settings.$put({ json: { ...draft, everyHours: draft.enabled ? everyHours : settings.everyHours } })),
     onSuccess: () => {
-      toast.success("Check settings saved");
+      toast.success(draft.enabled && !settings.enabled ? "Automatic checking is on" : "Check settings saved", {
+        description: draft.enabled ? `Each destination is checked ${everyText(effective)}. The first checks start within 30 minutes.` : undefined,
+      });
       onOpenChange(false);
       void qc.invalidateQueries({ queryKey: keys.checks });
       void qc.invalidateQueries({ queryKey: keys.health });
     },
     onError: (e) => toast.error(e.message),
   });
-  const changed = draft.enabled !== settings.enabled || draft.notify !== settings.notify;
+  const changed = draft.enabled !== settings.enabled || draft.notify !== settings.notify || (draft.enabled && everyHours !== settings.everyHours);
   return (
-    <Dialog open={open} onOpenChange={onOpenChange} title="Destination checks" description="Choose whether destinations are checked on a schedule, and whether you hear about problems.">
+    <Dialog open={open} onOpenChange={onOpenChange} title="Destination checks" description="Choose whether destinations are checked on a schedule, how often, and whether you hear about problems.">
       <div className="space-y-5">
         <div className="space-y-4 rounded-xl border border-line p-4">
           <Switch
             id="checks-enabled"
             label="Check destinations automatically"
-            description="Every 30 minutes, whatever is due: each destination about twice a day, problems sooner."
+            description="Every 30 minutes, Shorthop checks whatever is due. Off: destinations are only checked when someone presses Check now."
             checked={draft.enabled}
             onCheckedChange={(v) => setDraft((d) => ({ ...d, enabled: v }))}
             info={CHECKS_HELP.overview}
           />
+          {draft.enabled ? (
+            <div className="space-y-2 border-t border-line pt-4">
+              <p className="text-sm font-medium text-fg">How often</p>
+              <Segmented label="How often" value={mode} onChange={setMode} options={EVERY_OPTIONS} />
+              {mode === "custom" ? (
+                <Field label="Every" htmlFor="checks-every" error={everyError}>
+                  <div className="flex gap-2">
+                    <Input id="checks-every" type="number" inputMode="numeric" min={1} step={1} className="w-28" value={amount} onChange={(e) => setAmount(e.target.value)} />
+                    <Select aria-label="Unit" className="w-32" value={unit} onChange={(e) => setUnit(e.target.value as "hours" | "days")}>
+                      <option value="hours">Hours</option>
+                      <option value="days">Days</option>
+                    </Select>
+                  </div>
+                </Field>
+              ) : null}
+              {!everyError && destinations ? (
+                <p className="text-xs text-muted">
+                  With {num(destinations)} {destinations === 1 ? "destination" : "destinations"}, each is checked {everyText(effective)}.
+                  {effective > everyHours ? " That's less often than chosen: the schedule can't check them all more often." : ""} A failed check is repeated after 1 and 4 hours either way.
+                </p>
+              ) : null}
+            </div>
+          ) : null}
           <Switch
             id="checks-notify"
             label="Email me when a destination stops working"
@@ -130,8 +206,8 @@ function SettingsDialog({ open, onOpenChange, settings }: { open: boolean; onOpe
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button onClick={() => save.mutate()} loading={save.isPending} disabled={!changed}>
-            Save
+          <Button onClick={() => save.mutate()} loading={save.isPending} disabled={!changed || Boolean(everyError)}>
+            {activate && draft.enabled && !settings.enabled ? "Activate" : "Save"}
           </Button>
         </div>
       </div>
@@ -237,7 +313,7 @@ export function Health() {
   const [dir, setDir] = useState<SortDir>("asc");
   const [page, setPage] = useState(1);
   const [size, setSizeState] = useState<PageSize>(() => savedPageSize("health"));
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState<"settings" | "activate" | null>(null);
   const [fixing, setFixing] = useState<TargetCheckDTO | null>(null);
   const label = useLinkLabel();
   const can = useCan();
@@ -302,22 +378,32 @@ export function Health() {
     }
   };
   const problems = counts.down + counts.warning;
+  const off = data ? !data.settings.enabled : false;
 
   return (
     <>
       <PageHeader
         title="Make sure every link still lands"
-        description="Shorthop visits every destination about twice a day, confirms a problem before calling it, and tells you before your audience hits a dead end."
+        description={
+          data?.settings.enabled
+            ? `Shorthop visits every destination ${everyText(data.settings.everyHours)}, confirms a problem before calling it, and tells you before your audience hits a dead end.`
+            : "Turn on automatic checking and Shorthop visits every destination as often as you choose, confirms a problem before calling it, and tells you before your audience hits a dead end."
+        }
         actions={
           <>
             {manage ? (
-              <Button variant="outline" onClick={() => setSettingsOpen(true)} disabled={!data}>
+              <Button variant="outline" onClick={() => setSettingsOpen("settings")} disabled={!data}>
                 <Settings2 /> Check settings
               </Button>
             ) : null}
-            <Button onClick={() => recheck.mutate()} loading={recheck.isPending} disabled={!data}>
+            <Button variant={off && manage ? "outline" : "primary"} onClick={() => recheck.mutate()} loading={recheck.isPending} disabled={!data}>
               <RefreshCw /> Check problems now
             </Button>
+            {off && manage ? (
+              <Button onClick={() => setSettingsOpen("activate")}>
+                <Power /> Activate automatic checking
+              </Button>
+            ) : null}
           </>
         }
       />
@@ -334,13 +420,15 @@ export function Health() {
           {!data.settings.enabled ? (
             <div className="mb-5">
               <Notice>
-                Automatic checks are off, so new problems aren't found.{" "}
                 {manage ? (
-                  <button type="button" className="font-medium underline underline-offset-2" onClick={() => setSettingsOpen(true)}>
-                    Turn them on
-                  </button>
+                  <>
+                    Automatic checking is off. Destinations are only checked when you press Check now.{" "}
+                    <button type="button" className="font-medium underline underline-offset-2" onClick={() => setSettingsOpen("activate")}>
+                      Activate automatic checking
+                    </button>
+                  </>
                 ) : (
-                  "An admin can turn them on."
+                  "Automatic checking is off. Destinations are only checked when someone presses Check now. An admin can turn it on."
                 )}
               </Notice>
             </div>
@@ -388,16 +476,24 @@ export function Health() {
               onRefresh={() => void checks.refetch()}
               note={
                 <span>
-                  {data.lastRun ? (data.lastRun.ok ? `Last scheduled run ${ago(data.lastRun.at)}` : `The last scheduled run failed ${ago(data.lastRun.at)}`) : "The first scheduled run starts within 30 minutes"}
+                  {data.lastRun
+                    ? data.lastRun.ok
+                      ? `Last scheduled run ${ago(data.lastRun.at)}`
+                      : `The last scheduled run failed ${ago(data.lastRun.at)}`
+                    : data.settings.enabled
+                      ? "The first scheduled run starts within 30 minutes"
+                      : "No scheduled runs yet"}
                   {data.settings.enabled ? " · runs every 30 minutes" : " · scheduled checks are off"}
                 </span>
               }
             />
             <p className="flex flex-wrap items-center gap-1 text-xs text-muted">
               {data.settings.enabled
-                ? `Each working destination is checked about every ${data.intervalHours <= 12 ? "12 hours" : `${Math.round(data.intervalHours)} hours`}, at most ${data.perHostPerRun} pages of one site per run.`
+                ? `Each working destination is checked ${everyText(data.intervalHours)}, at most ${data.perHostPerRun} pages of one site per run.`
                 : "Scheduled checks are off."}
-              {data.intervalHours > 12 ? " Spaced out because you have more destinations than twice-daily checks could cover." : ""}
+              {data.settings.enabled && data.intervalHours > data.settings.everyHours
+                ? ` Spaced out because you have more destinations than the schedule could check ${everyText(data.settings.everyHours)}.`
+                : ""}
               {data.excluded ? ` ${num(data.excluded)} ${data.excluded === 1 ? "link has" : "links have"} checks turned off.` : ""}
               <InfoTip help={CHECKS_HELP.limits} />
             </p>
@@ -479,7 +575,7 @@ export function Health() {
                         <td className="min-w-0 md:px-4 md:py-4">
                           <CheckBadge state={item.state} />
                           <div className="mt-1">
-                            <Finding item={item} />
+                            <Finding item={item} automatic={data.settings.enabled} />
                           </div>
                         </td>
                         <td className="hidden text-xs text-muted md:px-4 md:py-4 lg:table-cell">
@@ -532,7 +628,16 @@ export function Health() {
             />
           ) : null}
 
-          <SettingsDialog key={String(settingsOpen)} open={settingsOpen} onOpenChange={setSettingsOpen} settings={data.settings} />
+          {settingsOpen ? (
+            <SettingsDialog
+              open
+              onOpenChange={(o) => !o && setSettingsOpen(null)}
+              settings={data.settings}
+              activate={settingsOpen === "activate"}
+              destinations={data.items.length}
+              capacityPerDay={data.capacityPerDay}
+            />
+          ) : null}
           {fixing ? <FixDialog item={fixing} onClose={() => setFixing(null)} /> : null}
         </>
       )}

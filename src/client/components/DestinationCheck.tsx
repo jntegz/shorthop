@@ -43,7 +43,9 @@ export function DestinationCheck({ link, onMarkBroken }: { link: LinkDTO; onMark
       qc.setQueryData(keys.link(domain, slug), data);
       void qc.invalidateQueries({ queryKey: keys.allLinks });
       void qc.invalidateQueries({ queryKey: keys.checks, exact: true });
-      toast.success("Destination checks turned on", { description: "It's checked within 30 minutes, or press Check now." });
+      toast.success("Destination checks turned on", {
+        description: q.data?.automatic ? "It's checked within 30 minutes, or press Check now." : "Automatic checking is off, so press Check now, or turn it on under Link health.",
+      });
     },
     onError: (e) => toast.error(e.message),
   });
@@ -78,7 +80,9 @@ export function DestinationCheck({ link, onMarkBroken }: { link: LinkDTO; onMark
           ) : !data!.monitored ? (
             <p className="mt-1 text-sm text-muted">{data!.reason}</p>
           ) : !c || c.state === "unchecked" ? (
-            <p className="mt-1 text-sm text-muted">Not checked yet. It's checked within 30 minutes, or press Check now.</p>
+            <p className="mt-1 text-sm text-muted">
+              {data!.automatic ? "Not checked yet. It's checked within 30 minutes, or press Check now." : "Not checked yet. Automatic checking is off. Press Check now, or turn it on under Link health."}
+            </p>
           ) : (
             <div className="mt-1 space-y-1 text-sm text-muted">
               <p>
@@ -93,7 +97,9 @@ export function DestinationCheck({ link, onMarkBroken }: { link: LinkDTO; onMark
                 <p className={c.state === "down" ? "text-danger" : "text-warn"}>
                   {c.state === "down"
                     ? `Failing since ${ago(c.since!)}${c.lastOkAt ? `, last worked ${ago(c.lastOkAt)}` : ""}.`
-                    : `${c.fails} of ${DOWN_AFTER_FAILS} failed checks. Rechecked ${c.nextAt ? ago(c.nextAt) : "soon"} before it counts as not working.`}
+                    : data!.automatic
+                      ? `${c.fails} of ${DOWN_AFTER_FAILS} failed checks. Rechecked ${c.nextAt ? ago(c.nextAt) : "soon"} before it counts as not working.`
+                      : `${c.fails} of ${DOWN_AFTER_FAILS} failed checks. Automatic checking is off, so it's only rechecked when someone presses Check now.`}
                 </p>
               ) : null}
               {c.finalUrl ? (

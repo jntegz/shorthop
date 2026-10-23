@@ -4,7 +4,7 @@ import type { CheckRunDTO, LinkChecksDTO } from "../../shared/types";
 import { getLink } from "../db";
 import { lastJobRun } from "../health";
 import { validate, type AppEnv } from "../hono";
-import { checkLinkNow, getCheckSettings, linkCheck, listChecks, recheckProblems, saveCheckSettings } from "../link-check";
+import { checkLinkNow, linkCheck, listChecks, recheckProblems, saveCheckSettings } from "../link-check";
 
 export const checksApi = new Hono<AppEnv>()
   .get("/", async (c) => {
@@ -13,9 +13,9 @@ export const checksApi = new Hono<AppEnv>()
     return c.json(dto);
   })
 
+  // Partial: what's left out keeps its saved value.
   .put("/settings", validate("json", checkSettingsSchema), async (c) => {
-    await saveCheckSettings(c.env.DB, c.req.valid("json"));
-    return c.json({ settings: await getCheckSettings(c.env.DB) });
+    return c.json({ settings: await saveCheckSettings(c.env.DB, c.req.valid("json")) });
   })
 
   /** Warnings, failures and never-checked destinations, as many as one request can check. */

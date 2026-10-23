@@ -4,7 +4,7 @@ import type { WebhookDTO, WebhookDeliveryDTO } from "../src/shared/types";
 import { runLinkChecks } from "../src/worker/link-check";
 import { webhookSignature } from "../src/worker/mailer";
 import { checkMilestones, deliver } from "../src/worker/webhooks";
-import { API, bearer, call, json, resetData } from "./helpers";
+import { API, bearer, call, enableChecks, json, resetData } from "./helpers";
 
 const HOOK = "https://hooks.example.com/shorthop";
 type Sent = { url: string; headers: Record<string, string>; body: string };
@@ -90,6 +90,7 @@ describe("events", () => {
   it("announces a destination going down and coming back, via the cron", async () => {
     await addHook(["link.health_changed"]);
     await createLink("dead", { target: "https://gone.example.com/" });
+    await enableChecks();
     for (let i = 0; i < 3; i++) {
       await runLinkChecks(env);
       await env.DB.prepare("UPDATE target_checks SET next_at = 0").run();

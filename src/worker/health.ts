@@ -206,7 +206,7 @@ export async function systemHealth(env: Env, now = new Date()): Promise<SystemHe
   const checkSettings = await getCheckSettings(env.DB).catch(() => null);
   const linksRun = runs.links;
   if (checkSettings && !checkSettings.enabled) {
-    add("links", "Destination checks", "ok", "Turned off on the Link health page.");
+    add("links", "Destination checks", "ok", "Automatic checking is off (Link health → Activate automatic checking).");
   } else if (linksRun && !linksRun.ok) {
     add("links", "Destination checks", "error", `The last run (${when(linksRun.at)}) failed: ${linksRun.error}`);
   } else if (linksRun && nowSec() - linksRun.at > LINK_CHECKS_LATE_SEC) {

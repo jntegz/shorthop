@@ -35,6 +35,12 @@ export function json(body: unknown, headers: Record<string, string> = {}): Reque
   return { method: "POST", headers: { "Content-Type": "application/json", ...bearer, ...headers }, body: JSON.stringify(body) };
 }
 
+/** Turns automatic destination checks on (they're off until someone activates them). */
+export async function enableChecks(everyHours = 24): Promise<void> {
+  const res = await call(`${API}/checks/settings`, { ...json({ enabled: true, everyHours }), method: "PUT" });
+  if (!res.ok) throw new Error(`enableChecks: HTTP ${res.status}`);
+}
+
 /** Clears D1 rows, settings state and KV between tests (storage is shared per file). */
 export async function resetData(): Promise<void> {
   resetMissPolicyCache();

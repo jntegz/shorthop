@@ -62,10 +62,12 @@ export interface LinkListItem extends LinkDTO {
 
 /** Link health → destination checks. */
 export interface CheckSettings {
-  /** Check destinations on a schedule. */
+  /** Check destinations on a schedule (off until someone turns it on). */
   enabled: boolean;
   /** Email when a destination stops (or starts) working. */
   notify: boolean;
+  /** How often a working destination is checked, in hours (1 to 720). */
+  everyHours: number;
 }
 
 /** One destination and the live links that point to it. */
@@ -98,7 +100,7 @@ export interface LinkChecksDTO {
   overdue: number;
   /** Most destinations the schedule can check in a day. */
   capacityPerDay: number;
-  /** How often a working destination is checked, in hours (longer than 12 for large collections). */
+  /** How often a working destination is really checked, in hours: settings.everyHours, or longer for large collections. */
   intervalHours: number;
   /** Most checks of one site in one scheduled run. */
   perHostPerRun: number;
