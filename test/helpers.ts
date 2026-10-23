@@ -42,6 +42,7 @@ export async function resetData(): Promise<void> {
   await env.DB.batch([
     env.DB.prepare("DELETE FROM links"),
     env.DB.prepare("DELETE FROM target_checks"),
+    env.DB.prepare("DELETE FROM link_versions"),
     env.DB.prepare("DELETE FROM daily_stats"),
     env.DB.prepare("DELETE FROM daily_dims"),
     env.DB.prepare("DELETE FROM auth_failures"),

@@ -8,6 +8,7 @@ import { nowSec } from "./db";
 import { SERVED_BY_HEADER } from "./dns-check";
 import { resolveSite } from "./domains";
 import { scheduledDaily, scheduledDigest, scheduledLinkChecks } from "./health";
+import { pruneHistory } from "./history";
 import { loginApp } from "./login";
 import { notFoundResponse, serveNotFoundImage } from "./not-found";
 import { handleRedirect, redirectTo } from "./redirect";
@@ -50,6 +51,7 @@ export default {
       ctx.waitUntil(scheduledDaily(env, now));
       ctx.waitUntil(pruneLoginState(env.DB, nowSec()));
       ctx.waitUntil(pruneDaySalts(env.DB, utcDate(now)));
+      ctx.waitUntil(pruneHistory(env.DB).catch((err) => console.error(JSON.stringify({ message: "history prune failed", error: String(err) }))));
     }
   },
 } satisfies ExportedHandler<Env>;

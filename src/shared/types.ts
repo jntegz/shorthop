@@ -1,5 +1,6 @@
 // Response shapes of the admin API, shared by the Worker and the SPA.
 
+import type { HistoryAction, StoredSnapshot } from "./history";
 import type { CheckProblem, CheckState } from "./link-check";
 
 export type LinkSource = "native" | "import";
@@ -84,6 +85,31 @@ export interface LinkChecksDTO {
   /** Most destinations the schedule can check in a day. */
   capacityPerDay: number;
   lastRun: JobRun | null;
+}
+
+/** One saved state of a link (Link page → History). */
+export interface VersionDTO {
+  id: number;
+  /** Unix seconds. */
+  at: number;
+  action: HistoryAction;
+  /** Access email, "api-token" or "system". */
+  actor: string;
+  /** The link after the change (before it, for a delete). */
+  snapshot: StoredSnapshot;
+  /** For a restore: the version it copied. */
+  restoredFrom: number | null;
+}
+
+export interface DeletedLinkDTO {
+  /** The delete's version id. */
+  versionId: number;
+  domain: string;
+  slug: string;
+  deletedAt: number;
+  actor: string;
+  target: string;
+  title: string | null;
 }
 
 export interface CheckRunDTO {

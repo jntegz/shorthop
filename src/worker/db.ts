@@ -1,6 +1,6 @@
 // D1 link records and their KV read copies.
 
-import { linkKey } from "../shared/domains";
+import { linkKey, splitKey } from "../shared/domains";
 import type { LinkDTO, LinkSource } from "../shared/types";
 
 export interface LinkRow {
@@ -83,13 +83,7 @@ function toKv(row: LinkRow, defaultUtm: string): KvLink {
 /** KV key of a link: "domain/slug". */
 export const kvKey = linkKey;
 
-/** "domain/slug" → its parts, or null for none or anything malformed. */
-export function splitKey(key: string | null | undefined): { domain: string; slug: string } | null {
-  if (!key) return null;
-  const cut = key.indexOf("/");
-  if (cut <= 0 || cut === key.length - 1) return null;
-  return { domain: key.slice(0, cut), slug: key.slice(cut + 1) };
-}
+export { splitKey };
 
 /** `origin` is the base URL of the link's domain (see shortOrigin). */
 export function toDTO(row: LinkRow, origin: string): LinkDTO {

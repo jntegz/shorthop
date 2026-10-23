@@ -79,21 +79,14 @@ describe("update and delete", () => {
 
   it("doesn't publish a link deleted while it was being edited", async () => {
     await create({ slug: "racy", target: "https://example.com/a" });
-    // The DELETE lands between the PATCH's read and its UPDATE.
+    // The DELETE lands between the PATCH's read and its UPDATE (sent in a batch with its version).
     const DB = new Proxy(env.DB, {
       get(target, prop) {
-        if (prop === "prepare") {
-          return (sql: string) => {
-            if (!sql.trim().startsWith("UPDATE links")) return target.prepare(sql);
-            return {
-              bind: (...args: unknown[]) => ({
-                first: async () => {
-                  await env.LINKS.delete("sh.example/racy");
-                  await env.DB.prepare("DELETE FROM links WHERE domain = 'sh.example' AND slug = 'racy'").run();
-                  return target.prepare(sql).bind(...args).first();
-                },
-              }),
-            };
+        if (prop === "batch") {
+          return async (stmts: D1PreparedStatement[]) => {
+            await env.LINKS.delete("sh.example/racy");
+            await env.DB.prepare("DELETE FROM links WHERE domain = 'sh.example' AND slug = 'racy'").run();
+            return target.batch(stmts);
           };
         }
         const v = Reflect.get(target, prop) as unknown;
@@ -103,6 +96,9 @@ describe("update and delete", () => {
     const res = await call(`${API}/links/sh.example/racy`, { ...json({ target: "https://example.com/b" }), method: "PATCH" }, { DB });
     expect(res.status).toBe(404);
     expect(await kv("racy")).toBeNull();
+    // The lost edit leaves no version: one after a delete would hide it from "Recently deleted".
+    const { results } = await env.DB.prepare("SELECT action FROM link_versions WHERE slug = 'racy' ORDER BY id").all<{ action: string }>();
+    expect(results.map((r) => r.action)).toEqual(["create"]);
   });
 
   it("takes back an edit's KV record when the link is deleted right after it's published", async () => {

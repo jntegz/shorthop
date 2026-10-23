@@ -1,12 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Copy, ExternalLink, Pencil, QrCode, Trash2 } from "lucide-react";
+import { ArrowLeft, Copy, ExternalLink, History, Pencil, QrCode, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router";
 import { toast } from "sonner";
 import type { Period } from "../../shared/types";
 import { api, call, keys } from "../api";
 import { Breakdown, ClicksChart, StatTiles } from "../components/Charts";
+import { useRestoreDeleted } from "../components/DeletedLinks";
 import { DestinationCheck } from "../components/DestinationCheck";
+import { LinkHistory } from "../components/LinkHistory";
 import { LinkForm } from "../components/LinkForm";
 import { PeriodPicker, periodQuery } from "../components/PeriodPicker";
 import { QrDialog } from "../components/QrDialog";
@@ -71,11 +73,17 @@ export function LinkDetail() {
     onError: (e) => toast.error(e.message),
   });
 
+  const undelete = useRestoreDeleted();
   const remove = useMutation({
     mutationFn: () => call(api.links[":domain"][":slug"].$delete({ param: { domain, slug } })),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: keys.allLinks });
-      toast.success(`${label} deleted`);
+      void qc.invalidateQueries({ queryKey: keys.deleted });
+      toast.success(`${label} deleted`, {
+        description: "You can bring it back from Recently deleted on the Links page.",
+        // This page is gone by then; the restored link reappears in the list.
+        action: { label: "Undo", onClick: () => undelete.mutate({ domain, slug }) },
+      });
       navigate("/links");
     },
     onError: (e) => toast.error(e.message),
@@ -153,6 +161,9 @@ export function LinkDetail() {
             </Button>
             <Button variant="outline" onClick={() => toggle.mutate(!link.active)} loading={toggle.isPending}>
               {link.active ? "Disable" : "Enable"}
+            </Button>
+            <Button variant="outline" onClick={() => document.getElementById("history")?.scrollIntoView({ behavior: "smooth" })}>
+              <History /> History
             </Button>
             <Button variant="ghost" size="icon" aria-label="Delete link" onClick={() => setConfirmDelete(true)}>
               <Trash2 />
@@ -269,6 +280,8 @@ export function LinkDetail() {
         )}
       </Card>
 
+      <LinkHistory link={link} />
+
       <LinkForm
         open={editing}
         onOpenChange={(o) => {
@@ -279,7 +292,7 @@ export function LinkDetail() {
         markBroken={markBroken}
       />
       <QrDialog open={qr} onOpenChange={setQr} shortUrl={link.shortUrl} label={label} />
-      <Dialog open={confirmDelete} onOpenChange={setConfirmDelete} title={`Delete ${label}?`} description="The short link stops working and its slug becomes free. Stats already collected stay in the rollups. To stop a link temporarily, disable it instead.">
+      <Dialog open={confirmDelete} onOpenChange={setConfirmDelete} title={`Delete ${label}?`} description="The short link stops working and its slug becomes free. Stats already collected stay in the rollups. You can restore it from Recently deleted for 90 days; to stop a link temporarily, disable it instead.">
         {dependents.data?.links.length ? (
           <div className="mb-4">
             <Notice tone="warn">

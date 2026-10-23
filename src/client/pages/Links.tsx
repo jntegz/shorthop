@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BarChart3, Copy, Download, Link2, Plus, Search, QrCode, X } from "lucide-react";
+import { ArchiveRestore, BarChart3, Copy, Download, Link2, Plus, Search, QrCode, X } from "lucide-react";
 import { lazy, Suspense, useDeferredValue, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { toast } from "sonner";
@@ -8,6 +8,7 @@ import { api, call, keys } from "../api";
 
 import { problemText } from "../../shared/link-check";
 import { CheckBadge } from "../components/CheckBadge";
+import { DeletedLinks } from "../components/DeletedLinks";
 import { DownloadButton } from "../components/DownloadButton";
 import { LinkForm } from "../components/LinkForm";
 import { Badge, Button, buttonClass, Card, Empty, Input, Notice, PageHeader, Pagination, Select, SortHeader, Spinner } from "../components/ui";
@@ -69,6 +70,7 @@ export function Links() {
   const size = parsePageSize(params.get("size")) ?? savedPageSize("links");
   const pageParam = Number(params.get("page") ?? 1);
   const [creating, setCreating] = useState(false);
+  const [showDeleted, setShowDeleted] = useState(false);
   const [qrLink, setQrLink] = useState<LinkListItem | null>(null);
   const urlSearch = params.get("q") ?? "";
   useEffect(() => setSearch(urlSearch), [urlSearch]);
@@ -128,6 +130,9 @@ export function Links() {
         description="Every destination, beautifully connected. Create, organize, and share."
         actions={
           <>
+            <Button variant="outline" onClick={() => setShowDeleted(true)}>
+              <ArchiveRestore /> Recently deleted
+            </Button>
             <DownloadButton href="/_admin/api/export/links.csv">
               <Download /> Export CSV
             </DownloadButton>
@@ -331,6 +336,7 @@ export function Links() {
 
       {qrLink && <Suspense fallback={<div role="status" className="fixed right-6 bottom-24 z-40 rounded-xl border border-line bg-surface p-4 text-sm shadow-lg">Preparing QR code…</div>}><QrDialog open onOpenChange={(open) => !open && setQrLink(null)} shortUrl={qrLink.shortUrl} label={label(qrLink)} /></Suspense>}
       <LinkForm open={creating} onOpenChange={setCreating} onSaved={(l) => navigate(linkPath(l))} />
+      <DeletedLinks open={showDeleted} onOpenChange={setShowDeleted} />
     </>
   );
 }

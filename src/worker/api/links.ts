@@ -1,6 +1,7 @@
 import { Hono, type Context } from "hono";
 import { linkKey } from "../../shared/domains";
-import { createLinkSchema, importSchema, linkParamSchema, listQuerySchema, resyncQuerySchema, updateLinkSchema } from "../../shared/schemas";
+import { sameSnapshot, snapshotOf, type Snapshot } from "../../shared/history";
+import { createLinkSchema, importSchema, linkParamSchema, versionParamSchema, listQuerySchema, resyncQuerySchema, updateLinkSchema } from "../../shared/schemas";
 import { isCheckProblem, type CheckStatus } from "../../shared/link-check";
 import { generateSlug, validateSlug } from "../../shared/slug";
 import { normalizeTarget, validateUtmTemplate } from "../../shared/target";
@@ -9,6 +10,7 @@ import { fullTokenScope, TOKEN_SCOPE_ERROR } from "../auth";
 import { getDefaultUtm, getLink, kvKey, nowSec, publish, toDTO, type LinkRow } from "../db";
 import { domainsOf, isConfiguredDomain, selfHosts, shortOrigin } from "../domains";
 import { csv, validate, type AppEnv } from "../hono";
+import { deletedLinks, getVersion, listVersions, SNAPSHOT_SQL, versionStmt } from "../history";
 import { clicksByLink } from "../stats-data";
 
 function isUniqueViolation(err: unknown): boolean {
@@ -21,6 +23,86 @@ function dto(c: Context<AppEnv>, row: LinkRow): LinkDTO {
 }
 
 const notConfigured = (domain: string) => `domain: "${domain}" is not one of your short domains (SHORT_DOMAINS).`;
+
+function insertStmt(db: D1Database, r: LinkRow): D1PreparedStatement {
+  return db
+    .prepare(
+      `INSERT INTO links (domain, slug, target, active, expires_at, utm, utm_template, pass_query, title, tags, notes, source, imported_clicks, broken, replacement, monitor, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(r.domain, r.slug, r.target, r.active, r.expires_at, r.utm, r.utm_template, r.pass_query, r.title, r.tags, r.notes, r.source, r.imported_clicks, r.broken, r.replacement, r.monitor, r.created_at, r.updated_at);
+}
+
+function updateStmt(db: D1Database, r: LinkRow): D1PreparedStatement {
+  return db
+    .prepare(
+      `UPDATE links SET target = ?, active = ?, expires_at = ?, utm = ?, utm_template = ?, pass_query = ?,
+       title = ?, tags = ?, notes = ?, broken = ?, replacement = ?, monitor = ?, updated_at = ? WHERE domain = ? AND slug = ? RETURNING *`,
+    )
+    .bind(r.target, r.active, r.expires_at, r.utm, r.utm_template, r.pass_query, r.title, r.tags, r.notes, r.broken, r.replacement, r.monitor, r.updated_at, r.domain, r.slug);
+}
+
+/** Publishes a saved link to KV; false when that failed (it's saved in D1 either way: answer 502 with the link). */
+async function published(env: Env, row: LinkRow): Promise<boolean> {
+  try {
+    await publishSaved(env, row);
+    return true;
+  } catch (err) {
+    console.error(JSON.stringify({ message: "kv publish failed", domain: row.domain, slug: row.slug, error: String(err) }));
+    return false;
+  }
+}
+
+/**
+ * Saves an edit of an existing link with its version, then publishes it.
+ * RETURNING: a link deleted since it was read must not be published back to KV.
+ */
+async function saveEdit(c: Context<AppEnv>, next: LinkRow, version: D1PreparedStatement | null) {
+  const [updated] = await c.env.DB.batch<LinkRow>([updateStmt(c.env.DB, next), ...(version ? [version] : [])]);
+  const saved = updated?.results[0];
+  if (!saved) return c.json({ error: "Link not found" }, 404);
+  if (!(await published(c.env, saved))) return c.json({ error: PUBLISH_FAILED, link: dto(c, saved) }, 502);
+  // A delete that ran between the update and the publish would leave a record
+  // for a link that's gone. Together with the delete's second KV pass, KV ends
+  // up matching D1 whichever way the two interleave.
+  if (!(await getLink(c.env.DB, saved.domain, saved.slug))) {
+    await c.env.LINKS.delete(kvKey(saved.domain, saved.slug));
+    return c.json({ error: "Link not found" }, 404);
+  }
+  return c.json({ link: dto(c, saved) });
+}
+
+/** A link with an older version's fields, saved now. */
+function withSnapshot(row: LinkRow, s: Snapshot, now = nowSec()): LinkRow {
+  return {
+    ...row,
+    target: s.target,
+    active: s.active,
+    expires_at: s.expires_at,
+    utm: s.utm,
+    utm_template: s.utm_template,
+    pass_query: s.pass_query,
+    title: s.title,
+    tags: s.tags,
+    notes: s.notes,
+    broken: s.broken,
+    replacement: s.replacement,
+    monitor: s.monitor ?? 1,
+    updated_at: now,
+  };
+}
+
+/** Rules may have tightened since a version was saved; a restore must still pass them. */
+function restoreProblem(c: Context<AppEnv>, r: LinkRow): string | null {
+  const target = normalizeTarget(r.target, { allowHttp: r.source === "import", selfHosts: selfHosts(c.env, c.req.raw) });
+  if (!target.ok) return `This version can't be restored: ${target.error}`;
+  if (r.utm_template) {
+    const err = validateUtmTemplate(r.utm_template);
+    if (err) return `This version can't be restored: utmTemplate: ${err}`;
+  }
+  if (r.replacement === linkKey(r.domain, r.slug)) return "This version can't be restored: a link can't replace itself.";
+  return null;
+}
 
 const PUBLISH_FAILED = "Saved, but publishing to KV failed. Run “Republish all links” in Settings.";
 
@@ -157,29 +239,7 @@ export const linksApi = new Hono<AppEnv>()
     for (let attempt = 0; attempt < (custom ? 1 : 5); attempt++) {
       const candidate: LinkRow = { slug: custom || generateSlug(6), ...base };
       try {
-        await c.env.DB.prepare(
-          `INSERT INTO links (domain, slug, target, active, expires_at, utm, utm_template, pass_query, title, tags, notes, source, imported_clicks, monitor, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        )
-          .bind(
-            candidate.domain,
-            candidate.slug,
-            candidate.target,
-            candidate.active,
-            candidate.expires_at,
-            candidate.utm,
-            candidate.utm_template,
-            candidate.pass_query,
-            candidate.title,
-            candidate.tags,
-            candidate.notes,
-            candidate.source,
-            candidate.imported_clicks,
-            candidate.monitor,
-            candidate.created_at,
-            candidate.updated_at,
-          )
-          .run();
+        await c.env.DB.batch([insertStmt(c.env.DB, candidate), versionStmt(c.env.DB, candidate, "create", c.get("identity"), { at: now })]);
         row = candidate;
         break;
       } catch (err) {
@@ -247,45 +307,8 @@ export const linksApi = new Hono<AppEnv>()
       next.replacement = r ? linkKey(r.domain, r.slug) : null;
     }
 
-    // RETURNING: a link deleted since the read above must not be published back to KV.
-    const saved = await c.env.DB.prepare(
-      `UPDATE links SET target = ?, active = ?, expires_at = ?, utm = ?, utm_template = ?, pass_query = ?,
-       title = ?, tags = ?, notes = ?, broken = ?, replacement = ?, monitor = ?, updated_at = ? WHERE domain = ? AND slug = ? RETURNING *`,
-    )
-      .bind(
-        next.target,
-        next.active,
-        next.expires_at,
-        next.utm,
-        next.utm_template,
-        next.pass_query,
-        next.title,
-        next.tags,
-        next.notes,
-        next.broken,
-        next.replacement,
-        next.monitor,
-        next.updated_at,
-        next.domain,
-        next.slug,
-      )
-      .first<LinkRow>();
-    if (!saved) return c.json({ error: "Link not found" }, 404);
-
-    try {
-      await publishSaved(c.env, saved);
-    } catch (err) {
-      console.error(JSON.stringify({ message: "kv publish failed", domain: saved.domain, slug: saved.slug, error: String(err) }));
-      return c.json({ error: PUBLISH_FAILED, link: dto(c, saved) }, 502);
-    }
-    // A delete that ran between the update and the publish would leave a record
-    // for a link that's gone. Together with the delete's second KV pass, KV ends
-    // up matching D1 whichever way the two interleave.
-    if (!(await getLink(c.env.DB, saved.domain, saved.slug))) {
-      await c.env.LINKS.delete(kvKey(saved.domain, saved.slug));
-      return c.json({ error: "Link not found" }, 404);
-    }
-    return c.json({ link: dto(c, saved) });
+    const changed = !sameSnapshot(snapshotOf(row), snapshotOf(next));
+    return saveEdit(c, next, changed ? versionStmt(c.env.DB, next, "update", c.get("identity"), { at: next.updated_at }) : null);
   })
 
   /** Links that point visitors to this one while marked "no longer working". */
@@ -303,10 +326,62 @@ export const linksApi = new Hono<AppEnv>()
     // KV first: if this fails the link still exists in D1 and the delete can be retried;
     // the other way round, a leftover KV record would keep redirecting.
     await c.env.LINKS.delete(kvKey(domain, slug));
-    await c.env.DB.prepare("DELETE FROM links WHERE domain = ? AND slug = ?").bind(domain, slug).run();
+    // The delete's version keeps the link as D1 holds it, so it can be restored.
+    await c.env.DB.batch([
+      c.env.DB.prepare(
+        `INSERT INTO link_versions (domain, slug, at, action, actor, snapshot)
+         SELECT domain, slug, ?1, 'delete', ?2, ${SNAPSHOT_SQL} FROM links WHERE domain = ?3 AND slug = ?4`,
+      ).bind(nowSec(), c.get("identity"), domain, slug),
+      c.env.DB.prepare("DELETE FROM links WHERE domain = ? AND slug = ?").bind(domain, slug),
+    ]);
     // Again, for an edit that published between the two steps above (its own check covers later ones).
     await c.env.LINKS.delete(kvKey(domain, slug));
     return c.json({ deleted: slug, domain });
+  })
+
+  .get("/links/:domain/:slug/history", validate("param", linkParamSchema), async (c) => {
+    const { domain, slug } = c.req.valid("param");
+    return c.json({ versions: await listVersions(c.env.DB, domain, slug) });
+  })
+
+  /** Puts a link back the way it was in an earlier version. */
+  .post("/links/:domain/:slug/history/:id/restore", validate("param", versionParamSchema), async (c) => {
+    const { domain, slug, id } = c.req.valid("param");
+    const [row, version] = await Promise.all([getLink(c.env.DB, domain, slug), getVersion(c.env.DB, domain, slug, id)]);
+    if (!row) return c.json({ error: "Link not found" }, 404);
+    if (!version || version.action === "delete") return c.json({ error: "That version doesn't exist." }, 404);
+    const next = withSnapshot(row, version.snapshot);
+    const invalid = restoreProblem(c, next);
+    if (invalid) return c.json({ error: invalid }, 400);
+    if (sameSnapshot(snapshotOf(row), snapshotOf(next))) return c.json({ error: "The link already matches this version." }, 409);
+    return saveEdit(c, next, versionStmt(c.env.DB, next, "restore", c.get("identity"), { at: next.updated_at, restoredFrom: id }));
+  })
+
+  .get("/deleted", async (c) => c.json({ links: await deletedLinks(c.env.DB) }))
+
+  /** Brings a deleted link back with its slug, settings and stats. */
+  .post("/deleted/:domain/:slug/restore", validate("param", linkParamSchema), async (c) => {
+    const { domain, slug } = c.req.valid("param");
+    const gone = (await deletedLinks(c.env.DB)).find((d) => d.domain === domain && d.slug === slug);
+    if (!gone) {
+      if (await getLink(c.env.DB, domain, slug)) return c.json({ error: `${linkKey(domain, slug)} is in use by another link now.` }, 409);
+      return c.json({ error: "That deleted link can't be restored anymore." }, 404);
+    }
+    const version = await getVersion(c.env.DB, domain, slug, gone.versionId);
+    if (!version) return c.json({ error: "That deleted link can't be restored anymore." }, 404);
+    const now = nowSec();
+    const s = version.snapshot;
+    const row = withSnapshot({ domain, slug, source: s.source, imported_clicks: s.imported_clicks, created_at: s.created_at } as LinkRow, s, now);
+    const invalid = restoreProblem(c, row);
+    if (invalid) return c.json({ error: invalid }, 400);
+    try {
+      await c.env.DB.batch([insertStmt(c.env.DB, row), versionStmt(c.env.DB, row, "restore", c.get("identity"), { at: now, restoredFrom: gone.versionId })]);
+    } catch (err) {
+      if (isUniqueViolation(err)) return c.json({ error: `${linkKey(domain, slug)} is in use by another link now.` }, 409);
+      throw err;
+    }
+    if (!(await published(c.env, row))) return c.json({ error: PUBLISH_FAILED, link: dto(c, row) }, 502);
+    return c.json({ link: dto(c, row) }, 201);
   })
 
   .get("/tags", async (c) => {
@@ -409,8 +484,9 @@ export const linksApi = new Hono<AppEnv>()
            imported_clicks = COALESCE(excluded.imported_clicks, links.imported_clicks), source = 'import',
            updated_at = excluded.updated_at`,
       );
-      await c.env.DB.batch(
-        valid.map((r) =>
+      const keysJson = JSON.stringify(valid.map((r) => [r.domain, r.slug]));
+      await c.env.DB.batch([
+        ...valid.map((r) =>
           stmt.bind(
             r.domain,
             r.slug,
@@ -429,13 +505,19 @@ export const linksApi = new Hono<AppEnv>()
             r.updated_at,
           ),
         ),
-      );
+        // A version per imported link, with what D1 now holds (an overwrite keeps the link's other settings).
+        c.env.DB.prepare(
+          `INSERT INTO link_versions (domain, slug, at, action, actor, snapshot)
+           SELECT domain, slug, ?1, 'import', ?2, ${SNAPSHOT_SQL} FROM links
+           WHERE (domain, slug) IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?3))`,
+        ).bind(now, c.get("identity"), keysJson),
+      ]);
       // Publish what D1 now holds (an overwrite keeps the link's other settings).
       const { results: saved } = await c.env.DB.prepare(
         `SELECT l.* FROM json_each(?1) j
          JOIN links l ON l.domain = json_extract(j.value, '$[0]') AND l.slug = json_extract(j.value, '$[1]')`,
       )
-        .bind(JSON.stringify(valid.map((r) => [r.domain, r.slug])))
+        .bind(keysJson)
         .all<LinkRow>();
       const defaultUtm = await getDefaultUtm(c.env.DB);
       const failed = new Set<string>();

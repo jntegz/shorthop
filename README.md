@@ -193,7 +193,7 @@ No. Shorthop is built on Workers, KV, D1 and Analytics Engine directly.
 
 ## Author
 
-Built by [Jan Tegze](https://jantegze.com).
+Built by [Jan Tegze](https://example.com).
 
 ## License
 

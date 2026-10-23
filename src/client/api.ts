@@ -96,5 +96,7 @@ export const keys = {
   settings: ["settings"] as const,
   health: ["settings", "health"] as const,
   checks: ["checks"] as const,
+  linkHistory: (domain: string, slug: string) => ["history", domain, slug] as const,
+  deleted: ["deleted"] as const,
   linkCheck: (domain: string, slug: string) => ["checks", domain, slug] as const,
 };

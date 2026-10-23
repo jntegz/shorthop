@@ -34,6 +34,13 @@ export function when(isoOrSec: string | number): string {
   return dateTime.format(d);
 }
 
+const dateTimeYear = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
+
+/** Unix seconds → "Dec 31, 2026, 11:00 PM": for moments that may be in another year. */
+export function whenFull(sec: number): string {
+  return dateTimeYear.format(new Date(sec * 1000));
+}
+
 const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
 
 export function ago(sec: number): string {

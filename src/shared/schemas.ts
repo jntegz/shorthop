@@ -93,6 +93,10 @@ export const linkParamSchema = z.object({
   slug: z.string().regex(IMPORT_SLUG_RE),
 });
 
+export const versionParamSchema = linkParamSchema.extend({
+  id: z.coerce.number().int().positive(),
+});
+
 export const resyncQuerySchema = z.object({
   /** Cursor from the previous page: "domain/slug". */
   after: z.string().max(400).optional(),
