@@ -7,6 +7,7 @@ import { api, call, keys } from "../api";
 import { Breakdown, ClicksChart, StatTiles } from "../components/Charts";
 import { DownloadButton } from "../components/DownloadButton";
 import { LinkForm } from "../components/LinkForm";
+import { includesToday, liveInterval, StatsFreshness } from "../components/StatsFreshness";
 import { PeriodPicker, periodParams, periodQuery } from "../components/PeriodPicker";
 import { SystemStatus } from "../components/SystemStatus";
 import { CHECK_STYLE } from "../components/CheckBadge";
@@ -39,7 +40,7 @@ export function Dashboard() {
   const [creating, setCreating] = useState(false);
   const navigate = useNavigate();
   const label = useLinkLabel();
-  const overview = useQuery({ queryKey: keys.overview(period), queryFn: () => call(api.stats.overview.$get({ query: periodQuery(period) })) });
+  const overview = useQuery({ queryKey: keys.overview(period), queryFn: () => call(api.stats.overview.$get({ query: periodQuery(period) })), refetchInterval: liveInterval(period) });
   const misses = useQuery({ queryKey: keys.misses({ range: "7d" }), queryFn: () => call(api.stats.misses.$get({ query: { range: "7d" } })) });
   const o = overview.data;
   const maxTop = Math.max(1, ...(o?.topLinks.map((l) => l.clicks) ?? [1]));
@@ -51,7 +52,10 @@ export function Dashboard() {
     <PageHeader title="A little link. A bigger picture." description="See where your links go, and who they bring closer."
       actions={<><Link to="/stats" className={buttonClass({ variant: "outline" })}><BarChart3 /> Full statistics</Link><DownloadButton href={`/_admin/api/stats/export.csv?${periodParams(period)}`} title="Export saved daily statistics (completed days)"><ArrowDownToLine /> Export</DownloadButton><Button onClick={() => setCreating(true)}><Plus /> Create link</Button></>} />
     <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-      <div className="flex items-center gap-2 text-xs text-muted"><CalendarDays className="size-4" />{o ? `${day(o.from)} – ${day(o.to)}` : "Your link performance"}<span className="rounded-md border border-line bg-surface px-1.5 py-0.5 text-[10px]">UTC</span></div>
+      <div className="space-y-1.5">
+        <div className="flex items-center gap-2 text-xs text-muted"><CalendarDays className="size-4" />{o ? `${day(o.from)} – ${day(o.to)}` : "Your link performance"}<span className="rounded-md border border-line bg-surface px-1.5 py-0.5 text-[10px]">UTC</span></div>
+        {o?.aeAvailable && includesToday(period) ? <StatsFreshness updatedAt={overview.dataUpdatedAt} fetching={overview.isFetching} onRefresh={() => void overview.refetch()} /> : null}
+      </div>
       <PeriodPicker value={period} onChange={setPeriod} />
     </div>
     {o && !o.aeAvailable && <div className="mb-5"><Notice tone="accent"><span className="font-medium">Showing saved analytics.</span> Today’s live data is not connected. <Link to="/settings#statistics" className="font-medium underline underline-offset-2">Review setup</Link></Notice></div>}

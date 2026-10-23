@@ -152,6 +152,13 @@ export const PROBE_HELP = h(
   "Scanner probe",
   "Automated scanners request paths like /.env, /wp-login.php or /config.json on every site, looking for leaked secrets or vulnerable software. They get the not-found page; nothing is exposed.",
 );
+export const STATS_HELP = {
+  live: h(
+    "When new clicks appear",
+    "Every click is recorded the moment it's redirected, but Cloudflare Analytics Engine makes new data searchable in batches, usually within a minute or two and occasionally later. While the period includes today, this page refreshes every minute as long as you're using it (it pauses after 10 minutes without a click or keypress, because the Free plan allows 10,000 Analytics Engine queries a day). Refresh checks right away. Completed days come from the daily rollup and don't change.",
+  ),
+} satisfies Record<string, Help>;
+
 export const CHECKS_HELP = {
   overview: h(
     "Destination checks",

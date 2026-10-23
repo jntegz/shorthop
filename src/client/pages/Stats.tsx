@@ -6,6 +6,7 @@ import type { Period } from "../../shared/types";
 import { api, call, keys } from "../api";
 import { Breakdown, ClicksChart, StatTiles } from "../components/Charts";
 import { DownloadButton } from "../components/DownloadButton";
+import { includesToday, liveInterval, StatsFreshness } from "../components/StatsFreshness";
 import { PeriodPicker, periodParams, periodQuery } from "../components/PeriodPicker";
 import { Badge, Card, CardHeader, Empty, Notice, PageHeader, Spinner } from "../components/ui";
 import { countryName, day, flag, hostOf, num, sourceLabel, when } from "../lib/format";
@@ -15,10 +16,11 @@ import { linkKey, linkPath, useLinkLabel } from "../lib/links";
 export function Stats() {
   const [period, setPeriod] = useState<Period>({ range: "30d" });
   const label = useLinkLabel();
-  const stats = useQuery({ queryKey: keys.account(period), queryFn: () => call(api.stats.account.$get({ query: periodQuery(period) })) });
+  const stats = useQuery({ queryKey: keys.account(period), queryFn: () => call(api.stats.account.$get({ query: periodQuery(period) })), refetchInterval: liveInterval(period) });
   const recent = useQuery({
     queryKey: keys.recent(),
     queryFn: () => call(api.stats.recent.$get({ query: { limit: "50" } })),
+    refetchInterval: liveInterval({ range: "7d" }),
   });
   const s = stats.data;
   const maxTop = Math.max(1, ...(s?.topLinks.map((l) => l.clicks) ?? [1]));
@@ -44,6 +46,17 @@ export function Stats() {
           <span className="rounded-md border border-line bg-surface px-1.5 py-0.5 text-[10px]">UTC</span>
         </div>
         <PeriodPicker value={period} onChange={setPeriod} />
+        {s?.aeAvailable && includesToday(period) ? (
+          <StatsFreshness
+            className="basis-full"
+            updatedAt={stats.dataUpdatedAt}
+            fetching={stats.isFetching || recent.isFetching}
+            onRefresh={() => {
+              void stats.refetch();
+              void recent.refetch();
+            }}
+          />
+        ) : null}
       </div>
 
       {s && !s.aeAvailable ? (

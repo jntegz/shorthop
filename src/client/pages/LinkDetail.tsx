@@ -12,6 +12,7 @@ import { DestinationCheck } from "../components/DestinationCheck";
 import { LinkHistory } from "../components/LinkHistory";
 import { RoutingResults } from "../components/RoutingResults";
 import { LinkForm } from "../components/LinkForm";
+import { includesToday, liveInterval, StatsFreshness } from "../components/StatsFreshness";
 import { PeriodPicker, periodQuery } from "../components/PeriodPicker";
 import { Badge, Button, Card, CardHeader, Dialog, Empty, Notice, PageHeader, Spinner } from "../components/ui";
 import { countryName, date, flag, num, sourceLabel, when } from "../lib/format";
@@ -67,6 +68,7 @@ export function LinkDetail() {
   const stats = useQuery({
     queryKey: keys.linkStats(domain, slug, period),
     queryFn: () => call(api.stats.links[":domain"][":slug"].$get({ param: { domain, slug }, query: periodQuery(period) })),
+    refetchInterval: liveInterval(period),
   });
   // Links pointing visitors here while marked "no longer working"; shown before a delete.
   const dependents = useQuery({
@@ -77,6 +79,7 @@ export function LinkDetail() {
   const recent = useQuery({
     queryKey: keys.recent(domain, slug),
     queryFn: () => call(api.stats.recent.$get({ query: { domain, slug, limit: "25" } })),
+    refetchInterval: liveInterval({ range: "7d" }),
   });
 
   const toggle = useMutation({
@@ -220,6 +223,17 @@ export function LinkDetail() {
       <div id="stats" className="mb-4 flex scroll-mt-6 flex-wrap items-center justify-between gap-2">
         <h2 className="text-base font-semibold text-fg">Statistics</h2>
         <PeriodPicker value={period} onChange={setPeriod} />
+        {stats.data?.aeAvailable && includesToday(period) ? (
+          <StatsFreshness
+            className="basis-full"
+            updatedAt={stats.dataUpdatedAt}
+            fetching={stats.isFetching || recent.isFetching}
+            onRefresh={() => {
+              void stats.refetch();
+              void recent.refetch();
+            }}
+          />
+        ) : null}
       </div>
 
       {s && !s.aeAvailable ? (
