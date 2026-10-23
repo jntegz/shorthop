@@ -8,8 +8,9 @@ import type { CheckSettings, TargetCheckDTO } from "../../shared/types";
 import { api, call, keys } from "../api";
 import { CHECK_STYLE, CheckBadge, STATE_ORDER } from "../components/CheckBadge";
 import { HealthTabs } from "../components/HealthTabs";
+import { StatsFreshness } from "../components/StatsFreshness";
 import { useSystemHealth } from "../components/SystemStatus";
-import { Button, buttonClass, Card, CardHeader, Dialog, Empty, Input, Notice, PageHeader, Pagination, SortHeader, Spinner, Switch } from "../components/ui";
+import { Button, buttonClass, Card, CardHeader, Dialog, Empty, InfoTip, Input, Notice, PageHeader, Pagination, SortHeader, Spinner, Switch } from "../components/ui";
 import { ago, hostOf, num } from "../lib/format";
 import { CHECKS_HELP } from "../lib/help";
 import { linkKey, linkPath, useLinkLabel } from "../lib/links";
@@ -371,12 +372,27 @@ export function Health() {
               );
             })}
           </div>
-          <p className="mb-6 text-xs text-muted" aria-live="polite">
-            {data.lastRun ? (data.lastRun.ok ? `Last scheduled run ${ago(data.lastRun.at)}` : `The last scheduled run failed ${ago(data.lastRun.at)}`) : "The first scheduled run starts within 30 minutes"}
-            {data.settings.enabled ? " · runs every 30 minutes" : " · scheduled checks are off"}
-            {data.excluded ? ` · ${num(data.excluded)} ${data.excluded === 1 ? "link has" : "links have"} checks turned off` : ""}
-            {checks.isFetching ? " · Updating…" : ""}
-          </p>
+          <div className="mb-6 space-y-1">
+            <StatsFreshness
+              updatedAt={checks.dataUpdatedAt}
+              fetching={checks.isFetching}
+              onRefresh={() => void checks.refetch()}
+              note={
+                <span>
+                  {data.lastRun ? (data.lastRun.ok ? `Last scheduled run ${ago(data.lastRun.at)}` : `The last scheduled run failed ${ago(data.lastRun.at)}`) : "The first scheduled run starts within 30 minutes"}
+                  {data.settings.enabled ? " · runs every 30 minutes" : " · scheduled checks are off"}
+                </span>
+              }
+            />
+            <p className="flex flex-wrap items-center gap-1 text-xs text-muted">
+              {data.settings.enabled
+                ? `Each working destination is checked about every ${data.intervalHours <= 12 ? "12 hours" : `${Math.round(data.intervalHours)} hours`}, at most ${data.perHostPerRun} pages of one site per run.`
+                : "Scheduled checks are off."}
+              {data.intervalHours > 12 ? " Spaced out because you have more destinations than twice-daily checks could cover." : ""}
+              {data.excluded ? ` ${num(data.excluded)} ${data.excluded === 1 ? "link has" : "links have"} checks turned off.` : ""}
+              <InfoTip help={CHECKS_HELP.limits} />
+            </p>
+          </div>
 
           <Card className="overflow-hidden">
             <CardHeader

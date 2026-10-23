@@ -1,6 +1,6 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { DOWN_AFTER_FAILS, isFetchableUrl, MAX_HOPS, nextRecord, type CheckOutcome } from "../src/shared/link-check";
+import { DOWN_AFTER_FAILS, isFetchableUrl, MAX_HOPS, nextRecord, OK_INTERVAL, okIntervalFor, spreadByHost, type CheckOutcome } from "../src/shared/link-check";
 import type { LinkChecksDTO, LinkListItem, TargetCheckDTO } from "../src/shared/types";
 import { systemHealth } from "../src/worker/health";
 import worker from "../src/worker/index";
@@ -98,6 +98,23 @@ describe("status model", () => {
     expect(nextRecord(down, ok, 50)).toMatchObject({ status: "ok", fails: 0, since: 50, lastOkAt: 50, notified: false });
     const blocked: CheckOutcome = { ...fail, kind: "blocked", httpStatus: 403, problem: "refused" };
     expect(nextRecord(nextRecord(null, blocked, 1), blocked, 2)).toMatchObject({ status: "blocked", fails: 0, since: 1 });
+  });
+});
+
+describe("guardrails for large collections", () => {
+  it("stretches the interval only when the schedule can't keep up", () => {
+    expect(okIntervalFor(100, 1200)).toBe(OK_INTERVAL); // 12 hours
+    expect(okIntervalFor(450, 1200)).toBe(OK_INTERVAL);
+    expect(okIntervalFor(1000, 1200)).toBe(27 * 3600); // about once a day, with room for retries
+    expect(okIntervalFor(5000, 1200)).toBe(134 * 3600);
+    const ok: CheckOutcome = { kind: "ok", httpStatus: 200, problem: null, finalUrl: null, hops: 0, ms: 5 };
+    expect(nextRecord(null, ok, 0, 27 * 3600).nextAt).toBe(27 * 3600);
+  });
+
+  it("checks at most a couple of pages of one site per run", () => {
+    const items = ["https://a.com/1", "https://www.a.com/2", "https://a.com/3", "https://b.com/1", "https://a.com/4", "https://c.com/"].map((target) => ({ target }));
+    expect(spreadByHost(items, 10, 2).map((i) => i.target)).toEqual(["https://a.com/1", "https://www.a.com/2", "https://b.com/1", "https://c.com/"]);
+    expect(spreadByHost(items, 2, 2)).toHaveLength(2);
   });
 });
 
@@ -222,6 +239,20 @@ describe("scheduled runs", () => {
     await runLinkChecks(mailEnv);
     expect(emails()).toHaveLength(2);
     expect(emails()[1]!.subject).toBe("Shorthop: a link works again");
+  });
+
+  it("spreads a site's many links over several runs", async () => {
+    for (let i = 0; i < 5; i++) {
+      routes[`https://big.example/p${i}`] = status(200);
+      await createLink(`big${i}`, `https://big.example/p${i}`);
+    }
+    routes["https://small.example/"] = status(200);
+    await createLink("small", "https://small.example/");
+    expect(await runLinkChecks(env)).toMatchObject({ checked: 3 });
+    const hosts = visited().map((v) => new URL(v.split(" ")[1]!).host);
+    expect(hosts.filter((h) => h === "big.example")).toHaveLength(2);
+    expect(hosts).toContain("small.example");
+    expect(await runLinkChecks(env)).toMatchObject({ checked: 2 });
   });
 
   it("does nothing while turned off, and forgets destinations no link uses", async () => {

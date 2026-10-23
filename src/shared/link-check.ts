@@ -54,21 +54,54 @@ export const MAX_HOPS = 5;
 /** Time budget for one destination, all redirects included. */
 export const CHECK_TIMEOUT_MS = 10_000;
 
-/** The next stored state after a check. */
-export function nextRecord(prev: CheckRecord | null, outcome: CheckOutcome, now: number): CheckRecord & { nextAt: number } {
+/** Checks of one site per scheduled run, so many links to one site don't look like an attack to it. */
+export const MAX_PER_HOST_PER_RUN = 2;
+
+/**
+ * How often a working destination is checked. Normally OK_INTERVAL; with more
+ * destinations than the schedule can cover that often, it stretches so the
+ * schedule never falls behind (a quarter of the capacity is kept for retries).
+ */
+export function okIntervalFor(destinations: number, capacityPerDay: number): number {
+  const needed = Math.ceil(((destinations / (capacityPerDay * 0.75)) * 86400) / HOUR) * HOUR;
+  return Math.max(OK_INTERVAL, needed);
+}
+
+/** Picks up to `limit` items in order, at most `perHost` per site. */
+export function spreadByHost<T extends { target: string }>(items: readonly T[], limit: number, perHost: number): T[] {
+  const counts = new Map<string, number>();
+  const out: T[] = [];
+  for (const item of items) {
+    if (out.length >= limit) break;
+    let host = "";
+    try {
+      host = new URL(item.target).hostname.replace(/^www\./, "");
+    } catch {
+      host = item.target;
+    }
+    const n = counts.get(host) ?? 0;
+    if (n >= perHost) continue;
+    counts.set(host, n + 1);
+    out.push(item);
+  }
+  return out;
+}
+
+/** The next stored state after a check. `okInterval` is how long a working destination waits (see okIntervalFor). */
+export function nextRecord(prev: CheckRecord | null, outcome: CheckOutcome, now: number, okInterval = OK_INTERVAL): CheckRecord & { nextAt: number } {
   let status: CheckStatus;
   let fails = 0;
   let nextAt: number;
   if (outcome.kind === "ok") {
     status = "ok";
-    nextAt = now + OK_INTERVAL;
+    nextAt = now + okInterval;
   } else if (outcome.kind === "blocked") {
     status = "blocked";
-    nextAt = now + BLOCKED_INTERVAL;
+    nextAt = now + Math.max(BLOCKED_INTERVAL, okInterval);
   } else {
     fails = (prev?.fails ?? 0) + 1;
     status = fails >= DOWN_AFTER_FAILS ? "down" : "warning";
-    nextAt = now + (RETRY_AFTER[fails - 1] ?? OK_INTERVAL);
+    nextAt = now + (RETRY_AFTER[fails - 1] ?? okInterval);
   }
   return {
     status,

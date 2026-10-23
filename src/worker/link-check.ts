@@ -20,7 +20,10 @@ import {
   isCheckProblem,
   isFetchableUrl,
   MAX_HOPS,
+  MAX_PER_HOST_PER_RUN,
   nextRecord,
+  okIntervalFor,
+  spreadByHost,
   problemText,
   STATE_LABEL,
   type CheckOutcome,
@@ -212,6 +215,13 @@ export interface CheckRunResult {
 }
 
 /** Checks the given targets (in order, within the budget) and stores the results. */
+/** Distinct destinations that are checked, and how often a working one is (stretched for large collections). */
+async function schedule(db: D1Database, now: number): Promise<{ destinations: number; okInterval: number }> {
+  const row = await db.prepare(`SELECT COUNT(DISTINCT url) AS n FROM link_destinations WHERE ${MONITORED("?1")}`).bind(now).first<{ n: number }>();
+  const destinations = row?.n ?? 0;
+  return { destinations, okInterval: okIntervalFor(destinations, RUNS_PER_DAY * RUN_LIMIT) };
+}
+
 async function checkAndStore(
   env: Env,
   items: { target: string; row: CheckRow | null }[],
@@ -219,6 +229,7 @@ async function checkAndStore(
   fetcher: typeof fetch,
 ): Promise<CheckRunResult> {
   const now = nowSec();
+  const { okInterval } = await schedule(env.DB, now);
   const queue = [...items];
   const results: { target: string; prev: CheckRow | null; outcome: CheckOutcome }[] = [];
   const worker = async () => {
@@ -240,7 +251,7 @@ async function checkAndStore(
        last_ok_at = excluded.last_ok_at, since = excluded.since, next_at = excluded.next_at, notified = excluded.notified`,
   );
   const writes = results.map(({ target, prev, outcome }) => {
-    const next = nextRecord(prev ? toRecord(prev) : null, outcome, now);
+    const next = nextRecord(prev ? toRecord(prev) : null, outcome, now, okInterval);
     if (next.status === "down" && !next.notified) newlyDown.push(target);
     if (prev?.notified === 1 && next.status === "ok") recovered.push(target);
     const jitter = next.status === "ok" || next.status === "blocked" ? Math.floor(Math.random() * JITTER_SEC) : 0;
@@ -296,7 +307,8 @@ export async function runLinkChecks(env: Env, opts: { budget?: Budget; fetcher?:
   const settings = await getCheckSettings(env.DB);
   if (!settings.enabled && !opts.force) return { checked: 0, remaining: 0, newlyDown: [], recovered: [], skipped: "Destination checks are turned off" };
   const budget = opts.budget ?? { left: RUN_BUDGET };
-  const due = await dueTargets(env.DB, nowSec(), RUN_LIMIT);
+  // Look further ahead than one run's worth, so a site with many links can't fill the run.
+  const due = spreadByHost(await dueTargets(env.DB, nowSec(), RUN_LIMIT * 4), RUN_LIMIT, MAX_PER_HOST_PER_RUN);
   const result = await checkAndStore(env, due, budget, opts.fetcher ?? fetch);
   await env.DB.prepare("DELETE FROM target_checks WHERE target NOT IN (SELECT url FROM link_destinations)").run();
   if (settings.notify) await notifyChanges(env);
@@ -305,7 +317,7 @@ export async function runLinkChecks(env: Env, opts: { budget?: Budget; fetcher?:
 
 /** "Check problems now": warnings, failures and never-checked targets, as far as one request's budget goes. */
 export async function recheckProblems(env: Env, fetcher: typeof fetch = fetch): Promise<CheckRunResult> {
-  const items = await dueTargets(env.DB, nowSec(), 200, "problems");
+  const items = spreadByHost(await dueTargets(env.DB, nowSec(), 200, "problems"), 200, MAX_PER_HOST_PER_RUN * 2);
   const result = await checkAndStore(env, items, { left: RUN_BUDGET }, fetcher);
   if ((await getCheckSettings(env.DB)).notify) await notifyChanges(env);
   return result;
@@ -445,7 +457,8 @@ export async function listChecks(env: Env): Promise<Omit<LinkChecksDTO, "lastRun
   }
   const items = [...grouped.entries()].map(([target, links]) => toDTO(target, byTarget.get(target), links));
   const overdue = items.filter((i) => i.nextAt !== null && i.nextAt < now - 3600).length + items.filter((i) => i.state === "unchecked").length;
-  return { settings, items, excluded: excluded?.n ?? 0, overdue, capacityPerDay: RUNS_PER_DAY * RUN_LIMIT };
+  const { okInterval } = await schedule(db, now);
+  return { settings, items, excluded: excluded?.n ?? 0, overdue, capacityPerDay: RUNS_PER_DAY * RUN_LIMIT, intervalHours: okInterval / 3600, perHostPerRun: MAX_PER_HOST_PER_RUN };
 }
 
 /** One link's checks (its target, and any smart-routing destinations), or why it isn't checked. */

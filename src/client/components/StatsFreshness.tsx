@@ -1,5 +1,5 @@
 import { RefreshCw } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { utcDate } from "../../shared/dates";
 import type { Period } from "../../shared/types";
 import { ago } from "../lib/format";
@@ -28,8 +28,20 @@ export function liveInterval(p: Period): (() => number | false) | false {
   return includesToday(p) ? () => (Date.now() - lastActive < IDLE_AFTER_MS ? LIVE_INTERVAL_MS : false) : false;
 }
 
-/** "Updated 20 seconds ago · New clicks take a minute or two to appear · Refresh". */
-export function StatsFreshness({ updatedAt, fetching, onRefresh, className }: { updatedAt: number; fetching: boolean; onRefresh: () => void; className?: string }) {
+/** "Updated 20 seconds ago · New clicks take a minute or two to appear · Refresh". `note` replaces the middle part (null hides it). */
+export function StatsFreshness({
+  updatedAt,
+  fetching,
+  onRefresh,
+  className,
+  note,
+}: {
+  updatedAt: number;
+  fetching: boolean;
+  onRefresh: () => void;
+  className?: string;
+  note?: ReactNode;
+}) {
   // Re-render now and then so "20 seconds ago" stays true.
   const [, tick] = useState(0);
   useEffect(() => {
@@ -40,11 +52,17 @@ export function StatsFreshness({ updatedAt, fetching, onRefresh, className }: { 
   return (
     <div className={cn("flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted", className)} aria-live="polite">
       <span>{fetching ? "Updating…" : `Updated ${ago(Math.floor(updatedAt / 1000))}`}</span>
-      <span aria-hidden>·</span>
-      <span className="inline-flex items-center gap-1">
-        New clicks take a minute or two to appear
-        <InfoTip help={STATS_HELP.live} />
-      </span>
+      {note === null ? null : (
+        <>
+          <span aria-hidden>·</span>
+          {note ?? (
+            <span className="inline-flex items-center gap-1">
+              New clicks take a minute or two to appear
+              <InfoTip help={STATS_HELP.live} />
+            </span>
+          )}
+        </>
+      )}
       <button
         type="button"
         onClick={onRefresh}

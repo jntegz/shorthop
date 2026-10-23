@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { LogOut, Mail, RefreshCw, Settings2 } from "lucide-react";
+import { BarChart3, Globe2, Link2, LogOut, Mail, Plug, RefreshCw, Settings2, ShieldCheck } from "lucide-react";
+import { useLocation, useNavigate } from "react-router";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { api, call, keys } from "../api";
@@ -8,12 +9,15 @@ import { DownloadButton } from "../components/DownloadButton";
 import { MailSetup } from "../components/MailSetup";
 import { DeadLinkEditor } from "../components/DeadLinkEditor";
 import { NotFoundEditor } from "../components/NotFoundEditor";
+import { AccessCard } from "../components/AccessCard";
+import { ApiCard } from "../components/ApiCard";
 import { UtmSettings } from "../components/UtmSettings";
 import { Webhooks } from "../components/Webhooks";
 import { ShortDomains } from "../components/ShortDomains";
 import { Badge, Button, Card, CardHeader, Dialog, Notice, PageHeader, Spinner } from "../components/ui";
 import { countryName, day, flag, num, when } from "../lib/format";
 import { SETTINGS_HELP } from "../lib/help";
+import { cn } from "../lib/utils";
 
 /** Republishes links to KV, page by page: all of them, or only those on the default UTM template. */
 async function resyncAll(onProgress: (n: number) => void, scope: "all" | "default-utm" = "all"): Promise<number> {
@@ -33,6 +37,75 @@ function span(from: string, to: string): string {
   return from === to ? day(from) : `${day(from)} – ${day(to)}`;
 }
 
+type SettingsTab = "general" | "links" | "reports" | "integrations" | "access";
+
+const TAB_LABELS: Record<SettingsTab, { label: string; icon: typeof Globe2 }> = {
+  general: { label: "General", icon: Globe2 },
+  links: { label: "Links", icon: Link2 },
+  reports: { label: "Statistics & email", icon: BarChart3 },
+  integrations: { label: "API & webhooks", icon: Plug },
+  access: { label: "Access & security", icon: ShieldCheck },
+};
+const TABS = Object.keys(TAB_LABELS) as SettingsTab[];
+
+/** Card anchors used across the admin, and the tab each lives on. */
+const TAB_OF: Record<string, SettingsTab> = {
+  ...Object.fromEntries(TABS.map((t) => [t, t])),
+  domains: "general",
+  publishing: "general",
+  exports: "general",
+  cloudflare: "general",
+  utm: "links",
+  "not-found": "links",
+  "dead-link": "links",
+  statistics: "reports",
+  digest: "reports",
+  api: "integrations",
+  webhooks: "integrations",
+  security: "access",
+};
+
+function SettingsTabs({ value, onChange }: { value: SettingsTab; onChange: (t: SettingsTab) => void }) {
+  // On a phone the bar scrolls sideways: keep the open tab in view.
+  useEffect(() => {
+    document.getElementById(`settings-tab-${value}`)?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [value]);
+  return (
+    <div role="tablist" aria-label="Settings sections" className="mb-6 flex gap-1 overflow-x-auto border-b border-line">
+      {TABS.map((t, i) => {
+        const { label, icon: Icon } = TAB_LABELS[t];
+        const on = t === value;
+        return (
+          <button
+            key={t}
+            id={`settings-tab-${t}`}
+            type="button"
+            role="tab"
+            aria-selected={on}
+            aria-controls={`settings-panel-${t}`}
+            tabIndex={on ? 0 : -1}
+            onClick={() => onChange(t)}
+            onKeyDown={(e) => {
+              const next = e.key === "ArrowRight" ? (i + 1) % TABS.length : e.key === "ArrowLeft" ? (i - 1 + TABS.length) % TABS.length : e.key === "Home" ? 0 : e.key === "End" ? TABS.length - 1 : -1;
+              if (next === -1) return;
+              e.preventDefault();
+              onChange(TABS[next]!);
+              requestAnimationFrame(() => document.getElementById(`settings-tab-${TABS[next]}`)?.focus());
+            }}
+            className={cn(
+              "-mb-px flex shrink-0 items-center gap-2 border-b-2 px-3 py-2.5 text-sm font-medium whitespace-nowrap transition-colors",
+              on ? "border-accent text-accent" : "border-transparent text-muted hover:text-fg",
+            )}
+          >
+            <Icon className="size-4" aria-hidden />
+            {label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export function Settings() {
   const qc = useQueryClient();
   const settings = useQuery({ queryKey: keys.settings, queryFn: () => call(api.settings.$get()) });
@@ -41,12 +114,15 @@ export function Settings() {
   const [confirmRevoke, setConfirmRevoke] = useState(false);
   const [mailSetup, setMailSetup] = useState(false);
 
-  // Scroll to #section once, when the page first has content.
-  const loaded = settings.isSuccess;
+  // The tab lives in the address (#links, #access…); a card's anchor (#digest) opens its tab and scrolls to it.
+  const { hash } = useLocation();
+  const navigate = useNavigate();
+  const anchor = hash.slice(1);
+  const tab: SettingsTab = TAB_OF[anchor] ?? "general";
+  const openTab = (t: SettingsTab) => navigate({ hash: t }, { replace: true });
   useEffect(() => {
-    const target = window.location.hash.slice(1);
-    if (loaded && target) requestAnimationFrame(() => document.getElementById(target)?.scrollIntoView());
-  }, [loaded]);
+    if (settings.data && anchor && !(anchor in TAB_LABELS)) requestAnimationFrame(() => document.getElementById(anchor)?.scrollIntoView());
+  }, [settings.data, anchor]);
 
   const runResync = async (scope: "all" | "default-utm" = "all") => {
     setResyncing(0);
@@ -121,195 +197,197 @@ export function Settings() {
   return (
     <>
       <PageHeader title="Make it yours" description="Fine-tune your links, reporting, and workspace." />
-      <div className="grid gap-5 lg:grid-cols-2">
-        <ShortDomains domains={s.domains} primary={s.primaryDomain} adminHost={s.adminHost} linksPerDomain={s.linksPerDomain} demo={s.demo} />
-        <CloudflareFeatures />
-        <UtmSettings key={s.defaultUtm} defaultUtm={s.defaultUtm} onSaveDefault={(t) => saveUtm.mutate(t)} saving={saveUtm.isPending || resyncing !== null} />
+      <SettingsTabs value={tab} onChange={openTab} />
+      <div role="tabpanel" id={`settings-panel-${tab}`} aria-labelledby={`settings-tab-${tab}`} className="grid gap-5 lg:grid-cols-2">
+        {tab === "general" ? (
+          <>
+            <ShortDomains domains={s.domains} primary={s.primaryDomain} adminHost={s.adminHost} linksPerDomain={s.linksPerDomain} demo={s.demo} />
+            <Card id="publishing" className="scroll-mt-6">
+              <CardHeader title="Publishing" description="Refresh your links across the global network if a recent change has not appeared." info={SETTINGS_HELP.publishing} />
+              <div className="px-5 pb-5">
+                <Button variant="outline" onClick={() => void runResync()} loading={resyncing !== null}>
+                  <RefreshCw /> {resyncing !== null ? `Republishing… ${num(resyncing)}` : "Republish all links"}
+                </Button>
+              </div>
+            </Card>
+            <Card id="exports" className="scroll-mt-6">
+              <CardHeader title="Exports" info={SETTINGS_HELP.exports} />
+              <div className="flex flex-wrap gap-2 px-5 pb-5">
+                <DownloadButton href="/_admin/api/export/links.csv">Links (CSV)</DownloadButton>
+                <DownloadButton href="/_admin/api/stats/export.csv?range=all">Daily stats per link (CSV)</DownloadButton>
+              </div>
+            </Card>
+            <CloudflareFeatures />
+          </>
+        ) : null}
+        {tab === "links" ? (
+          <>
+            <UtmSettings key={s.defaultUtm} defaultUtm={s.defaultUtm} onSaveDefault={(t) => saveUtm.mutate(t)} saving={saveUtm.isPending || resyncing !== null} />
+            <NotFoundEditor domain={s.primaryDomain} />
+            <DeadLinkEditor domain={s.primaryDomain} />
+          </>
+        ) : null}
+        {tab === "reports" ? (
+          <>
+            <Card id="statistics" className="scroll-mt-6">
+              <CardHeader title="Statistics" description="Daily summaries preserve your history after individual click records expire." info={SETTINGS_HELP.statistics} />
+              <div className="space-y-3 px-5 pb-5 text-sm">
+                <div className="flex items-center justify-between">
+                  <span className="text-muted">Analytics Engine queries</span>
+                  {s.aeAvailable ? <Badge tone="good">Configured</Badge> : <Badge tone="warn">Not configured</Badge>}
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-muted">Rolled up through</span>
+                  <span className="font-medium text-fg">{s.lastRolled ?? "never"}</span>
+                </div>
+                <p className="text-xs text-muted">
+                  {!s.aeAvailable
+                    ? "Running the rollup needs an analytics token: run npm run setup -- analytics."
+                    : s.rollupPending
+                      ? `Running it now saves ${s.rollupPending.days} finished ${s.rollupPending.days === 1 ? "day" : "days"} (${span(s.rollupPending.from, s.rollupPending.to)}, UTC) from Analytics Engine into the database. Today is saved tomorrow, once it is complete. Safe to repeat.`
+                      : "Every finished day is saved. Today is saved tomorrow, once it is complete. Nothing to do."}
+                </p>
+                <Button variant="outline" onClick={() => rollup.mutate()} loading={rollup.isPending} disabled={!s.aeAvailable}>
+                  Run rollup now
+                </Button>
+              </div>
+            </Card>
 
-        <Webhooks />
-
-        <NotFoundEditor domain={s.primaryDomain} />
-
-        <DeadLinkEditor domain={s.primaryDomain} />
-
-        <Card>
-          <CardHeader title="Publishing" description="Refresh your links across the global network if a recent change has not appeared." info={SETTINGS_HELP.publishing} />
-          <div className="px-5 pb-5">
-            <Button variant="outline" onClick={() => void runResync()} loading={resyncing !== null}>
-              <RefreshCw /> {resyncing !== null ? `Republishing… ${num(resyncing)}` : "Republish all links"}
-            </Button>
-          </div>
-        </Card>
-
-        <Card id="statistics" className="scroll-mt-6">
-          <CardHeader title="Statistics" description="Daily summaries preserve your history after individual click records expire." info={SETTINGS_HELP.statistics} />
-          <div className="space-y-3 px-5 pb-5 text-sm">
-            <div className="flex items-center justify-between">
-              <span className="text-muted">Analytics Engine queries</span>
-              {s.aeAvailable ? <Badge tone="good">Configured</Badge> : <Badge tone="warn">Not configured</Badge>}
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-muted">Rolled up through</span>
-              <span className="font-medium text-fg">{s.lastRolled ?? "never"}</span>
-            </div>
-            <p className="text-xs text-muted">
-              {!s.aeAvailable
-                ? "Running the rollup needs an analytics token: run npm run setup -- analytics."
-                : s.rollupPending
-                  ? `Running it now saves ${s.rollupPending.days} finished ${s.rollupPending.days === 1 ? "day" : "days"} (${span(s.rollupPending.from, s.rollupPending.to)}, UTC) from Analytics Engine into the database. Today is saved tomorrow, once it is complete. Safe to repeat.`
-                  : "Every finished day is saved. Today is saved tomorrow, once it is complete. Nothing to do."}
-            </p>
-            <Button variant="outline" onClick={() => rollup.mutate()} loading={rollup.isPending} disabled={!s.aeAvailable}>
-              Run rollup now
-            </Button>
-          </div>
-        </Card>
-
-        <Card>
-          <CardHeader title="Weekly digest" description="Sent Mondays at 07:00 UTC with last week’s top links." info={SETTINGS_HELP.digest} />
-          <div className="space-y-3 px-5 pb-5 text-sm">
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-muted">Recipient</span>
-              <span className="truncate font-medium text-fg">{s.digestTo}</span>
-            </div>
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-muted">Sent with</span>
-              <span className="flex items-center gap-2 font-medium text-fg">
-                {s.digestProvider}
-                {s.digestProblem ? <Badge tone="warn">Not ready</Badge> : <Badge tone="good">Ready</Badge>}
-              </span>
-            </div>
-            {s.digestProblem ? <Notice>{s.digestProblem}</Notice> : null}
-            <div className="flex items-center justify-between">
-              <span className="text-muted">Last sent</span>
-              <span className="font-medium text-fg">{s.lastDigestWeek ?? "never"}</span>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Button variant={s.digestProblem ? "primary" : "outline"} onClick={() => setMailSetup(true)}>
-                <Settings2 /> Set up email
-              </Button>
-              <Button variant="outline" onClick={() => loadPreview.mutate()} loading={loadPreview.isPending}>
-                Preview
-              </Button>
-              <Button variant="outline" onClick={() => sendTest.mutate()} loading={sendTest.isPending} disabled={s.digestProblem !== null}>
-                <Mail /> Send test
-              </Button>
-            </div>
-          </div>
-        </Card>
-
-        <Card>
-          <CardHeader title="Exports" info={SETTINGS_HELP.exports} />
-          <div className="flex flex-wrap gap-2 px-5 pb-5">
-            <DownloadButton href="/_admin/api/export/links.csv">Links (CSV)</DownloadButton>
-            <DownloadButton href="/_admin/api/stats/export.csv?range=all">Daily stats per link (CSV)</DownloadButton>
-          </div>
-        </Card>
-
-        {security ? (
-          <Card className="lg:col-span-2">
-            <CardHeader
-              title="Security"
-              description={
-                security.mode === "password"
-                  ? "Your admin password is the only lock: Cloudflare Access is off."
-                  : "Cloudflare Access checks who you are; your admin password confirms it."
-              }
-              info={SETTINGS_HELP.security}
-            />
-            <div className="grid gap-6 px-5 pb-5 text-sm md:grid-cols-2">
-              <div className="space-y-3">
-                {!security.passwordConfigured ? (
-                  <Notice>
-                    No admin password is set, so localhost opens without one. The deployed admin stays closed until ADMIN_PASSWORD_HASH is set. To try the login
-                    here: run <span className="font-mono text-xs">npm run setup -- local</span> (or{" "}
-                    <span className="font-mono text-xs">npx tsx scripts/hash-password.ts --generate</span> and add{" "}
-                    <span className="font-mono text-xs">ADMIN_PASSWORD_HASH=…</span> and <span className="font-mono text-xs">SESSION_SECRET=…</span> to .dev.vars), then
-                    restart npm run dev.
-                  </Notice>
-                ) : null}
-                {security.globalLockedUntil ? (
-                  <Notice tone="danger">All logins are paused until {when(security.globalLockedUntil)} after many failed attempts.</Notice>
-                ) : null}
+            <Card id="digest" className="scroll-mt-6">
+              <CardHeader title="Weekly digest" description="Sent Mondays at 07:00 UTC with last week’s top links." info={SETTINGS_HELP.digest} />
+              <div className="space-y-3 px-5 pb-5 text-sm">
                 <div className="flex items-center justify-between gap-3">
-                  <span className="text-muted">Sign-in</span>
-                  {security.mode === "password" ? (
-                    <Badge tone="warn">Cloudflare Access off</Badge>
-                  ) : (
-                    <span className="font-medium text-fg">Cloudflare Access + password</span>
-                  )}
+                  <span className="text-muted">Recipient</span>
+                  <span className="truncate font-medium text-fg">{s.digestTo}</span>
                 </div>
-                {security.mode === "password" ? (
-                  <Notice>
-                    Anyone who finds this page can try passwords, slowed only by the lockout. Use a long, random password and add the rate-limit rule from
-                    SECURITY.md, or turn Access on with <span className="font-mono text-xs">npm run setup -- access</span>.
-                    {security.accessConfigured ? " Access settings are filled in, but ignored while ADMIN_AUTH is \"password\"." : null}
-                  </Notice>
-                ) : null}
                 <div className="flex items-center justify-between gap-3">
-                  <span className="text-muted">Signed in as</span>
-                  <span className="truncate font-medium text-fg">{security.email}</span>
+                  <span className="text-muted">Sent with</span>
+                  <span className="flex items-center gap-2 font-medium text-fg">
+                    {s.digestProvider}
+                    {s.digestProblem ? <Badge tone="warn">Not ready</Badge> : <Badge tone="good">Ready</Badge>}
+                  </span>
                 </div>
+                {s.digestProblem ? <Notice>{s.digestProblem}</Notice> : null}
                 <div className="flex items-center justify-between">
-                  <span className="text-muted">Session ends</span>
-                  <span className="font-medium text-fg">{security.sessionExpiresAt ? when(security.sessionExpiresAt) : "—"}</span>
+                  <span className="text-muted">Last sent</span>
+                  <span className="font-medium text-fg">{s.lastDigestWeek ?? "never"}</span>
                 </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-muted">Failed logins (24 h)</span>
-                  {security.failedLogins24h ? <Badge tone="warn">{num(security.failedLogins24h)}</Badge> : <span className="font-medium text-fg">0</span>}
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-muted">Locked networks</span>
-                  <span className="font-medium text-fg">{num(security.lockedNetworks)}</span>
-                </div>
-                <div className="flex flex-wrap gap-2 pt-1">
-                  <form method="post" action="/_admin/logout">
-                    <Button type="submit" variant="outline">
-                      <LogOut /> Log out
-                    </Button>
-                  </form>
-                  <Button variant="outline" onClick={() => setConfirmRevoke(true)} disabled={!security.passwordConfigured}>
-                    Log out everywhere
+                <div className="flex flex-wrap gap-2">
+                  <Button variant={s.digestProblem ? "primary" : "outline"} onClick={() => setMailSetup(true)}>
+                    <Settings2 /> Set up email
+                  </Button>
+                  <Button variant="outline" onClick={() => loadPreview.mutate()} loading={loadPreview.isPending}>
+                    Preview
+                  </Button>
+                  <Button variant="outline" onClick={() => sendTest.mutate()} loading={sendTest.isPending} disabled={s.digestProblem !== null}>
+                    <Mail /> Send test
                   </Button>
                 </div>
               </div>
-              <div>
-                <p className="mb-2 text-xs font-medium text-muted">Recent logins</p>
-                {security.recent.length ? (
-                  <ul className="space-y-1.5">
-                    {security.recent.map((e, i) => (
-                      <li key={`${e.at}-${i}`} className="flex items-center gap-2">
-                        {e.ok ? <Badge tone="good">Success</Badge> : <Badge tone="danger">Failed</Badge>}
-                        <span className="text-muted">{when(e.at)}</span>
-                        <span className="ml-auto truncate text-xs text-muted">
-                          {e.country ? `${flag(e.country)} ${countryName(e.country)}` : "Unknown"}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="text-muted">No logins recorded yet.</p>
-                )}
-              </div>
-            </div>
-          </Card>
-        ) : null}
+            </Card>
 
-        <Card className="lg:col-span-2">
-          <CardHeader title="API and iOS Shortcut" description="Scripts use the API token (Worker secret API_TOKEN), not this browser session." info={SETTINGS_HELP.api} />
-          <div className="space-y-3 px-5 pb-5 text-sm text-muted">
-            <p>Create a link from a terminal:</p>
-            <pre className="overflow-x-auto rounded-lg bg-surface-2 p-3 font-mono text-xs text-fg">{`curl -X POST "${origin}/api/links?format=text" \\
-  -H "Authorization: Bearer $SHORTHOP_TOKEN" \\
-  -H "Content-Type: application/json" \\
-  -d '{"url":"https://example.com/new-post","slug":"new-post"}'`}</pre>
-            <p>
-              iOS Shortcut: <strong className="text-fg">Get Contents of URL</strong> → POST to <code className="text-fg">{origin}/api/links?format=text</code> with
-              headers <code className="text-fg">Authorization: Bearer …</code> and a JSON body <code className="text-fg">{"{ url: Shortcut Input }"}</code>, then
-              <strong className="text-fg"> Copy to Clipboard</strong>. Full steps are in docs/ios-shortcut.md.
-            </p>
-          </div>
-        </Card>
+          </>
+        ) : null}
+        {tab === "integrations" ? (
+          <>
+            <ApiCard origin={origin} tokenSet={s.apiTokenSet} tokenScope={s.tokenScope} />
+            <Webhooks />
+          </>
+        ) : null}
+        {tab === "access" ? (
+          <>
+            {security?.mode !== "password" ? <AccessCard admins={s.admins} me={security?.email ?? ""} /> : null}
+            {security ? (
+              <Card id="security" className="scroll-mt-6 lg:col-span-2">
+                <CardHeader
+                  title="Security"
+                  description={
+                    security.mode === "password"
+                      ? "Your admin password is the only lock: Cloudflare Access is off."
+                      : "Cloudflare Access checks who you are; your admin password confirms it."
+                  }
+                  info={SETTINGS_HELP.security}
+                />
+                <div className="grid gap-6 px-5 pb-5 text-sm md:grid-cols-2">
+                  <div className="space-y-3">
+                    {!security.passwordConfigured ? (
+                      <Notice>
+                        No admin password is set, so localhost opens without one. The deployed admin stays closed until ADMIN_PASSWORD_HASH is set. To try the login
+                        here: run <span className="font-mono text-xs">npm run setup -- local</span> (or{" "}
+                        <span className="font-mono text-xs">npx tsx scripts/hash-password.ts --generate</span> and add{" "}
+                        <span className="font-mono text-xs">ADMIN_PASSWORD_HASH=…</span> and <span className="font-mono text-xs">SESSION_SECRET=…</span> to .dev.vars), then
+                        restart npm run dev.
+                      </Notice>
+                    ) : null}
+                    {security.globalLockedUntil ? (
+                      <Notice tone="danger">All logins are paused until {when(security.globalLockedUntil)} after many failed attempts.</Notice>
+                    ) : null}
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-muted">Sign-in</span>
+                      {security.mode === "password" ? (
+                        <Badge tone="warn">Cloudflare Access off</Badge>
+                      ) : (
+                        <span className="font-medium text-fg">Cloudflare Access + password</span>
+                      )}
+                    </div>
+                    {security.mode === "password" ? (
+                      <Notice>
+                        Anyone who finds this page can try passwords, slowed only by the lockout. Use a long, random password and add the rate-limit rule from
+                        SECURITY.md, or turn Access on with <span className="font-mono text-xs">npm run setup -- access</span>.
+                        {security.accessConfigured ? " Access settings are filled in, but ignored while ADMIN_AUTH is \"password\"." : null}
+                      </Notice>
+                    ) : null}
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-muted">Signed in as</span>
+                      <span className="truncate font-medium text-fg">{security.email}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-muted">Session ends</span>
+                      <span className="font-medium text-fg">{security.sessionExpiresAt ? when(security.sessionExpiresAt) : "—"}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-muted">Failed logins (24 h)</span>
+                      {security.failedLogins24h ? <Badge tone="warn">{num(security.failedLogins24h)}</Badge> : <span className="font-medium text-fg">0</span>}
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-muted">Locked networks</span>
+                      <span className="font-medium text-fg">{num(security.lockedNetworks)}</span>
+                    </div>
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      <form method="post" action="/_admin/logout">
+                        <Button type="submit" variant="outline">
+                          <LogOut /> Log out
+                        </Button>
+                      </form>
+                      <Button variant="outline" onClick={() => setConfirmRevoke(true)} disabled={!security.passwordConfigured}>
+                        Log out everywhere
+                      </Button>
+                    </div>
+                  </div>
+                  <div>
+                    <p className="mb-2 text-xs font-medium text-muted">Recent logins</p>
+                    {security.recent.length ? (
+                      <ul className="space-y-1.5">
+                        {security.recent.map((e, i) => (
+                          <li key={`${e.at}-${i}`} className="flex items-center gap-2">
+                            {e.ok ? <Badge tone="good">Success</Badge> : <Badge tone="danger">Failed</Badge>}
+                            <span className="text-muted">{when(e.at)}</span>
+                            <span className="ml-auto truncate text-xs text-muted">
+                              {e.country ? `${flag(e.country)} ${countryName(e.country)}` : "Unknown"}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="text-muted">No logins recorded yet.</p>
+                    )}
+                  </div>
+                </div>
+              </Card>
+            ) : null}
+
+          </>
+        ) : null}
       </div>
 
       <Dialog

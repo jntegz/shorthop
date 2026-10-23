@@ -224,6 +224,8 @@ describe("API", () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
       new Response(null, { status: String(input).includes("cz-b") ? 404 : 200 }),
     );
+    // Three pages of example.com: the per-site limit spreads them over two runs.
+    await runLinkChecks(env);
     await runLinkChecks(env);
     const fetched = fetchMock.mock.calls.map(([u]) => String(u));
     for (const u of ["https://example.com/app", "https://apps.apple.com/app/x", "https://example.com/cz-a", "https://example.com/cz-b"]) expect(fetched).toContain(u);

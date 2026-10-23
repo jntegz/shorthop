@@ -97,6 +97,10 @@ export interface LinkChecksDTO {
   overdue: number;
   /** Most destinations the schedule can check in a day. */
   capacityPerDay: number;
+  /** How often a working destination is checked, in hours (longer than 12 for large collections). */
+  intervalHours: number;
+  /** Most checks of one site in one scheduled run. */
+  perHostPerRun: number;
   lastRun: JobRun | null;
 }
 
@@ -459,6 +463,12 @@ export interface SettingsDTO {
   linksPerDomain: Record<string, number>;
   /** Sample data from `npm run seed:dev`, or null. */
   demo: DemoDTO | null;
+  /** Who may sign in to the admin (ADMIN_EMAIL), lowercased. */
+  admins: string[];
+  /** Whether the API token secret is set (never its value). */
+  apiTokenSet: boolean;
+  /** What the API token may do: "create" (read, create links, import) or "full". */
+  tokenScope: "create" | "full";
   /** Null for the API token, which doesn't see login activity. */
   security: SecurityDTO | null;
 }

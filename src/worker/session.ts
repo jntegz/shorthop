@@ -260,7 +260,7 @@ export async function securitySummary(db: D1Database, now: number): Promise<Secu
     db.prepare("SELECT COUNT(*) AS n FROM login_events WHERE ok = 0 AND ts >= ?").bind(now - 86400),
     db.prepare("SELECT COUNT(*) AS n FROM auth_failures WHERE key != ?1 AND key NOT LIKE 'api:%' AND locked_until > ?2").bind(GLOBAL_KEY, now),
     db.prepare("SELECT locked_until FROM auth_failures WHERE key = ?1 AND locked_until > ?2").bind(GLOBAL_KEY, now),
-    db.prepare("SELECT ts, ok, country FROM login_events ORDER BY ts DESC LIMIT 8"),
+    db.prepare("SELECT ts, ok, country FROM login_events ORDER BY ts DESC LIMIT 10"),
   ]);
   const until = Number(global?.results[0]?.locked_until ?? 0);
   return {

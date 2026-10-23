@@ -168,6 +168,10 @@ export const CHECKS_HELP = {
     "What each state means",
     `Working: the last check loaded the page (HTTP 2xx, after any redirects). Problem, confirming: it failed once or twice; one bad check can be a short outage, so it's rechecked sooner. Not working: ${DOWN_AFTER_FAILS} failures in a row, usually over about 5 hours; you get one email. Can't check: the site answered but refused an automated visitor (HTTP 401, 403, 429, LinkedIn's 999, or a Cloudflare challenge). People can usually still open it; it's rechecked every ${duration(BLOCKED_INTERVAL)} and never alerts.`,
   ),
+  limits: h(
+    "Limits that keep checks cheap and polite",
+    `Checks run on a schedule, never on a visitor's click, so they can't slow down or block your links or the API. Each half-hourly run checks at most 25 destinations and makes at most 40 outbound requests (the Free plan allows 50 per run). Links sharing a destination are checked once. At most 2 pages of one site are checked per run, so a site with hundreds of your links (LinkedIn, Amazon) isn't hammered and doesn't block the checker. With more destinations than twice-daily checks can cover (about 450), working ones are checked less often instead of falling behind: about daily at 1,000, about every 5 days at 5,000. The cost on Cloudflare is small: 48 Worker runs a day, about 1,200 database writes and a few thousand row reads per run, all inside the Free plan.`,
+  ),
   email: h(
     "Email alerts",
     "One email when destinations become “not working”, listing every link that uses them, and one when they work again. Nothing is repeated while a destination stays down. Alerts use the same email setup as the weekly digest, and the digest lists destinations that are still down.",

@@ -7,7 +7,7 @@ import { validateUtmTemplate } from "../../shared/target";
 import type { MailSetupDTO, PurgeDomainDTO, SettingsDTO } from "../../shared/types";
 import { aeAvailable } from "../ae";
 import { readCapped } from "../body";
-import { accessConfigured, adminAuthMode } from "../auth";
+import { accessConfigured, adminAuthMode, fullTokenScope } from "../auth";
 import { getDefaultUtm, getSetting, nowSec, setSettingStmt } from "../db";
 import { getDeadLinkPage, saveDeadLinkSettings } from "../dead-link";
 import { digestData, renderDigest, runDigest } from "../digest";
@@ -54,6 +54,9 @@ export const settingsApi = new Hono<AppEnv>()
       adminHost,
       linksPerDomain: Object.fromEntries(perDomain.results.map((r) => [r.domain, r.n])),
       demo,
+      admins: c.env.ADMIN_EMAIL.split(",").map((e) => e.trim().toLowerCase()).filter(Boolean),
+      apiTokenSet: (c.env.API_TOKEN ?? "").length >= 16,
+      tokenScope: fullTokenScope(c.env) ? ("full" as const) : ("create" as const),
       aeAvailable: aeAvailable(c.env),
       lastRolled,
       rollupPending,
