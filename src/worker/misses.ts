@@ -4,7 +4,7 @@
 import { addDays, utcDate } from "../shared/dates";
 import { linkKey } from "../shared/domains";
 import { isProbePath, isRoutableSlug } from "../shared/slug";
-import { DEFAULT_MISS_POLICY, MISS_RETENTION_DAYS, NOISE_LIMITS, REAL_MISS_LIMITS, type MissPolicy } from "../shared/types";
+import { DEFAULT_MISS_POLICY, MISS_RETENTION_DAYS, NOISE_LIMITS, REAL_MISS_LIMITS, type MissKind, type MissPolicy } from "../shared/types";
 import { isQueryableMiss, type MissCutoffs } from "./ae";
 import { getSetting, jsonChunks, setSettingStmt } from "./db";
 
@@ -19,12 +19,27 @@ export function resetMissPolicyCache(): void {
   linkLookups.clear();
 }
 
+/** The policy as saved before probes and bot-only misses had their own settings. */
+interface LegacyPolicy {
+  trackNoise?: boolean;
+  noiseLimit?: number;
+}
+
 function parsePolicy(raw: string | null): MissPolicy {
   try {
-    const v = { ...DEFAULT_MISS_POLICY, ...(JSON.parse(raw ?? "{}") as Partial<MissPolicy>) };
+    const stored = JSON.parse(raw ?? "{}") as Partial<MissPolicy> & LegacyPolicy;
+    const legacy: Partial<MissPolicy> =
+      stored.trackNoise === undefined
+        ? {}
+        : { trackProbes: stored.trackNoise, trackBots: stored.trackNoise, probeLimit: stored.noiseLimit as MissPolicy["probeLimit"], botLimit: stored.noiseLimit as MissPolicy["botLimit"] };
+    const v = { ...DEFAULT_MISS_POLICY, ...legacy, ...stored };
+    const limit = (n: unknown, fallback: MissPolicy["probeLimit"]) => ((NOISE_LIMITS as readonly unknown[]).includes(n) ? (n as MissPolicy["probeLimit"]) : fallback);
     return {
-      trackNoise: v.trackNoise === true,
-      noiseLimit: (NOISE_LIMITS as readonly number[]).includes(v.noiseLimit) ? v.noiseLimit : DEFAULT_MISS_POLICY.noiseLimit,
+      trackHumans: v.trackHumans !== false,
+      trackProbes: v.trackProbes === true,
+      trackBots: v.trackBots === true,
+      probeLimit: limit(v.probeLimit, DEFAULT_MISS_POLICY.probeLimit),
+      botLimit: limit(v.botLimit, DEFAULT_MISS_POLICY.botLimit),
       retentionDays: (MISS_RETENTION_DAYS as readonly number[]).includes(v.retentionDays) ? v.retentionDays : DEFAULT_MISS_POLICY.retentionDays,
       realLimit: (REAL_MISS_LIMITS as readonly number[]).includes(v.realLimit) ? v.realLimit : DEFAULT_MISS_POLICY.realLimit,
     };
@@ -75,9 +90,36 @@ export async function hasLinkIgnoringCase(db: D1Database, domain: string, slug: 
   return row !== null;
 }
 
+/** A scanner probe (a probe-looking path no link matches), else bot-only (no human hits), else human. */
+export function missKind(slug: string, hits: number, hasLink: boolean): MissKind {
+  if (!hasLink && isProbePath(slug)) return "probe";
+  return hits === 0 ? "bot" : "human";
+}
+
 /** Noise: a path only bots asked for, or a scanner probe that isn't a real link. */
 export function isNoise(slug: string, hits: number, hasLink: boolean): boolean {
-  return hits === 0 || (!hasLink && isProbePath(slug));
+  return missKind(slug, hits, hasLink) !== "human";
+}
+
+/** Whether the policy tracks a kind, and how many of its most recent paths it keeps (0: all). */
+export function kindLimit(policy: MissPolicy, kind: MissKind): { tracked: boolean; limit: number } {
+  if (kind === "probe") return { tracked: policy.trackProbes, limit: policy.probeLimit };
+  if (kind === "bot") return { tracked: policy.trackBots, limit: policy.botLimit };
+  return { tracked: policy.trackHumans, limit: policy.realLimit };
+}
+
+/** The paths of `rows` a policy keeps: tracked kinds only, each kind's most recent up to its limit. */
+export function keptByPolicy<T extends { last: string; hits: number; bots: number }>(policy: MissPolicy, rows: T[], kindOf: (r: T) => MissKind): { kept: T[]; dropped: T[] } {
+  const kept: T[] = [];
+  const dropped: T[] = [];
+  for (const kind of ["human", "probe", "bot"] as const) {
+    const { tracked, limit } = kindLimit(policy, kind);
+    const list = rows.filter((r) => kindOf(r) === kind).sort(byRecent);
+    const keep = !tracked ? 0 : limit || list.length;
+    kept.push(...list.slice(0, keep));
+    dropped.push(...list.slice(keep));
+  }
+  return { kept, dropped };
 }
 
 /** Most recently seen first, then the busiest: the order limits keep paths in. */
@@ -151,10 +193,7 @@ export async function pruneMisses(env: Env, policy: MissPolicy | null, now = new
   ]);
   if (cleared.probes !== null) await deleteProbesThrough(db, cleared.probes);
   if (!policy) return 0;
-  const results = await storedMissPaths(db);
-  const noise = results.filter((r) => isNoise(r.slug, r.hits, r.has_link === 1)).sort(byRecent);
-  const real = results.filter((r) => !isNoise(r.slug, r.hits, r.has_link === 1)).sort(byRecent);
-  const drop = [...noise.slice(policy.trackNoise ? policy.noiseLimit : 0), ...(policy.realLimit ? real.slice(policy.realLimit) : [])];
+  const { dropped: drop } = keptByPolicy(policy, await storedMissPaths(db), (r) => missKind(r.slug, r.hits, r.has_link === 1));
   if (drop.length) await db.batch(deleteMissStmts(db, drop));
   return drop.length;
 }

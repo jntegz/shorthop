@@ -379,15 +379,6 @@ export function PageHeader({ title, description, actions }: { title: ReactNode; 
   );
 }
 
-export const RANGE_OPTIONS = [
-  { value: "today", label: "Today" },
-  { value: "7d", label: "7 days" },
-  { value: "30d", label: "30 days" },
-  { value: "90d", label: "90 days" },
-  { value: "365d", label: "1 year" },
-  { value: "all", label: "All" },
-] as const;
-
 /** A column header that sorts the table: click to sort by it, click again to flip the order. */
 export function SortHeader({ label, active, dir, onSort, className }: { label: string; active: boolean; dir: SortDir; onSort: () => void; className?: string }) {
   const Icon = !active ? ArrowUpDown : dir === "asc" ? ArrowUp : ArrowDown;

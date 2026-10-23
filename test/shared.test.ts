@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { addDays, isoWeek, rangeBounds } from "../src/shared/dates";
+import { addDays, isDay, isoWeek, periodBounds, rangeBounds } from "../src/shared/dates";
+import { DEFAULT_DEAD_LINK, normalizeDeadLink, renderDeadLink } from "../src/shared/dead-link";
+import { DEFAULT_NOT_FOUND } from "../src/shared/not-found";
 import { normalizeTags } from "../src/shared/schemas";
 import { generateSlug, isProbePath, isRoutableSlug, validateSlug } from "../src/shared/slug";
 import { buildLocation, normalizeTarget, renderUtm, splitOwnParams, validateUtmTemplate } from "../src/shared/target";
@@ -125,6 +127,12 @@ describe("misc helpers", () => {
   it("computes date ranges and ISO weeks", () => {
     expect(addDays("2026-12-31", 1)).toBe("2027-01-01");
     expect(rangeBounds("7d", new Date("2026-10-19T12:00:00Z"))).toEqual({ from: "2026-10-13", to: "2026-10-19" });
+    const now = new Date("2026-10-19T12:00:00Z");
+    expect(periodBounds({ range: "270d" }, now)).toEqual({ from: "2026-01-23", to: "2026-10-19" });
+    expect(periodBounds({ range: "custom", from: "2024-01-01", to: "2030-01-01" }, now)).toEqual({ from: "2024-01-01", to: "2026-10-19" });
+    expect(periodBounds({ range: "custom", from: "2027-01-01", to: "2027-02-01" }, now)).toEqual({ from: "2026-10-19", to: "2026-10-19" });
+    expect(isDay("2026-02-29")).toBe(false);
+    expect(isDay("2028-02-29")).toBe(true);
     expect(isoWeek("2026-10-18")).toBe("2026-W42");
     expect(isoWeek("2027-01-01")).toBe("2026-W53");
   });
@@ -137,5 +145,23 @@ describe("misc helpers", () => {
     expect(csvCell('a,"b"')).toBe('"a,""b"""');
     expect(csvCell("=HYPERLINK()")).toBe("'=HYPERLINK()");
     expect(csvCell(null)).toBe("");
+  });
+});
+
+describe("dead-link page", () => {
+  it("normalizes stored settings", () => {
+    expect(normalizeDeadLink(null)).toEqual(DEFAULT_DEAD_LINK);
+    const n = normalizeDeadLink({ delaySeconds: 999, redirectUrl: "javascript:alert(1)", replacedHeading: "" });
+    expect(n.delaySeconds).toBe(60);
+    expect(n.redirectUrl).toBe("");
+    expect(n.replacedHeading).toBe(DEFAULT_DEAD_LINK.replacedHeading);
+    expect(normalizeDeadLink({ delaySeconds: Number.NaN }).delaySeconds).toBe(7);
+  });
+
+  it("escapes text and fills in {seconds}", () => {
+    const page = { ...DEFAULT_DEAD_LINK, goneMessage: "<b>bye</b> in {seconds}", delaySeconds: 9 };
+    const html = renderDeadLink(page, DEFAULT_NOT_FOUND, { domain: "sh.example", address: "sh.example/x", imageSrc: null }, { kind: "gone", redirectUrl: 'https://a.example/?q="1"' });
+    expect(html).toContain("&#60;b&#62;bye&#60;/b&#62; in 9");
+    expect(html).toContain('content="9;url=https://a.example/?q=&#34;1&#34;"');
   });
 });

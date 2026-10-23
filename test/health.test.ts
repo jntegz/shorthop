@@ -105,6 +105,23 @@ describe("system status", () => {
     expect((JSON.parse((fetchMock.mock.calls.at(-1) as [string, RequestInit])[1].body as string) as { subject: string }).subject).toContain("OK again");
   });
 
+  it("doesn't flag an old failed alert once email is turned off", async () => {
+    await recordJob(env.DB, "alert", false, "HTTP 401: bad key");
+    const h = await systemHealth({ ...healthy, DIGEST_PROVIDER: "off" } as Env, NOON);
+    expect(h.checks.find((c) => c.id === "digest")?.advisory).toBe(true);
+    expect(h.checks.find((c) => c.id === "alert")).toBeUndefined();
+  });
+
+  it("forgets old digest and alert failures when the mail setup changes", async () => {
+    await recordJob(env.DB, "alert", false, "HTTP 401: bad key");
+    await recordJob(env.DB, "digest", false, "HTTP 401: bad key");
+    const res = await call(`${API}/settings/mail`, { method: "PUT", headers: { ...bearer, "Content-Type": "application/json" }, body: JSON.stringify({ provider: "resend", from: "digest@example.com" }) });
+    expect(res.status).toBe(200);
+    const h = await systemHealth(healthy, NOON);
+    expect(h.checks.find((c) => c.id === "alert")).toBeUndefined();
+    expect(h.checks.find((c) => c.id === "digest")?.detail).not.toContain("failed");
+  });
+
   it("is served to the admin", async () => {
     const res = await call(`${API}/settings/health`, { headers: bearer });
     expect(res.status).toBe(200);

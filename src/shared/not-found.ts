@@ -71,20 +71,33 @@ export function normalizeNotFound(p: Partial<NotFoundPage> | null | undefined): 
   };
 }
 
-/**
- * The full HTML document. `address` is what the visitor asked for
- * ("sh.example/gg"); `imageSrc` is where the page's image is served from.
- */
-export function renderNotFound(p: NotFoundPage, opts: { domain: string; address: string | null; fallbackUrl: string; imageSrc: string | null }): string {
-  const href = p.buttonUrl || opts.fallbackUrl;
-  const message = escapeHtml(p.message).replace(/\r?\n/g, "<br>");
+/** What goes on the card; the page's colors and image come from the not-found settings. */
+export interface PageCard {
+  /** The <title>, before " · domain". */
+  title: string;
+  /** Big faded text shown when there is no image. */
+  code: string;
+  heading: string;
+  /** Struck-through address the visitor asked for. */
+  address: string | null;
+  message: string;
+  button: { label: string; href: string } | null;
+  /** Small line under the button. */
+  note?: string | null;
+  /** Sends the visitor on after this many seconds (a meta refresh: the page CSP allows no scripts). */
+  refresh?: { seconds: number; url: string } | null;
+}
+
+/** The full HTML document for a card in the not-found page's style. */
+export function renderPageCard(p: NotFoundPage, opts: { domain: string; imageSrc: string | null }, card: PageCard): string {
+  const message = escapeHtml(card.message).replace(/\r?\n/g, "<br>");
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
-<title>Link not found · ${escapeHtml(opts.domain)}</title>
+${card.refresh ? `<meta http-equiv="refresh" content="${card.refresh.seconds};url=${escapeHtml(card.refresh.url)}">\n` : ""}<title>${escapeHtml(card.title)} · ${escapeHtml(opts.domain)}</title>
 <style>
   :root { --bg:${p.background}; --card:${p.card}; --fg:${p.text}; --accent:${p.accent}; --on-accent:${onColor(p.accent)};
           --muted:color-mix(in srgb, var(--fg) 68%, var(--card)); --line:color-mix(in srgb, var(--fg) 12%, var(--card)); }
@@ -105,19 +118,36 @@ export function renderNotFound(p: NotFoundPage, opts: { domain: string; address:
           padding:12px 20px; border-radius:12px; font-weight:600; transition:transform .15s ease, box-shadow .15s ease; }
   a.btn:hover { transform:translateY(-1px); box-shadow:0 8px 20px color-mix(in srgb, var(--accent) 30%, transparent); }
   a.btn:focus-visible { outline:2px solid var(--fg); outline-offset:3px; }
+  .note { margin:12px 0 0; color:var(--muted); font:13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap:anywhere; }
   @media (max-width:420px) { main { padding:32px 22px 28px; } .code { font-size:72px; } h1 { font-size:21px; } }
   @media (prefers-reduced-motion:reduce) { a.btn { transition:none; } a.btn:hover { transform:none; } }
 </style>
 </head>
 <body>
 <main>
-  ${opts.imageSrc ? `<img src="${escapeHtml(opts.imageSrc)}" alt="">` : `<div class="code" aria-hidden="true">404</div>`}
+  ${opts.imageSrc ? `<img src="${escapeHtml(opts.imageSrc)}" alt="">` : `<div class="code" aria-hidden="true">${escapeHtml(card.code)}</div>`}
   <div class="mark">${escapeHtml(opts.domain)}</div>
-  <h1>${escapeHtml(p.heading)}</h1>
-  ${opts.address ? `<div class="addr">${escapeHtml(opts.address)}</div>` : ""}
+  <h1>${escapeHtml(card.heading)}</h1>
+  ${card.address ? `<div class="addr">${escapeHtml(card.address)}</div>` : ""}
   ${message ? `<p>${message}</p>` : ""}
-  ${p.buttonLabel ? `<a class="btn" href="${escapeHtml(href)}">${escapeHtml(p.buttonLabel)} <span aria-hidden="true">→</span></a>` : ""}
+  ${card.button ? `<a class="btn" href="${escapeHtml(card.button.href)}">${escapeHtml(card.button.label)} <span aria-hidden="true">→</span></a>` : ""}
+  ${card.note ? `<div class="note">${escapeHtml(card.note)}</div>` : ""}
 </main>
 </body>
 </html>`;
+}
+
+/**
+ * The full HTML document. `address` is what the visitor asked for
+ * ("sh.example/gg"); `imageSrc` is where the page's image is served from.
+ */
+export function renderNotFound(p: NotFoundPage, opts: { domain: string; address: string | null; fallbackUrl: string; imageSrc: string | null }): string {
+  return renderPageCard(p, opts, {
+    title: "Link not found",
+    code: "404",
+    heading: p.heading,
+    address: opts.address,
+    message: p.message,
+    button: p.buttonLabel ? { label: p.buttonLabel, href: p.buttonUrl || opts.fallbackUrl } : null,
+  });
 }

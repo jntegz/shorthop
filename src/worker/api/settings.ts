@@ -2,13 +2,14 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { HOSTNAME_RE } from "../../shared/domains";
 import { NOT_FOUND_IMAGE_MAX_BYTES } from "../../shared/not-found";
-import { mailSettingsSchema, notFoundSchema, purgeDomainSchema, settingsSchema } from "../../shared/schemas";
+import { deadLinkSchema, mailSettingsSchema, notFoundSchema, purgeDomainSchema, settingsSchema } from "../../shared/schemas";
 import { validateUtmTemplate } from "../../shared/target";
 import type { MailSetupDTO, PurgeDomainDTO, SettingsDTO } from "../../shared/types";
 import { aeAvailable } from "../ae";
 import { readCapped } from "../body";
 import { accessConfigured, adminAuthMode } from "../auth";
 import { getDefaultUtm, getSetting, nowSec, setSettingStmt } from "../db";
+import { getDeadLinkPage, saveDeadLinkSettings } from "../dead-link";
 import { digestData, renderDigest, runDigest } from "../digest";
 import { autoClearDemo, clearDemo, demoStatus } from "../demo";
 import { checkDomain } from "../dns-check";
@@ -30,7 +31,7 @@ export const settingsApi = new Hono<AppEnv>()
     await autoClearDemo(c.env);
     // Login activity and the recipient are for the admin, not for a token that may sit in a script or on a phone.
     const admin = c.get("identity") !== "api-token";
-    const [defaultUtm, lastRolled, rollupPending, lastDigestWeek, security, perDomain, demo] = await Promise.all([
+    const [defaultUtm, lastRolled, rollupPending, lastDigestWeek, security, perDomain, demo, since] = await Promise.all([
       getDefaultUtm(c.env.DB),
       getSetting(c.env.DB, "last_rolled"),
       pendingRollup(c.env),
@@ -38,11 +39,15 @@ export const settingsApi = new Hono<AppEnv>()
       admin ? securitySummary(c.env.DB, nowSec()) : null,
       c.env.DB.prepare("SELECT domain, COUNT(*) AS n FROM links GROUP BY domain").all<{ domain: string; n: number }>(),
       demoStatus(c.env.DB),
+      c.env.DB.prepare(
+        "SELECT MIN(d) AS d FROM (SELECT MIN(date) AS d FROM daily_dims UNION ALL SELECT date(MIN(created_at), 'unixepoch') FROM links)",
+      ).first<{ d: string | null }>(),
     ]);
     const { list, primary, admin: adminHost } = domainsOf(c.env);
     const digest = mailerStatus(applyMailSettings(c.env, await mailSettings(c.env.DB)));
     const settings: SettingsDTO = {
       defaultUtm,
+      statsSince: since?.d ?? null,
       publicOrigin: shortOrigin(c.env, c.req.raw, primary),
       domains: list,
       primaryDomain: primary,
@@ -111,6 +116,18 @@ export const settingsApi = new Hono<AppEnv>()
     return c.json({ image: null });
   })
 
+  .get("/dead-link", async (c) => {
+    const [page, notFound] = await Promise.all([getDeadLinkPage(c.env), getNotFoundPage(c.env)]);
+    // Where visitors go when the redirect URL is left empty.
+    return c.json({ page, defaultRedirectUrl: notFound.buttonUrl || c.env.FALLBACK_URL });
+  })
+
+  .put("/dead-link", validate("json", deadLinkSchema), async (c) => {
+    const page = c.req.valid("json");
+    await saveDeadLinkSettings(c.env, page);
+    return c.json({ page });
+  })
+
   .post("/rollup", async (c) => {
     return c.json(await trackedRollup(c.env));
   })
@@ -162,14 +179,16 @@ export const settingsApi = new Hono<AppEnv>()
   .put("/mail", validate("json", mailSettingsSchema), async (c) => {
     const settings = c.req.valid("json");
     await setSettingStmt(c.env.DB, mailSettingsKey, JSON.stringify(settings)).run();
+    // Failures recorded with the old setup don't say anything about the new one.
+    await forgetJob(c.env.DB, "digest", "alert");
     console.log(JSON.stringify({ message: "mail settings changed", provider: settings.provider, by: c.get("identity") }));
-    await forgetJob(c.env.DB, "digest");
+    await forgetJob(c.env.DB, "digest", "alert");
     return c.json({ settings, problem: mailerStatus(applyMailSettings(c.env, settings)).problem });
   })
 
   .delete("/mail", async (c) => {
     await c.env.DB.prepare("DELETE FROM settings WHERE key = ?").bind(mailSettingsKey).run();
-    await forgetJob(c.env.DB, "digest");
+    await forgetJob(c.env.DB, "digest", "alert");
     return c.json({ reset: true });
   })
 

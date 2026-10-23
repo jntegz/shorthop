@@ -79,11 +79,13 @@ export interface Classification {
   language: string;
 }
 
+const PREFETCH = "Prefetch";
+
 export function detectBot(request: Request, ua: string, asn: number): string {
   if (!ua) return "No user agent";
   if (request.method === "HEAD") return "HEAD request";
   const purpose = request.headers.get("Sec-Purpose") ?? request.headers.get("Purpose") ?? "";
-  if (/prefetch|prerender/i.test(purpose)) return "Prefetch";
+  if (/prefetch|prerender/i.test(purpose)) return PREFETCH;
   for (const [name, re] of BOT_PATTERNS) if (re.test(ua)) return name;
   if (DATACENTER_ASNS.has(asn)) return "Datacenter";
   return "";
@@ -360,11 +362,17 @@ export function buildDataPoint(
 /** Records one hit. Never throws: analytics must not affect redirects. */
 export async function logHit(request: Request, env: Env, url: URL, input: HitInput): Promise<void> {
   try {
-    const c = classify(request, url, input.sourceTag, input.qr, siteHostOf(env));
-    // Scanner probes and bot misses are only recorded when the owner opts in.
-    if (input.kind === "miss" && (input.probe || c.isBot) && !(await getMissPolicy(env.DB)).trackNoise) {
-      // A path that looks like a probe but matches a link apart from case is a typo worth reporting.
-      if (c.isBot || !(await hasLinkIgnoringCase(env.DB, input.domain, input.slug))) return;
+    let c = classify(request, url, input.sourceTag, input.qr, siteHostOf(env));
+    if (input.kind === "miss") {
+      // Browsers load an address while it's being typed: for a miss that is a person's typo, not a bot.
+      if (c.botName === PREFETCH) c = { ...c, isBot: false, botName: "", device: detectDevice(request.headers.get("User-Agent") ?? "", request.headers.get("Sec-CH-UA-Mobile")) };
+      // Each kind of miss is only recorded when the owner tracks it.
+      const policy = await getMissPolicy(env.DB);
+      if (input.probe && !policy.trackProbes) {
+        // A path that looks like a probe but matches a link apart from case is a typo, not a probe.
+        if (!(await hasLinkIgnoringCase(env.DB, input.domain, input.slug))) return;
+      }
+      if (!(input.probe && policy.trackProbes) && !(c.isBot ? policy.trackBots : policy.trackHumans)) return;
     }
     const date = new Date().toISOString().slice(0, 10);
     const hash = await visitorHash(

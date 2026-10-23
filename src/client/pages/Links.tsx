@@ -10,13 +10,13 @@ import { DownloadButton } from "../components/DownloadButton";
 import { LinkForm } from "../components/LinkForm";
 import { Badge, Button, buttonClass, Card, Empty, Input, Notice, PageHeader, Pagination, Select, SortHeader, Spinner } from "../components/ui";
 import { ago, hostOf, num } from "../lib/format";
-import { linkKey, linkPath, useDomains, useLinkLabel } from "../lib/links";
+import { linkKey, linkPath, linkState, useDomains, useLinkLabel } from "../lib/links";
 import { pageOf, parsePageSize, savedPageSize, savePageSize, sortRows, type PageSize, type SortDir } from "../lib/table";
 import { copy } from "../lib/utils";
 
 const QrDialog = lazy(() => import("../components/QrDialog").then((module) => ({ default: module.QrDialog })));
 
-type Status = "all" | "active" | "disabled" | "expired";
+type Status = "all" | "active" | "disabled" | "expired" | "broken";
 type Sort = "created" | "updated" | "slug" | "target" | "total" | "clicks" | "status";
 
 const PERIODS: { value: ListPeriod; label: string; short: string }[] = [
@@ -28,12 +28,6 @@ const PERIODS: { value: ListPeriod; label: string; short: string }[] = [
   { value: "365d", label: "Last 12 months", short: "12 mo" },
   { value: "all", label: "All time", short: "all time" },
 ];
-
-function linkState(l: Pick<LinkDTO, "active" | "expiresAt">): "active" | "disabled" | "expired" {
-  if (!l.active) return "disabled";
-  if (l.expiresAt !== null && l.expiresAt * 1000 <= Date.now()) return "expired";
-  return "active";
-}
 
 /** The value each sortable column orders by. "clicks" is the selected period. */
 const SORT_VALUE: Record<Sort, (l: LinkListItem) => string | number> = {
@@ -48,10 +42,11 @@ const SORT_VALUE: Record<Sort, (l: LinkListItem) => string | number> = {
 const SORTS = Object.keys(SORT_VALUE) as Sort[];
 const TEXT_SORTS: ReadonlySet<Sort> = new Set(["slug", "target", "status"]);
 
-export function StateBadge({ link }: { link: Pick<LinkDTO, "active" | "expiresAt"> }) {
+export function StateBadge({ link }: { link: Pick<LinkDTO, "active" | "expiresAt" | "broken"> }) {
   const s = linkState(link);
   if (s === "active") return <Badge tone="good">Active</Badge>;
   if (s === "expired") return <Badge tone="warn">Expired</Badge>;
+  if (s === "broken") return <Badge tone="warn">Not working</Badge>;
   return <Badge>Disabled</Badge>;
 }
 
@@ -179,6 +174,7 @@ export function Links() {
           <option value="active">Active</option>
           <option value="disabled">Disabled</option>
           <option value="expired">Expired</option>
+          <option value="broken">Not working</option>
         </Select>
         <Select className="w-auto" value={sort} onChange={(e) => setParam("sort", e.target.value, "created")} aria-label="Sort">
           <option value="created">Newest</option>

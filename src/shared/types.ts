@@ -20,6 +20,10 @@ export interface LinkDTO {
   notes: string;
   source: LinkSource;
   importedClicks: number | null;
+  /** Marked "no longer working": visitors see a notice instead of the target. */
+  broken: boolean;
+  /** The link that notice points to; null sends visitors to the site set in Settings. */
+  replacement: { domain: string; slug: string } | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -51,8 +55,16 @@ export interface ImportResult {
   rows: ImportRowResult[];
 }
 
-export const RANGES = ["today", "7d", "14d", "30d", "90d", "180d", "365d", "all"] as const;
+/** "custom" takes explicit from/to dates (see Period). */
+export const RANGES = ["today", "7d", "14d", "30d", "90d", "180d", "270d", "365d", "all", "custom"] as const;
 export type Range = (typeof RANGES)[number];
+
+/** A stats period: a named range, or "custom" with inclusive UTC dates (YYYY-MM-DD). */
+export interface Period {
+  range: Range;
+  from?: string;
+  to?: string;
+}
 
 /** Breakdown dimensions shown on stats pages. */
 export const DIMS = [
@@ -98,6 +110,11 @@ export interface LinkStatsDTO {
   dims: Record<Dim, BreakdownRow[]>;
 }
 
+/** The account-wide stats page: the dashboard's summary plus every breakdown. */
+export interface AccountStatsDTO extends OverviewDTO {
+  dims: Record<Dim, BreakdownRow[]>;
+}
+
 export interface TopLink extends Totals {
   domain: string;
   slug: string;
@@ -120,23 +137,43 @@ export interface OverviewDTO {
 /** A visitor missing this many different paths in one UTC day is a scanner, whatever its user agent says. */
 export const SCANNER_PATHS_PER_DAY = 5;
 
-/** How much of the misses report is kept. Scanner probes and bot-only misses are "noise". */
+/**
+ * What kinds of misses are recorded. A miss is a scanner probe when its path
+ * looks like one and no link matches it even apart from case; otherwise it's
+ * bot-only when only bots asked for it, and human when a person did. A kind
+ * that isn't tracked isn't even written to Analytics Engine.
+ */
 export interface MissPolicy {
-  /** Record noise at all. Off by default: it isn't even written to Analytics Engine. */
-  trackNoise: boolean;
-  /** Most recent noise paths kept when tracked. */
-  noiseLimit: (typeof NOISE_LIMITS)[number];
-  /** Days real misses are kept. */
+  /** People mistyping or opening old links. On by default. */
+  trackHumans: boolean;
+  /** Paths like /.env or /wp-login.php. Off by default. */
+  trackProbes: boolean;
+  /** Other paths only bots asked for. Off by default. */
+  trackBots: boolean;
+  /** Most recent probe paths kept when tracked. */
+  probeLimit: (typeof NOISE_LIMITS)[number];
+  /** Most recent bot-only paths kept when tracked. */
+  botLimit: (typeof NOISE_LIMITS)[number];
+  /** Days misses are kept. */
   retentionDays: (typeof MISS_RETENTION_DAYS)[number];
-  /** Most recent real missed paths kept; 0 means no limit. */
+  /** Most recent human missed paths kept; 0 means no limit. */
   realLimit: (typeof REAL_MISS_LIMITS)[number];
 }
 
+export type MissKind = "human" | "probe" | "bot";
 export const NOISE_LIMITS = [100, 250, 500] as const;
 export const MISS_RETENTION_DAYS = [90, 180] as const;
 export const REAL_MISS_LIMITS = [100, 250, 500, 1000, 0] as const;
 
-export const DEFAULT_MISS_POLICY: MissPolicy = { trackNoise: false, noiseLimit: 100, retentionDays: 90, realLimit: 1000 };
+export const DEFAULT_MISS_POLICY: MissPolicy = {
+  trackHumans: true,
+  trackProbes: false,
+  trackBots: false,
+  probeLimit: 100,
+  botLimit: 100,
+  retentionDays: 90,
+  realLimit: 1000,
+};
 
 export interface MissRow {
   domain: string;
@@ -244,6 +281,8 @@ export interface MailSetupDTO {
 
 export interface SettingsDTO {
   defaultUtm: string;
+  /** The first UTC day with stats or links: the earliest a custom period can start. */
+  statsSince: string | null;
   publicOrigin: string;
   aeAvailable: boolean;
   lastRolled: string | null;

@@ -17,6 +17,10 @@ export interface LinkRow {
   notes: string;
   source: LinkSource;
   imported_clicks: number | null;
+  /** 1 when marked "no longer working". */
+  broken: number;
+  /** "domain/slug" of the link shown instead, when broken. */
+  replacement: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -35,6 +39,10 @@ export interface KvLink {
   qp: 0 | 1;
   /** effective UTM template, present when utm is 1 */
   t?: string;
+  /** marked "no longer working" */
+  b?: 1;
+  /** replacement link, "domain/slug", present when b is 1 */
+  r?: string;
 }
 
 const DEFAULT_UTM_FALLBACK = "utm_source={domain}&utm_medium=shortlink&utm_campaign={slug}";
@@ -48,7 +56,9 @@ export function isKvLink(v: unknown): v is KvLink {
     (r.e === null || typeof r.e === "number") &&
     (r.utm === 0 || r.utm === 1) &&
     (r.qp === 0 || r.qp === 1) &&
-    (r.t === undefined || typeof r.t === "string")
+    (r.t === undefined || typeof r.t === "string") &&
+    (r.b === undefined || r.b === 1) &&
+    (r.r === undefined || typeof r.r === "string")
   );
 }
 
@@ -61,11 +71,23 @@ function toKv(row: LinkRow, defaultUtm: string): KvLink {
     qp: row.pass_query ? 1 : 0,
   };
   if (row.utm) kv.t = row.utm_template ?? defaultUtm;
+  if (row.broken) {
+    kv.b = 1;
+    if (row.replacement) kv.r = row.replacement;
+  }
   return kv;
 }
 
 /** KV key of a link: "domain/slug". */
 export const kvKey = linkKey;
+
+/** "domain/slug" → its parts, or null for none or anything malformed. */
+export function splitKey(key: string | null | undefined): { domain: string; slug: string } | null {
+  if (!key) return null;
+  const cut = key.indexOf("/");
+  if (cut <= 0 || cut === key.length - 1) return null;
+  return { domain: key.slice(0, cut), slug: key.slice(cut + 1) };
+}
 
 /** `origin` is the base URL of the link's domain (see shortOrigin). */
 export function toDTO(row: LinkRow, origin: string): LinkDTO {
@@ -84,6 +106,8 @@ export function toDTO(row: LinkRow, origin: string): LinkDTO {
     notes: row.notes,
     source: row.source,
     importedClicks: row.imported_clicks,
+    broken: row.broken === 1,
+    replacement: splitKey(row.replacement),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

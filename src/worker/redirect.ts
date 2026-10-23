@@ -4,7 +4,8 @@
 import { isProbePath, isRoutableSlug } from "../shared/slug";
 import { buildLocation, renderUtm, splitOwnParams } from "../shared/target";
 import { logHit, referrerHostOf, resolveSource, siteHostOf } from "./analytics";
-import { isKvLink, KV_TIMEOUT_MS, kvKey, withTimeout, type KvLink } from "./db";
+import { deadLinkResponse } from "./dead-link";
+import { isKvLink, KV_TIMEOUT_MS, kvKey, splitKey, withTimeout, type KvLink } from "./db";
 import { notFoundResponse } from "./not-found";
 
 const MIN_CACHE_TTL = 30;
@@ -70,6 +71,21 @@ export async function handleRedirect(request: Request, env: Env, ctx: ExecutionC
   if (!link || link.a !== 1 || (link.e !== null && link.e * 1000 <= Date.now())) {
     ctx.waitUntil(logHit(request, env, url, { domain, slug, kind: "miss", probe: !link && isProbePath(slug), sourceTag: own.sourceTag, qr: own.qr }));
     return notFoundResponse(env, domain, slug);
+  }
+
+  if (link.b === 1) {
+    // Still a visit to this link; the page points to the replacement, or on to a site.
+    ctx.waitUntil(logHit(request, env, url, { domain, slug, kind: "hit", sourceTag: own.sourceTag, qr: own.qr }));
+    const target = splitKey(link.r);
+    let replacement: KvLink | null = null;
+    if (target) {
+      try {
+        replacement = await readLink(env, kvKey(target.domain, target.slug));
+      } catch (err) {
+        console.error(JSON.stringify({ message: "kv read failed", domain: target.domain, slug: target.slug, error: String(err) }));
+      }
+    }
+    return deadLinkResponse(env, domain, slug, target && { ...target, link: replacement });
   }
 
   let location = link.u;

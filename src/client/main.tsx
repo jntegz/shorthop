@@ -40,6 +40,7 @@ const router = createBrowserRouter(
         { index: true, lazy: async () => ({ Component: (await import("./pages/Dashboard")).Dashboard }) },
         { path: "links", element: <Links /> },
         { path: "links/:domain/:slug", lazy: async () => ({ Component: (await import("./pages/LinkDetail")).LinkDetail }) },
+        { path: "stats", lazy: async () => ({ Component: (await import("./pages/Stats")).Stats }) },
         { path: "misses", lazy: async () => ({ Component: (await import("./pages/Misses")).Misses }) },
         { path: "import", lazy: async () => ({ Component: (await import("./pages/Import")).Import }) },
         { path: "settings", lazy: async () => ({ Component: (await import("./pages/Settings")).Settings }) },

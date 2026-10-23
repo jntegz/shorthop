@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { isDay } from "./dates";
+import { DEAD_LINK_MAX_DELAY, DEAD_LINK_MIN_DELAY } from "./dead-link";
 import { HOSTNAME_RE } from "./domains";
 import { HEX_COLOR_RE } from "./not-found";
 import { IMPORT_SLUG_RE } from "./slug";
@@ -50,6 +52,9 @@ export const updateLinkSchema = z.object({
   utm: z.boolean().optional(),
   utmTemplate: z.string().trim().max(512).nullish(),
   passQuery: z.boolean().optional(),
+  broken: z.boolean().optional(),
+  /** The link visitors are pointed to while this one is marked broken; null for none. */
+  replacement: z.object({ domain: z.string().regex(HOSTNAME_RE), slug: z.string().regex(IMPORT_SLUG_RE) }).nullish(),
 });
 
 const importRowSchema = z.object({
@@ -74,7 +79,7 @@ export const listQuerySchema = z.object({
   domain: domain.optional(),
   q: z.string().max(200).optional(),
   tag: z.string().max(100).optional(),
-  status: z.enum(["all", "active", "disabled", "expired"]).default("all"),
+  status: z.enum(["all", "active", "disabled", "expired", "broken"]).default("all"),
   sort: z.enum(["created", "updated", "slug", "clicks"]).default("created"),
   period: z.enum(LIST_PERIODS).default("7d"),
 });
@@ -106,22 +111,32 @@ export const clearMissesSchema = z
   .refine((v) => !(v.links && v.probes), { message: "Send links or probes, not both" });
 
 export const missPolicySchema = z.object({
-  trackNoise: z.boolean(),
-  noiseLimit: z.literal(NOISE_LIMITS),
+  trackHumans: z.boolean(),
+  trackProbes: z.boolean(),
+  trackBots: z.boolean(),
+  probeLimit: z.literal(NOISE_LIMITS),
+  botLimit: z.literal(NOISE_LIMITS),
   retentionDays: z.literal(MISS_RETENTION_DAYS),
   realLimit: z.literal(REAL_MISS_LIMITS),
 });
 
-export const missExportQuerySchema = z.object({
+/** A named range, or range=custom with from and to (inclusive UTC days). */
+const period = {
   range: z.enum(RANGES).default("30d"),
+  from: z.string().refine(isDay, "Use a date such as 2026-01-31").optional(),
+  to: z.string().refine(isDay, "Use a date such as 2026-01-31").optional(),
+};
+const customHasDates = (v: { range: string; from?: string; to?: string }) => v.range !== "custom" || (!!v.from && !!v.to && v.from <= v.to);
+const customDatesError = { message: "A custom period needs from and to dates, from first", path: ["from"] };
+
+export const missExportQuerySchema = z.object({
+  ...period,
   /** Include scanner probes / bot-only misses (when tracked). */
   probes: z.enum(["0", "1"]).default("0"),
   bots: z.enum(["0", "1"]).default("0"),
-});
+}).refine(customHasDates, customDatesError);
 
-export const rangeQuerySchema = z.object({
-  range: z.enum(RANGES).default("30d"),
-});
+export const rangeQuerySchema = z.object(period).refine(customHasDates, customDatesError);
 
 export const settingsSchema = z.object({
   defaultUtm: z.string().trim().min(1).max(512),
@@ -147,6 +162,18 @@ export const notFoundSchema = z.object({
   card: hexColor,
   text: hexColor,
   accent: hexColor,
+});
+
+/** The "no longer working" page's wording and where it sends visitors without a replacement. */
+export const deadLinkSchema = z.object({
+  replacedHeading: z.string().trim().min(1, "Add a heading").max(120),
+  replacedMessage: z.string().trim().max(600),
+  replacedButton: z.string().trim().min(1, "Add a button label").max(60),
+  goneHeading: z.string().trim().min(1, "Add a heading").max(120),
+  goneMessage: z.string().trim().max(600),
+  goneButton: z.string().trim().max(60),
+  redirectUrl: z.union([z.literal(""), z.url({ protocol: /^https?$/, error: "Use a full https:// address" }).max(2048)]),
+  delaySeconds: z.number().int().min(DEAD_LINK_MIN_DELAY).max(DEAD_LINK_MAX_DELAY),
 });
 
 export function normalizeTags(input: readonly string[]): string[] {

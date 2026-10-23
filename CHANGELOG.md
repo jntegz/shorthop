@@ -3,6 +3,31 @@
 What changed in each Shorthop release, and what to do when you upgrade.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Links: **Link no longer working**. Mark a link whose destination is gone and optionally pick a replacement link. Visitors get a 410 page with a button to the replacement's short link. Without a usable replacement, they're sent after a few seconds to the site set in Settings. The visit still counts for the original link. A "Not working" badge and status filter, `broken` and `replacement` in the API (`PATCH /links/:domain/:slug`, `GET /links?status=broken`, `GET /links/:domain/:slug/dependents`) and in the links CSV.
+- Settings: a **"Link no longer working" page** card for the wording of both versions, where to send visitors, and the delay (3–60 seconds, 7 by default). A live preview can show the page with one of your links. The replacement itself is chosen per link, in its settings.
+- **Full statistics** (`/_admin/stats`): every breakdown for all links together, the top 20 links, recent hits and a CSV export. API: `GET /stats/account`.
+- Date ranges: Today · 7 days · 30 days · 90 days · **Custom…**, which offers 6, 9 and 12 months, All time, or any from–to dates (UTC). Used on Overview, Full statistics, link stats and Misses. The API takes `range=custom&from=YYYY-MM-DD&to=YYYY-MM-DD`.
+- The status banner can be closed. It comes back when the set of problems changes.
+
+### Changed
+
+- Misses: separate switches for **human misses** (on by default), **scanner probes** and **bot-only misses**, each with its own limit. Saving removes stored misses of a kind you turn off.
+- Misses: an address the browser loads while you type it counts as a human miss. For a working link, it still isn't counted as a click.
+- A past custom period no longer includes today's live data.
+
+### Fixed
+
+- Changing or resetting the email setup also clears an old "alert couldn't be sent" from System status, and that check is hidden while email is turned off.
+
+### Upgrading
+
+- Run the new database migration (`npm run setup -- upgrade` does this) **before** the Worker is deployed. Otherwise saving a link fails.
+- Saved miss-tracking settings are converted when they're read: "scanner probes and bot-only misses" becomes the two new switches, and human misses stay on.
+
 ## [1.0.2] - 2026-10-22
 
 ### Added

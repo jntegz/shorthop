@@ -146,6 +146,39 @@ describe("update and delete", () => {
     expect(await kv("flaky")).toMatchObject({ u: "https://example.com/b" });
   });
 
+  it("marks a link as no longer working, with a replacement that must exist and isn't itself", async () => {
+    await create({ slug: "old", target: "https://dead.example/" });
+    await create({ slug: "new", target: "https://example.com/new" });
+    const patch = (body: unknown) => call(`${API}/links/sh.example/old`, { ...json(body), method: "PATCH" });
+
+    expect((await patch({ broken: true, replacement: { domain: "sh.example", slug: "old" } })).status).toBe(400);
+    expect((await patch({ broken: true, replacement: { domain: "sh.example", slug: "nope" } })).status).toBe(400);
+
+    const res = await patch({ broken: true, replacement: { domain: "sh.example", slug: "new" } });
+    expect(res.status).toBe(200);
+    const { link } = (await res.json()) as { link: LinkDTO };
+    expect(link.broken).toBe(true);
+    expect(link.replacement).toEqual({ domain: "sh.example", slug: "new" });
+    expect(await kv("old")).toMatchObject({ b: 1, r: "sh.example/new" });
+    expect((await call(`${ORIGIN}/old`)).status).toBe(410);
+
+    const list = async (q: string) => ((await (await call(`${API}/links${q}`, { headers: bearer })).json()) as { links: LinkListItem[] }).links.map((l) => l.slug);
+    expect(await list("?status=broken")).toEqual(["old"]);
+    expect(await list("?status=active")).toEqual(["new"]);
+
+    const deps = (await (await call(`${API}/links/sh.example/new/dependents`, { headers: bearer })).json()) as { links: LinkDTO[] };
+    expect(deps.links.map((l) => l.slug)).toEqual(["old"]);
+
+    // Deleting the replacement needs no cleanup: visitors are sent on instead.
+    await call(`${API}/links/sh.example/new`, { method: "DELETE", headers: bearer });
+    expect(await (await call(`${ORIGIN}/old`)).text()).toContain('http-equiv="refresh"');
+
+    // Turning it off again restores the redirect; the KV record drops the marks.
+    await patch({ broken: false });
+    expect(await kv("old")).toEqual({ u: "https://dead.example/", a: 1, e: null, utm: 0, qp: 0 });
+    expect((await call(`${ORIGIN}/old`)).headers.get("Location")).toBe("https://dead.example/");
+  });
+
   it("deletes from D1 and KV", async () => {
     await create({ slug: "gone", target: "https://example.com/" });
     const res = await call(`${API}/links/sh.example/gone`, { method: "DELETE", headers: bearer });

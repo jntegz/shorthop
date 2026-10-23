@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { ArrowUpRight, ChartNoAxesCombined, ChevronRight, Cloud, Globe2, Link2, LogOut, Plus, Search, Settings, Unlink, Upload } from "lucide-react";
+import { ArrowUpRight, BarChart3, ChartNoAxesCombined, ChevronRight, Cloud, Globe2, Link2, LogOut, Plus, Search, Settings, Unlink, Upload } from "lucide-react";
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router";
 import { api, call, keys } from "../api";
@@ -12,6 +12,7 @@ import { Button } from "./ui";
 
 const NAV = [
   { to: "/", label: "Overview", icon: ChartNoAxesCombined, end: true },
+  { to: "/stats", label: "Full statistics", icon: BarChart3, end: false },
   { to: "/links", label: "All links", icon: Link2, end: false },
   { to: "/misses", label: "Link health", icon: Unlink, end: false },
   { to: "/import", label: "Import links", icon: Upload, end: false },

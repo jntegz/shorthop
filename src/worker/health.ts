@@ -49,15 +49,15 @@ export async function recordJob(db: D1Database, job: Job, ok: boolean, error?: s
   }
 }
 
-/** Forgets a job's last outcome, such as a digest failure that a new mail setup may have fixed. */
-export async function forgetJob(db: D1Database, job: Job): Promise<void> {
+/** Forgets jobs' last outcomes, such as digest and alert failures that a new mail setup may have fixed. */
+export async function forgetJob(db: D1Database, ...jobs: Job[]): Promise<void> {
   try {
     const runs = await jobRuns(db);
-    if (!runs[job]) return;
-    delete runs[job];
+    if (!jobs.some((job) => runs[job])) return;
+    for (const job of jobs) delete runs[job];
     await setSettingStmt(db, JOBS_KEY, JSON.stringify(runs)).run();
   } catch (err) {
-    console.error(JSON.stringify({ message: "job record failed", job, error: String(err) }));
+    console.error(JSON.stringify({ message: "job record failed", jobs, error: String(err) }));
   }
 }
 
@@ -170,7 +170,8 @@ export async function systemHealth(env: Env, now = new Date()): Promise<SystemHe
   } else {
     add("digest", "Weekly digest and alerts", "ok", `Sent with ${providerName(mail.provider)} to ${env.DIGEST_TO}.`);
   }
-  if (alert && !alert.ok) {
+  // With email off, an old failed alert is no longer something to fix.
+  if (alert && !alert.ok && mail.provider !== "off") {
     add("alert", "Alert email", "error", `The last alert (${when(alert.at)}) couldn't be sent: ${alert.error}`);
   }
 

@@ -10,13 +10,14 @@ import {
   REAL_MISS_LIMITS,
   type MissPolicy,
   type MissRow,
-  type Range,
+  type Period,
   type RecentHit,
 } from "../../shared/types";
 import { api, call, keys } from "../api";
 import { DownloadButton } from "../components/DownloadButton";
 import { LinkForm } from "../components/LinkForm";
-import { Badge, Button, Card, CardHeader, Dialog, Empty, Field, InfoTip, Notice, PageHeader, Pagination, RANGE_OPTIONS, Segmented, Select, SortHeader, Spinner, Switch } from "../components/ui";
+import { PeriodPicker, periodParams, periodQuery } from "../components/PeriodPicker";
+import { Badge, Button, Card, CardHeader, Dialog, Empty, Field, InfoTip, Notice, PageHeader, Pagination, Select, SortHeader, Spinner, Switch } from "../components/ui";
 import { day, num, when } from "../lib/format";
 import { MISSES_HELP, PROBE_HELP } from "../lib/help";
 import { linkKey, linkPath, useLinkLabel } from "../lib/links";
@@ -36,10 +37,23 @@ const realLimitLabel = (n: number) => (n === 0 ? "No limit" : `${num(n)} paths`)
 
 /** One sentence on what the policy keeps. */
 function policySummary(p: MissPolicy): string {
-  const noise = p.trackNoise
-    ? `Scanner probes and bot-only misses: last ${p.noiseLimit} paths.`
-    : "Scanner probes and bot-only misses aren’t tracked.";
-  return `${noise} Real misses: kept ${retentionLabel(p.retentionDays)}, ${p.realLimit ? `up to ${num(p.realLimit)} paths` : "no limit on paths"}.`;
+  const kinds = [p.trackHumans ? "human misses" : null, p.trackProbes ? "scanner probes" : null, p.trackBots ? "bot-only misses" : null].filter(Boolean);
+  const tracked = kinds.length ? `Tracking ${kinds.join(", ").replace(/, ([^,]*)$/, " and $1")}` : "Not tracking any misses";
+  return `${tracked}, kept ${retentionLabel(p.retentionDays)}.`;
+}
+
+function KindLimit({ id, label, value, onChange }: { id: string; label: string; value: MissPolicy["probeLimit"]; onChange: (v: MissPolicy["probeLimit"]) => void }) {
+  return (
+    <Field label={label} htmlFor={id}>
+      <Select id={id} value={value} onChange={(e) => onChange(Number(e.target.value) as MissPolicy["probeLimit"])}>
+        {NOISE_LIMITS.map((n) => (
+          <option key={n} value={n}>
+            {n} paths
+          </option>
+        ))}
+      </Select>
+    </Field>
+  );
 }
 
 function TrackingDialog({ open, onOpenChange, policy }: { open: boolean; onOpenChange: (o: boolean) => void; policy: MissPolicy }) {
@@ -49,30 +63,31 @@ function TrackingDialog({ open, onOpenChange, policy }: { open: boolean; onOpenC
     mutationFn: () => call(api.stats.misses.policy.$put({ json: draft })),
     onSuccess: ({ removed }) => {
       onOpenChange(false);
-      toast.success("Miss tracking saved", removed ? { description: `Removed ${num(removed)} stored ${removed === 1 ? "path" : "paths"} outside the new limits.` } : undefined);
+      toast.success("Miss tracking saved", removed ? { description: `Removed ${num(removed)} stored ${removed === 1 ? "path" : "paths"} outside the new settings.` } : undefined);
       void qc.invalidateQueries({ queryKey: ["stats", "misses"] });
     },
     onError: (e) => toast.error(e.message),
   });
   const set = <K extends keyof MissPolicy>(k: K, v: MissPolicy[K]) => setDraft((d) => ({ ...d, [k]: v }));
+  const turnedOff = (["trackHumans", "trackProbes", "trackBots"] as const).some((k) => policy[k] && !draft[k]);
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange} title="Miss tracking" description="Choose what gets recorded and how much is kept.">
+    <Dialog open={open} onOpenChange={onOpenChange} title="Miss tracking" description="Choose which kinds of misses are recorded and how much is kept.">
       <div className="space-y-5">
         <div className="space-y-3 rounded-xl border border-line p-4">
           <Switch
-            id="track-noise"
-            label="Track scanner probes and bot-only misses"
-            description="Off: requests for paths like /.env or /wp-login.php, and misses from bots, aren’t recorded at all."
-            checked={draft.trackNoise}
-            onCheckedChange={(v) => set("trackNoise", v)}
+            id="track-humans"
+            label="Track human misses"
+            description="People opening a mistyped, deleted, disabled or expired link. On by default."
+            checked={draft.trackHumans}
+            onCheckedChange={(v) => set("trackHumans", v)}
           />
-          {draft.trackNoise ? (
-            <Field label="Keep the most recent" htmlFor="noise-limit">
-              <Select id="noise-limit" value={draft.noiseLimit} onChange={(e) => set("noiseLimit", Number(e.target.value) as MissPolicy["noiseLimit"])}>
-                {NOISE_LIMITS.map((n) => (
+          {draft.trackHumans ? (
+            <Field label="Keep at most" htmlFor="real-limit" hint="The most recently requested paths are kept.">
+              <Select id="real-limit" value={draft.realLimit} onChange={(e) => set("realLimit", Number(e.target.value) as MissPolicy["realLimit"])}>
+                {REAL_MISS_LIMITS.map((n) => (
                   <option key={n} value={n}>
-                    {n} paths
+                    {realLimitLabel(n)}
                   </option>
                 ))}
               </Select>
@@ -80,27 +95,37 @@ function TrackingDialog({ open, onOpenChange, policy }: { open: boolean; onOpenC
           ) : null}
         </div>
         <div className="space-y-3 rounded-xl border border-line p-4">
-          <p className="text-sm font-medium text-fg">Real misses</p>
-          <Field label="Keep for" htmlFor="retention">
-            <Select id="retention" value={draft.retentionDays} onChange={(e) => set("retentionDays", Number(e.target.value) as MissPolicy["retentionDays"])}>
-              {MISS_RETENTION_DAYS.map((d) => (
-                <option key={d} value={d}>
-                  {retentionLabel(d)}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <Field label="Keep at most" htmlFor="real-limit" hint="The most recently requested paths are kept.">
-            <Select id="real-limit" value={draft.realLimit} onChange={(e) => set("realLimit", Number(e.target.value) as MissPolicy["realLimit"])}>
-              {REAL_MISS_LIMITS.map((n) => (
-                <option key={n} value={n}>
-                  {realLimitLabel(n)}
-                </option>
-              ))}
-            </Select>
-          </Field>
+          <Switch
+            id="track-probes"
+            label="Track scanner probes"
+            description="Paths vulnerability scanners try on every site, such as /.env or /wp-login.php."
+            checked={draft.trackProbes}
+            onCheckedChange={(v) => set("trackProbes", v)}
+          />
+          {draft.trackProbes ? <KindLimit id="probe-limit" label="Keep the most recent" value={draft.probeLimit} onChange={(v) => set("probeLimit", v)} /> : null}
         </div>
-        <p className="text-xs text-muted">Saving removes stored misses outside these limits right away. Removed misses can’t be restored.</p>
+        <div className="space-y-3 rounded-xl border border-line p-4">
+          <Switch
+            id="track-bots"
+            label="Track bot-only misses"
+            description="Other paths that only bots, scripts and link checkers asked for."
+            checked={draft.trackBots}
+            onCheckedChange={(v) => set("trackBots", v)}
+          />
+          {draft.trackBots ? <KindLimit id="bot-limit" label="Keep the most recent" value={draft.botLimit} onChange={(v) => set("botLimit", v)} /> : null}
+        </div>
+        <Field label="Keep misses for" htmlFor="retention">
+          <Select id="retention" value={draft.retentionDays} onChange={(e) => set("retentionDays", Number(e.target.value) as MissPolicy["retentionDays"])}>
+            {MISS_RETENTION_DAYS.map((d) => (
+              <option key={d} value={d}>
+                {retentionLabel(d)}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <p className="text-xs text-muted">
+          Saving removes stored misses outside these settings right away{turnedOff ? ", including everything of a kind you turn off" : ""}. Removed misses can’t be restored.
+        </p>
         <div className="flex justify-end gap-2">
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
@@ -196,13 +221,14 @@ function LiveMisses() {
 type ClearTarget = "all" | "probes" | Pick<MissRow, "domain" | "slug">[];
 
 export function Misses() {
-  const [range, setRangeState] = useState<Range>("7d");
+  const [period, setPeriodState] = useState<Period>({ range: "7d" });
   const [showBots, setShowBotsState] = useState(false);
   const [showProbes, setShowProbesState] = useState(false);
   const [sort, setSort] = useState<{ key: MissSort; dir: SortDir }>({ key: "hits", dir: "desc" });
   const [page, setPage] = useState(1);
   const [size, setSizeState] = useState<PageSize>(() => savedPageSize("misses"));
-  const setRange = (r: Range) => (setRangeState(r), setPage(1));
+  // A new range, filter or order starts again on page 1.
+  const setPeriod = (p: Period) => (setPeriodState(p), setPage(1));
   const setShowBots = (v: boolean) => (setShowBotsState(v), setPage(1));
   const setShowProbes = (v: boolean) => (setShowProbesState(v), setPage(1));
   const setSize = (n: PageSize) => (savePageSize("misses", n), setSizeState(n), setPage(1));
@@ -216,10 +242,11 @@ export function Misses() {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const label = useLinkLabel();
-  const q = useQuery({ queryKey: keys.misses(range), queryFn: () => call(api.stats.misses.$get({ query: { range } })) });
+  const q = useQuery({ queryKey: keys.misses(period), queryFn: () => call(api.stats.misses.$get({ query: periodQuery(period) })) });
   const all = q.data?.rows ?? [];
   const policy = q.data?.policy ?? DEFAULT_MISS_POLICY;
   const probes = all.filter((r) => r.probe);
+  const botOnly = all.filter((r) => !r.probe && r.hits === 0).length;
   const rows = all.filter((r) => (showProbes || !r.probe) && (showBots || r.hits > 0));
   const sorted = sortRows(rows, MISS_SORT_VALUE[sort.key], sort.dir);
   const paged = pageOf(sorted, page, size);
@@ -261,8 +288,8 @@ export function Misses() {
         description="Find visits to missing, expired, or disabled links and help your audience reach the right place."
         actions={
           <>
-            <Segmented label="Date range" value={range} onChange={setRange} options={RANGE_OPTIONS} />
-            <DownloadButton href={`/_admin/api/stats/misses/export.csv?range=${range}&probes=${showProbes ? 1 : 0}&bots=${showBots ? 1 : 0}`}>
+            <PeriodPicker value={period} onChange={setPeriod} />
+            <DownloadButton href={`/_admin/api/stats/misses/export.csv?${periodParams(period)}&probes=${showProbes ? 1 : 0}&bots=${showBots ? 1 : 0}`}>
               <Download /> Export CSV
             </DownloadButton>
           </>
@@ -280,17 +307,17 @@ export function Misses() {
         </div>
       ) : null}
       <div className="mb-3 flex flex-wrap items-center gap-x-5 gap-y-2">
-        {policy.trackNoise ? (
-          <>
-            <label className="inline-flex items-center gap-2 text-sm text-muted">
-              <input type="checkbox" checked={!showProbes} onChange={(e) => setShowProbes(!e.target.checked)} className="accent-[var(--accent)]" />
-              Hide scanner probes{probes.length ? ` (${num(probes.length)})` : ""}
-            </label>
-            <label className="inline-flex items-center gap-2 text-sm text-muted">
-              <input type="checkbox" checked={!showBots} onChange={(e) => setShowBots(!e.target.checked)} className="accent-[var(--accent)]" />
-              Hide bot-only misses
-            </label>
-          </>
+        {policy.trackProbes || probes.length ? (
+          <label className="inline-flex items-center gap-2 text-sm text-muted">
+            <input type="checkbox" checked={!showProbes} onChange={(e) => setShowProbes(!e.target.checked)} className="accent-[var(--accent)]" />
+            Hide scanner probes{probes.length ? ` (${num(probes.length)})` : ""}
+          </label>
+        ) : null}
+        {policy.trackBots || botOnly ? (
+          <label className="inline-flex items-center gap-2 text-sm text-muted">
+            <input type="checkbox" checked={!showBots} onChange={(e) => setShowBots(!e.target.checked)} className="accent-[var(--accent)]" />
+            Hide bot-only misses{botOnly ? ` (${num(botOnly)})` : ""}
+          </label>
         ) : null}
         <div className="ml-auto flex flex-wrap gap-2">
           {probes.length ? (

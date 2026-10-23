@@ -1,6 +1,7 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { resetDaySaltCache } from "../src/worker/analytics";
 import type { KvLink } from "../src/worker/db";
+import { resetDeadLinkCache } from "../src/worker/dead-link";
 import worker from "../src/worker/index";
 import { resetMissPolicyCache } from "../src/worker/misses";
 import { resetNotFoundCache } from "../src/worker/not-found";
@@ -37,6 +38,7 @@ export async function resetData(): Promise<void> {
   resetMissPolicyCache();
   resetNotFoundCache();
   resetDaySaltCache();
+  resetDeadLinkCache();
   await env.DB.batch([
     env.DB.prepare("DELETE FROM links"),
     env.DB.prepare("DELETE FROM daily_stats"),

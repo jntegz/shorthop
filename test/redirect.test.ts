@@ -88,6 +88,81 @@ describe("redirects", () => {
     expect(admin.headers.get("Content-Type")).toBe("image/png");
   });
 
+  describe("links marked no longer working", () => {
+    const now = () => Math.floor(Date.now() / 1000);
+
+    it("points to a working replacement through its short link, and counts the visit", async () => {
+      await putLink("old", { u: "https://dead.example/", b: 1, r: "sh.example/guide" });
+      const { points, CLICKS } = captureClicks();
+      const res = await call(get("/old"), undefined, { CLICKS });
+      expect(res.status).toBe(410);
+      expect(res.headers.get("Content-Security-Policy")).toContain("default-src 'none'");
+      const html = await res.text();
+      expect(html).toContain('href="https://sh.example/guide"');
+      expect(html).toContain("sh.example/old");
+      expect(html).toContain("next best thing");
+      expect(html).not.toContain('http-equiv="refresh"');
+      expect(points.map((p) => [p.indexes?.[0], p.blobs?.[0]])).toEqual([["old", "click"]]);
+    });
+
+    it("sends visitors on after the delay when the replacement is missing, disabled, expired or also not working", async () => {
+      await putLink("off", { u: "https://example.com/", a: 0 });
+      await putLink("expired", { u: "https://example.com/", e: now() - 10 });
+      await putLink("broken", { u: "https://example.com/", b: 1 });
+      for (const r of [undefined, "sh.example/missing", "sh.example/off", "sh.example/expired", "sh.example/broken"]) {
+        await putLink("old", { u: "https://dead.example/", b: 1, ...(r ? { r } : {}) });
+        const res = await call(get("/old"));
+        expect(res.status, r).toBe(410);
+        const html = await res.text();
+        expect(html, r).toContain(`<meta http-equiv="refresh" content="7;url=${env.FALLBACK_URL}">`);
+        expect(html, r).toContain("redirected in 7 seconds");
+      }
+    });
+
+    it("uses the wording, redirect URL and delay from Settings", async () => {
+      const page = {
+        replacedHeading: "Moved <on>",
+        replacedMessage: "Try this instead",
+        replacedButton: "Open it",
+        goneHeading: "Gone for good",
+        goneMessage: "Off you go in {seconds}s",
+        goneButton: "Leave now",
+        redirectUrl: "https://example.com/home",
+        delaySeconds: 12,
+      };
+      expect((await call(`${API}/settings/dead-link`, { ...json({ ...page, delaySeconds: 1 }), method: "PUT" })).status).toBe(400);
+      expect((await call(`${API}/settings/dead-link`, { ...json({ ...page, redirectUrl: "ftp://x" }), method: "PUT" })).status).toBe(400);
+      expect((await call(`${API}/settings/dead-link`, { ...json(page), method: "PUT" })).status).toBe(200);
+      const got = (await (await call(`${API}/settings/dead-link`, { headers: bearer })).json()) as { page: typeof page };
+      expect(got.page).toEqual(page);
+
+      await putLink("old", { u: "https://dead.example/", b: 1, r: "sh.example/guide" });
+      let html = await (await call(get("/old"))).text();
+      expect(html).toContain("Moved &#60;on&#62;");
+      expect(html).toContain("Open it");
+
+      await putLink("old", { u: "https://dead.example/", b: 1 });
+      html = await (await call(get("/old"))).text();
+      expect(html).toContain('content="12;url=https://example.com/home"');
+      expect(html).toContain("Off you go in 12s");
+      expect(html).toContain('href="https://example.com/home"');
+    });
+
+    it("falls back to the not-found page's button link when no redirect URL is set", async () => {
+      const nf = { heading: "x", message: "", buttonLabel: "Home", buttonUrl: "https://example.com/nf", background: "#000000", card: "#111111", text: "#eeeeee", accent: "#ff6600" };
+      await call(`${API}/settings/not-found`, { ...json(nf), method: "PUT" });
+      await putLink("old", { u: "https://dead.example/", b: 1 });
+      const html = await (await call(get("/old"))).text();
+      expect(html).toContain('content="7;url=https://example.com/nf"');
+      expect(html).toContain("--accent:#ff6600");
+    });
+
+    it("still 404s when the link is also disabled", async () => {
+      await putLink("old", { u: "https://dead.example/", a: 0, b: 1, r: "sh.example/guide" });
+      expect((await call(get("/old"))).status).toBe(404);
+    });
+  });
+
   it("still redirects a link whose expiry is in the future", async () => {
     await putLink("soon", { u: "https://example.com/", e: Math.floor(Date.now() / 1000) + 3600 });
     expect((await call(get("/soon"))).status).toBe(302);

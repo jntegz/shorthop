@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { linkKey, linkLabel } from "../../shared/domains";
+import type { LinkDTO } from "../../shared/types";
 import { api, call, keys } from "../api";
 
 export { linkKey };
@@ -20,4 +21,12 @@ export function useDomains(): { domains: string[]; primary: string; multiple: bo
 export function useLinkLabel(): (l: { domain: string; slug: string }) => string {
   const { primary } = useDomains();
   return (l) => linkLabel(l.domain, l.slug, primary || l.domain);
+}
+
+/** What a visitor gets right now. */
+export function linkState(l: Pick<LinkDTO, "active" | "expiresAt" | "broken">): "active" | "disabled" | "expired" | "broken" {
+  if (!l.active) return "disabled";
+  if (l.expiresAt !== null && l.expiresAt * 1000 <= Date.now()) return "expired";
+  if (l.broken) return "broken";
+  return "active";
 }

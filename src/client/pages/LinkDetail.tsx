@@ -3,14 +3,15 @@ import { ArrowLeft, Copy, ExternalLink, Pencil, QrCode, Trash2 } from "lucide-re
 import { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router";
 import { toast } from "sonner";
-import type { Range } from "../../shared/types";
+import type { Period } from "../../shared/types";
 import { api, call, keys } from "../api";
 import { Breakdown, ClicksChart, StatTiles } from "../components/Charts";
 import { LinkForm } from "../components/LinkForm";
+import { PeriodPicker, periodQuery } from "../components/PeriodPicker";
 import { QrDialog } from "../components/QrDialog";
-import { Badge, Button, Card, CardHeader, Dialog, Empty, Notice, PageHeader, RANGE_OPTIONS, Segmented, Spinner } from "../components/ui";
+import { Badge, Button, Card, CardHeader, Dialog, Empty, Notice, PageHeader, Spinner } from "../components/ui";
 import { countryName, date, flag, num, sourceLabel, when } from "../lib/format";
-import { useLinkLabel } from "../lib/links";
+import { linkPath, useLinkLabel } from "../lib/links";
 import { copy } from "../lib/utils";
 import { StateBadge } from "./Links";
 
@@ -18,8 +19,9 @@ export function LinkDetail() {
   const params = useParams();
   const domain = params.domain ?? "";
   const slug = params.slug ?? "";
-  const label = useLinkLabel()({ domain, slug });
-  const [range, setRange] = useState<Range>("30d");
+  const labelOf = useLinkLabel();
+  const label = labelOf({ domain, slug });
+  const [period, setPeriod] = useState<Period>({ range: "30d" });
   const [editing, setEditing] = useState(false);
   const [qr, setQr] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -38,8 +40,14 @@ export function LinkDetail() {
     if (loaded && hash === "#stats") requestAnimationFrame(() => document.getElementById("stats")?.scrollIntoView({ behavior: "smooth" }));
   }, [loaded, hash]);
   const stats = useQuery({
-    queryKey: keys.linkStats(domain, slug, range),
-    queryFn: () => call(api.stats.links[":domain"][":slug"].$get({ param: { domain, slug }, query: { range } })),
+    queryKey: keys.linkStats(domain, slug, period),
+    queryFn: () => call(api.stats.links[":domain"][":slug"].$get({ param: { domain, slug }, query: periodQuery(period) })),
+  });
+  // Links pointing visitors here while marked "no longer working"; shown before a delete.
+  const dependents = useQuery({
+    queryKey: [...keys.link(domain, slug), "dependents"],
+    queryFn: () => call(api.links[":domain"][":slug"].dependents.$get({ param: { domain, slug } })),
+    enabled: confirmDelete,
   });
   const recent = useQuery({
     queryKey: keys.recent(domain, slug),
@@ -107,6 +115,22 @@ export function LinkDetail() {
               {link.target} <ExternalLink className="size-3 shrink-0" />
             </a>
             {link.title ? <span className="text-fg">{link.title}</span> : null}
+            {link.broken ? (
+              <span>
+                Marked as no longer working.{" "}
+                {link.replacement ? (
+                  <>
+                    Visitors are pointed to{" "}
+                    <Link to={linkPath(link.replacement)} className="font-medium text-accent hover:underline">
+                      {labelOf(link.replacement)}
+                    </Link>
+                    .
+                  </>
+                ) : (
+                  "Visitors are sent to the site set in Settings."
+                )}
+              </span>
+            ) : null}
           </span>
         }
         actions={
@@ -146,7 +170,7 @@ export function LinkDetail() {
 
       <div id="stats" className="mb-4 flex scroll-mt-6 flex-wrap items-center justify-between gap-2">
         <h2 className="text-base font-semibold text-fg">Statistics</h2>
-        <Segmented label="Date range" value={range} onChange={setRange} options={RANGE_OPTIONS} />
+        <PeriodPicker value={period} onChange={setPeriod} />
       </div>
 
       {s && !s.aeAvailable ? (
@@ -234,6 +258,13 @@ export function LinkDetail() {
       <LinkForm open={editing} onOpenChange={setEditing} link={link} />
       <QrDialog open={qr} onOpenChange={setQr} shortUrl={link.shortUrl} label={label} />
       <Dialog open={confirmDelete} onOpenChange={setConfirmDelete} title={`Delete ${label}?`} description="The short link stops working and its slug becomes free. Stats already collected stay in the rollups. To stop a link temporarily, disable it instead.">
+        {dependents.data?.links.length ? (
+          <div className="mb-4">
+            <Notice tone="warn">
+              {dependents.data.links.map((l) => labelOf(l)).join(", ")} {dependents.data.links.length === 1 ? "uses" : "use"} this link as a replacement. After deleting it, their visitors are sent to the site set in Settings instead.
+            </Notice>
+          </div>
+        ) : null}
         <div className="flex justify-end gap-2">
           <Button variant="outline" onClick={() => setConfirmDelete(false)}>
             Cancel

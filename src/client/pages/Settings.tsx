@@ -7,6 +7,7 @@ import { api, call, keys } from "../api";
 import { CloudflareFeatures } from "../components/CloudflareFeatures";
 import { DownloadButton } from "../components/DownloadButton";
 import { MailSetup } from "../components/MailSetup";
+import { DeadLinkEditor } from "../components/DeadLinkEditor";
 import { NotFoundEditor } from "../components/NotFoundEditor";
 import { ShortDomains } from "../components/ShortDomains";
 import { Badge, Button, Card, CardHeader, Dialog, Field, Input, Notice, PageHeader, Spinner } from "../components/ui";
@@ -145,6 +146,8 @@ export function Settings() {
         </Card>
 
         <NotFoundEditor domain={s.primaryDomain} />
+
+        <DeadLinkEditor domain={s.primaryDomain} />
 
         <Card>
           <CardHeader title="Publishing" description="Refresh your links across the global network if a recent change has not appeared." info={SETTINGS_HELP.publishing} />

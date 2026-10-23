@@ -1,34 +1,35 @@
 import { useQuery } from "@tanstack/react-query";
-import { ArrowDownToLine, ArrowRight, ArrowUpRight, CalendarDays, Link2, Plus, ShieldCheck } from "lucide-react";
+import { ArrowDownToLine, ArrowRight, ArrowUpRight, BarChart3, CalendarDays, Link2, Plus, ShieldCheck } from "lucide-react";
 import { useState } from "react";
 import { Link, useNavigate } from "react-router";
-import type { Range } from "../../shared/types";
+import type { Period } from "../../shared/types";
 import { api, call, keys } from "../api";
 import { Breakdown, ClicksChart, StatTiles } from "../components/Charts";
 import { DownloadButton } from "../components/DownloadButton";
 import { LinkForm } from "../components/LinkForm";
+import { PeriodPicker, periodParams, periodQuery } from "../components/PeriodPicker";
 import { SystemStatus } from "../components/SystemStatus";
-import { Button, Card, CardHeader, Empty, Notice, PageHeader, RANGE_OPTIONS, Segmented, Spinner } from "../components/ui";
+import { Button, buttonClass, Card, CardHeader, Empty, Notice, PageHeader, Spinner } from "../components/ui";
 import { day, hostOf, num } from "../lib/format";
 import { linkKey, linkPath, useLinkLabel } from "../lib/links";
 
 export function Dashboard() {
-  const [range, setRange] = useState<Range>("30d");
+  const [period, setPeriod] = useState<Period>({ range: "30d" });
   const [creating, setCreating] = useState(false);
   const navigate = useNavigate();
   const label = useLinkLabel();
-  const overview = useQuery({ queryKey: keys.overview(range), queryFn: () => call(api.stats.overview.$get({ query: { range } })) });
-  const misses = useQuery({ queryKey: keys.misses("7d"), queryFn: () => call(api.stats.misses.$get({ query: { range: "7d" } })) });
+  const overview = useQuery({ queryKey: keys.overview(period), queryFn: () => call(api.stats.overview.$get({ query: periodQuery(period) })) });
+  const misses = useQuery({ queryKey: keys.misses({ range: "7d" }), queryFn: () => call(api.stats.misses.$get({ query: { range: "7d" } })) });
   const o = overview.data;
   const maxTop = Math.max(1, ...(o?.topLinks.map((l) => l.clicks) ?? [1]));
   const humanMisses = misses.data?.rows.filter((r) => r.hits > 0 && !r.probe).slice(0, 5) ?? [];
 
   return <>
     <PageHeader title="A little link. A bigger picture." description="See where your links go, and who they bring closer."
-      actions={<><DownloadButton href={`/_admin/api/stats/export.csv?range=${range}`} title="Export saved daily statistics (completed days)"><ArrowDownToLine /> Export</DownloadButton><Button onClick={() => setCreating(true)}><Plus /> Create link</Button></>} />
+      actions={<><Link to="/stats" className={buttonClass({ variant: "outline" })}><BarChart3 /> Full statistics</Link><DownloadButton href={`/_admin/api/stats/export.csv?${periodParams(period)}`} title="Export saved daily statistics (completed days)"><ArrowDownToLine /> Export</DownloadButton><Button onClick={() => setCreating(true)}><Plus /> Create link</Button></>} />
     <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
       <div className="flex items-center gap-2 text-xs text-muted"><CalendarDays className="size-4" />{o ? `${day(o.from)} – ${day(o.to)}` : "Your link performance"}<span className="rounded-md border border-line bg-surface px-1.5 py-0.5 text-[10px]">UTC</span></div>
-      <Segmented label="Date range" value={range} onChange={setRange} options={RANGE_OPTIONS} />
+      <PeriodPicker value={period} onChange={setPeriod} />
     </div>
     {o && !o.aeAvailable && <div className="mb-5"><Notice tone="accent"><span className="font-medium">Showing saved analytics.</span> Today’s live data is not connected. <Link to="/settings#statistics" className="font-medium underline underline-offset-2">Review setup</Link></Notice></div>}
     {overview.isPending ? <div className="flex justify-center py-24"><Spinner /></div>

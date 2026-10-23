@@ -13,7 +13,7 @@ A personal URL shortener that runs on one Cloudflare Worker. Short links on your
 - **Fast redirects:** one KV read, then a `302`. Analytics is written after the response, so it never slows down or breaks a click.
 - **Analytics:** country, region, city, device, OS, browser, referrer, source tag and language per click. Humans, bots and misses are counted separately. No IP addresses or cookies are stored. Unique visitors are counted with a daily hash whose random salt is deleted once the day is over. See [visitor privacy](docs/PRIVACY.md).
 - **History:** a daily job saves each day into D1, so stats outlive Analytics Engine's 90-day retention.
-- **Admin at `/_admin`:** create, edit, disable, expire, tag and search links; per-link and overall stats; QR codes; CSV import and export; a report of missed slugs; a custom 404 page; a System status page with setup checks.
+- **Admin at `/_admin`:** create, edit, disable, expire, tag and search links; per-link stats and a full statistics page, for any date range; QR codes; CSV import and export; a report of missed slugs; a custom 404 page; a page for links that no longer work, pointing visitors to a replacement; a System status page with setup checks.
 - **API at `/api`:** Bearer-token access for scripts and an [iOS Shortcut](docs/ios-shortcut.md). By default the token can read and create links, not change or delete them.
 - **Several domains:** each short domain has its own slugs and stats. The admin can live on the primary domain or on a separate host.
 - **Weekly digest and alerts:** by Cloudflare Email Service, Resend, Postmark, SendGrid, Mailgun or a signed webhook.
@@ -129,7 +129,7 @@ npm run types            # then regenerate worker-configuration.d.ts
 
 | Path | Handled by |
 |---|---|
-| `/{slug}` | KV lookup of `<domain>/<slug>`, then a 302, or the 404 page (logged as a miss) |
+| `/{slug}` | KV lookup of `<domain>/<slug>`, then a 302, or the 404 page (logged as a miss). A link marked "no longer working" gets a 410 page: a button to its replacement link, or, without a usable one, a redirect after a few seconds to the site set in Settings |
 | `/` | 302 to `FALLBACK_URL` (or to `/_admin/` on a separate admin host) |
 | `/_admin` | 301 to `/_admin/` |
 | `/_admin/login`, `/_admin/logout` | The password step: a server-rendered form, lockouts, signed session cookie |

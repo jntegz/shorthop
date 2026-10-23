@@ -1,4 +1,4 @@
-import type { LinkDTO } from "../shared/types";
+import type { LinkDTO, Period } from "../shared/types";
 import { createApiClient } from "../worker/client";
 
 export class ApiError extends Error {
@@ -88,9 +88,10 @@ export const keys = {
   allLinks: ["links"] as const,
   link: (domain: string, slug: string) => ["link", domain, slug] as const,
   tags: ["tags"] as const,
-  linkStats: (domain: string, slug: string, range: string) => ["stats", "link", domain, slug, range] as const,
-  overview: (range: string) => ["stats", "overview", range] as const,
-  misses: (range: string) => ["stats", "misses", range] as const,
+  linkStats: (domain: string, slug: string, period: Period) => ["stats", "link", domain, slug, period] as const,
+  overview: (period: Period) => ["stats", "overview", period] as const,
+  account: (period: Period) => ["stats", "account", period] as const,
+  misses: (period: Period) => ["stats", "misses", period] as const,
   recent: (domain?: string, slug?: string) => ["stats", "recent", domain ?? "*", slug ?? "*"] as const,
   settings: ["settings"] as const,
   health: ["settings", "health"] as const,

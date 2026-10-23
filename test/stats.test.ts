@@ -1,11 +1,11 @@
 import { env } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { addDays, dayStartSec, utcDate } from "../src/shared/dates";
-import type { LinkStatsDTO, MissRow, OverviewDTO, RecentHit, SettingsDTO } from "../src/shared/types";
+import type { AccountStatsDTO, LinkStatsDTO, MissRow, OverviewDTO, RecentHit, SettingsDTO } from "../src/shared/types";
 import { AeRowLimitError, dataset } from "../src/worker/ae";
 import { digestData, renderDigest, runDigest } from "../src/worker/digest";
 import { jsonChunks, setSettingStmt } from "../src/worker/db";
-import { isProbeCleared, missesCleared } from "../src/worker/misses";
+import { getMissPolicy, isProbeCleared, missesCleared, resetMissPolicyCache } from "../src/worker/misses";
 import { capDims, runRollup } from "../src/worker/rollup";
 import { forgetAllTimeClicks } from "../src/worker/stats-data";
 import { aePoint, mockAeSql, type StoredPoint } from "./ae-mock";
@@ -234,6 +234,46 @@ describe("stats API", () => {
     expect(m.rows.find((r) => r.slug === "old")).toMatchObject({ hits: 1, link: "none", suggestion: "Old" });
   });
 
+  it("builds account-wide stats with every breakdown", async () => {
+    mockAeSql(store);
+    await runRollup({ ...env, ...AE_ENV }, NOW);
+    const a = (await (await call(`${API}/stats/account?range=30d`, { headers: bearer }, AE_ENV)).json()) as AccountStatsDTO;
+    expect(a.totals).toEqual({ clicks: 6, uniques: 5, bots: 1 });
+    expect(a.topLinks.map((l) => [l.slug, l.clicks])).toEqual([["guide", 4], ["cv", 2]]);
+    expect(a.dims.source.find((r) => r.value === "li")).toEqual({ value: "li", clicks: 3, bots: 0 });
+    expect(a.dims.bot).toEqual([{ value: "LinkedIn", clicks: 0, bots: 1 }]);
+    expect(a.dims.city.map((r) => r.value)).toContain("Austin, US");
+    expect(a.dims.os.length).toBeGreaterThan(0);
+  });
+
+  it("takes custom periods, which can end before today", async () => {
+    mockAeSql(store);
+    const get = async (q: string) => call(`${API}/stats/overview?${q}`, { headers: bearer }, AE_ENV);
+    for (const q of ["range=custom", `range=custom&from=${TODAY}`, `range=custom&from=${TODAY}&to=${YESTERDAY}`, "range=custom&from=2026-02-30&to=2026-03-01"]) {
+      expect((await get(q)).status, q).toBe(400);
+    }
+    // Yesterday only, live from Analytics Engine (nothing rolled up yet): today's clicks are left out.
+    let o = (await (await get(`range=custom&from=${YESTERDAY}&to=${YESTERDAY}`)).json()) as OverviewDTO;
+    expect(o).toMatchObject({ range: "custom", from: YESTERDAY, to: YESTERDAY });
+    expect(o.totals.clicks).toBe(4);
+    expect(o.series.map((p) => p.date)).toEqual([YESTERDAY]);
+    // The same from the rollups; and an end date in the future stops at today.
+    await runRollup({ ...env, ...AE_ENV }, NOW);
+    o = (await (await get(`range=custom&from=${YESTERDAY}&to=${YESTERDAY}`)).json()) as OverviewDTO;
+    expect(o.totals.clicks).toBe(4);
+    o = (await (await get(`range=custom&from=${addDays(TODAY, -400)}&to=${addDays(TODAY, 5)}`)).json()) as OverviewDTO;
+    expect(o.to).toBe(TODAY);
+    expect(o.totals.clicks).toBe(6);
+    // The misses report and the link page take the same periods.
+    const m = (await (await call(`${API}/stats/misses?range=custom&from=${YESTERDAY}&to=${YESTERDAY}`, { headers: bearer }, AE_ENV)).json()) as { rows: MissRow[] };
+    expect(m.rows.map((r) => r.slug)).toEqual(["old"]);
+    const l = (await (await call(`${API}/stats/links/sh.example/guide?range=270d`, { headers: bearer }, AE_ENV)).json()) as LinkStatsDTO;
+    expect(l.totals.clicks).toBe(4);
+    // Custom dates can't start before the first stats or link.
+    const settings = (await (await call(`${API}/settings`, { headers: bearer }, AE_ENV)).json()) as SettingsDTO;
+    expect(settings.statsSince).toBe("1970-01-01"); // the test links are created at unix second 1
+  });
+
   it("returns recent hits", async () => {
     mockAeSql(store);
     const r = (await (await call(`${API}/stats/recent?slug=guide&limit=2`, { headers: bearer }, AE_ENV)).json()) as {
@@ -288,7 +328,7 @@ describe("stats API", () => {
   });
 });
 
-const POLICY = { trackNoise: true, noiseLimit: 100, retentionDays: 90, realLimit: 1000 };
+const POLICY = { trackHumans: true, trackProbes: true, trackBots: true, probeLimit: 100, botLimit: 100, retentionDays: 90, realLimit: 1000 };
 const setPolicy = (policy: Partial<typeof POLICY>) => call(`${API}/stats/misses/policy`, { ...json({ ...POLICY, ...policy }), method: "PUT" }, AE_ENV);
 const report = async (range = "30d") =>
   ((await (await call(`${API}/stats/misses?range=${range}`, { headers: bearer }, AE_ENV)).json()) as { rows: MissRow[] }).rows;
@@ -297,7 +337,7 @@ describe("misses cleanup", () => {
   const clear = (body: unknown) => call(`${API}/stats/misses/clear`, json(body), AE_ENV);
 
   beforeEach(async () => {
-    expect((await setPolicy({ trackNoise: true })).status).toBe(200);
+    expect((await setPolicy({ trackProbes: true, trackBots: true })).status).toBe(200);
     await hits(store, dayStartSec(YESTERDAY) + 50000, [
       { path: "//.env.production.local", ip: "9.9.9.9" },
       { path: "/wp-login.php", ua: "curl/8" },
@@ -382,7 +422,7 @@ describe("misses cleanup", () => {
   });
 
   it("records a probe-looking typo of a real link, and doesn't log the 404 preview", async () => {
-    await setPolicy({ trackNoise: false });
+    await setPolicy({ trackProbes: false, trackBots: false });
     await env.DB.prepare("INSERT INTO links (domain, slug, target, created_at, updated_at) VALUES ('sh.example', 'Feed.xml', 'https://x.com/', 1, 1)").run();
     const { points, CLICKS } = captureClicks();
     for (const path of ["/feed.xml", "/config.xml", "/_404"]) {
@@ -416,7 +456,7 @@ describe("misses cleanup", () => {
     await env.DB.prepare("UPDATE settings SET value = ? WHERE key = 'last_rolled'").bind(addDays(YESTERDAY, -3)).run();
     await runRollup({ ...env, ...AE_ENV }, NOW);
     expect(await stored()).toEqual(["old"]);
-    await setPolicy({ trackNoise: true });
+    await setPolicy({ trackProbes: true, trackBots: true });
 
     // Later today: a probe stays hidden until tomorrow, a real miss shows at once.
     await hits(store, sec + 5, [
@@ -456,7 +496,7 @@ describe("scanner detection", () => {
   }
 
   beforeEach(async () => {
-    expect((await setPolicy({ trackNoise: true })).status).toBe(200);
+    expect((await setPolicy({ trackProbes: true, trackBots: true })).status).toBe(200);
   });
 
   it("counts a visitor missing 5 paths in a day as a bot, live", async () => {
@@ -514,10 +554,55 @@ describe("miss tracking policy", () => {
     for (const h of probes) await call(new Request(`${ORIGIN}${h.path}`, { headers: { "User-Agent": h.ua ?? CHROME } }), undefined, { CLICKS });
     expect(points.map((p) => p.indexes?.[0])).toEqual(["typo"]);
 
-    await setPolicy({ trackNoise: true });
+    await setPolicy({ trackProbes: true, trackBots: true });
     points.length = 0;
     for (const h of probes) await call(new Request(`${ORIGIN}${h.path}`, { headers: { "User-Agent": h.ua ?? CHROME } }), undefined, { CLICKS });
     expect(points.map((p) => p.indexes?.[0])).toEqual(["/.env", "xmlrpc.php", "typo", "typo"]);
+  });
+
+  it("records each kind of miss only while it's tracked, and counts a typed-address preload as a person", async () => {
+    const visits: (Hit & { headers?: Record<string, string> })[] = [
+      { path: "/xmlrpc.php" },
+      { path: "/typo-bot", ua: "Googlebot/2.1" },
+      { path: "/typo" },
+      { path: "/typo-preload", headers: { "Sec-Purpose": "prefetch;prerender" } },
+    ];
+    const { points, CLICKS } = captureClicks();
+    const visit = async () => {
+      points.length = 0;
+      for (const h of visits) {
+        await call(new Request(`${ORIGIN}${h.path}`, { headers: { "User-Agent": h.ua ?? CHROME, ...h.headers } }), undefined, { CLICKS });
+      }
+      return points.map((p) => [p.indexes?.[0], p.doubles?.[1]]);
+    };
+    const only = (kinds: Partial<typeof POLICY>) => setPolicy({ trackHumans: false, trackProbes: false, trackBots: false, ...kinds });
+
+    // The default: human misses only.
+    await env.DB.prepare("DELETE FROM settings WHERE key = 'miss_policy'").run();
+    resetMissPolicyCache();
+    expect(await visit()).toEqual([["typo", 0], ["typo-preload", 0]]);
+    await only({ trackBots: true });
+    expect(await visit()).toEqual([["typo-bot", 1]]);
+    await only({ trackProbes: true });
+    expect(await visit()).toEqual([["xmlrpc.php", 0]]);
+    await only({});
+    expect(await visit()).toEqual([]);
+  });
+
+  it("reads a policy saved before the kinds were split", async () => {
+    await env.DB.prepare("INSERT INTO settings (key, value) VALUES ('miss_policy', ?)")
+      .bind(JSON.stringify({ trackNoise: true, noiseLimit: 250, retentionDays: 180, realLimit: 500 }))
+      .run();
+    resetMissPolicyCache();
+    expect(await getMissPolicy(env.DB, true)).toEqual({ trackHumans: true, trackProbes: true, trackBots: true, probeLimit: 250, botLimit: 250, retentionDays: 180, realLimit: 500 });
+  });
+
+  it("reports a deleted link that someone opens again", async () => {
+    await call(`${API}/links`, json({ slug: "was-here", target: "https://example.com/" }));
+    await call(`${API}/links/sh.example/was-here`, { method: "DELETE", headers: bearer });
+    const { points, CLICKS } = captureClicks();
+    expect((await call(new Request(`${ORIGIN}/was-here`, { headers: { "User-Agent": CHROME } }), undefined, { CLICKS })).status).toBe(404);
+    expect(points.map((p) => [p.indexes?.[0], p.blobs?.[0], p.doubles?.[1]])).toEqual([["was-here", "miss", 0]]);
   });
 
   it("keeps only the most recent paths of each kind, within the retention", async () => {
@@ -535,26 +620,32 @@ describe("miss tracking policy", () => {
     const removed = async (res: Response) => ((await res.json()) as { removed: number }).removed;
 
     // 6 months: old-typo survives the retention but not the 100 most recent real paths.
-    expect(await removed(await setPolicy({ retentionDays: 180, realLimit: 100, noiseLimit: 100 }))).toBe(21 + 21);
+    // Probes and bot-only paths each keep their own 100.
+    expect(await removed(await setPolicy({ retentionDays: 180, realLimit: 100, probeLimit: 100, botLimit: 100 }))).toBe(21 + 20);
     const kept = await paths();
     expect(kept.filter((p) => p.startsWith("typo-"))).toHaveLength(100);
     expect(kept).toContain("typo-0"); // the most recent are kept
     expect(kept).not.toContain("typo-59");
-    expect(kept.filter((p) => p.endsWith(".php") || p === "bot-only")).toHaveLength(100);
+    expect(kept.filter((p) => p.endsWith(".php"))).toHaveLength(100);
+    expect(kept).toContain("bot-only");
     const shown = await report("all");
-    expect(shown.filter((r) => r.probe || r.hits === 0)).toHaveLength(100);
+    expect(shown.filter((r) => r.probe || r.hits === 0)).toHaveLength(101);
     expect(shown.find((r) => r.slug === "typo-0")?.lastSeen).toBe(addDays(TODAY, -1));
 
     // Turning noise tracking off removes every probe and bot-only path, now and in the report.
-    await setPolicy({ trackNoise: false, retentionDays: 90, realLimit: 0 });
+    await setPolicy({ trackProbes: false, trackBots: false, retentionDays: 90, realLimit: 0 });
     expect((await paths()).every((p) => p.startsWith("typo-"))).toBe(true);
     expect((await report("all")).every((r) => !r.probe && r.hits > 0)).toBe(true);
 
-    expect((await setPolicy({ noiseLimit: 42 as 100 })).status).toBe(400);
+    expect((await setPolicy({ probeLimit: 42 as 100 })).status).toBe(400);
+
+    // Turning human misses off removes them too.
+    await setPolicy({ trackHumans: false });
+    expect(await paths()).toEqual([]);
   });
 
   it("exports the misses as CSV, following the filters", async () => {
-    await setPolicy({ trackNoise: true });
+    await setPolicy({ trackProbes: true, trackBots: true });
     await hits(store, dayStartSec(YESTERDAY) + 50000, [{ path: "/.git/config" }, { path: "/=cmd|calc" }]);
     mockAeSql(store);
     await runRollup({ ...env, ...AE_ENV }, NOW);

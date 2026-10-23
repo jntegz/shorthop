@@ -49,6 +49,14 @@ export const LINK_HELP = {
     "Active",
     "Turn off to pause the link without deleting it. Visitors then see the “link not found” page and the visit shows under Link health as disabled. Stats are kept. Turning it back on restores the redirect within about a minute.",
   ),
+  broken: h(
+    "Link no longer working",
+    "For a link whose destination is gone or no longer works. The slug stays live, but instead of redirecting, visitors see a page saying the original link no longer works. If you pick a replacement link, the page points to it as the next best thing. Without one (or if the replacement is later deleted, disabled, expired or also marked as not working), the page sends visitors to the site set in Settings after a few seconds. The wording, the site and the delay are set under Settings → “Link no longer working” page. Visits still count for this link.",
+  ),
+  replacement: h(
+    "Replacement link",
+    "Another of your short links that visitors are pointed to instead. The button goes through the replacement's short link, so its clicks are counted there too. Only links that work right now are listed.",
+  ),
   utm: h(
     "Add UTM parameters",
     "Adds UTM tags to the destination at the moment someone clicks, so analytics tools like Google Analytics can attribute the visit. The saved destination doesn't change. Tags already in the destination, or passed through from the short link, are never overwritten. Off by default for new links. Uses this link's template if set, otherwise the default from Settings.",
@@ -110,7 +118,7 @@ export const SETTINGS_HELP = {
 export const MISSES_HELP = {
   live: h(
     "Latest misses, as recorded",
-    `Every miss on your short domains from the last 7 days, newest first, with how the report counts it. The table above lists human visits only, so a visit can be recorded and still not show there. It counts as a bot when: one visitor (same network and browser) misses ${SCANNER_PATHS_PER_DAY} or more different paths in one UTC day (the scanner rule, easy to trip when you test several typos yourself); the browser only prerendered the address while you typed it; the visit came from a VPN or hosting network; or the user agent is a bot or a tool such as curl. Bot misses show in the table with “Hide bot-only misses” unticked, and aren't recorded at all while noise tracking is off. The admin host itself records nothing. New visits take about a minute to appear.`,
+    `Every miss on your short domains from the last 7 days, newest first, with how the report counts it. The table above lists human visits only, so a visit can be recorded and still not show there. It counts as a bot when: one visitor (same network and browser) misses ${SCANNER_PATHS_PER_DAY} or more different paths in one UTC day (the scanner rule, easy to trip when you test several typos yourself); the visit came from a VPN or hosting network; or the user agent is a bot or a tool such as curl. A browser loading the address while you type it counts as you. Each kind of miss is only recorded while it's tracked (Tracking settings): human misses by default, scanner probes and bot-only misses when you turn them on. Bot misses show in the table with “Hide bot-only misses” unticked. The admin host itself records nothing. New visits take about a minute to appear.`,
   ),
 } satisfies Record<string, Help>;
 

@@ -1,6 +1,6 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { AlertTriangle, BellRing, CheckCircle2, Copy, ExternalLink, RefreshCw, XCircle } from "lucide-react";
-import { useEffect } from "react";
+import { AlertTriangle, BellRing, CheckCircle2, Copy, ExternalLink, RefreshCw, X, XCircle } from "lucide-react";
+import { useEffect, useState } from "react";
 import { Link, useLocation } from "react-router";
 import { toast } from "sonner";
 import { REPO_URL } from "../../shared/brand";
@@ -111,11 +111,33 @@ export function SystemStatus() {
   );
 }
 
-/** Shown above every admin page while a check is failing. */
+const DISMISSED_KEY = "statusBannerDismissed";
+
+function readDismissed(): string | null {
+  try {
+    return localStorage.getItem(DISMISSED_KEY);
+  } catch {
+    return null;
+  }
+}
+
+/** Shown above every admin page while a check is failing, until closed for that set of problems. */
 export function SystemStatusBanner() {
   const { data } = useSystemHealth();
+  const [dismissed, setDismissed] = useState(readDismissed);
   if (!data || data.status === "ok") return null;
   const problems = data.checks.filter((c) => c.status !== "ok" && !c.advisory);
+  // Closing hides this set of problems; a new or changed one shows the banner again.
+  const fingerprint = problems.map((c) => `${c.id}:${c.status}`).join(",");
+  if (dismissed === fingerprint) return null;
+  const dismiss = () => {
+    setDismissed(fingerprint);
+    try {
+      localStorage.setItem(DISMISSED_KEY, fingerprint);
+    } catch {
+      // Closed for this visit only.
+    }
+  };
   return (
     <div role="status" className={cn("mb-5 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border px-4 py-3 text-sm", data.status === "error" ? "border-danger/30 bg-danger-soft" : "border-warn/30 bg-warn-soft")}>
       {data.status === "error" ? <XCircle className="size-4 text-danger" /> : <AlertTriangle className="size-4 text-warn" />}
@@ -123,6 +145,9 @@ export function SystemStatusBanner() {
       <Link to="/#status" className="text-accent underline underline-offset-2">
         See system status
       </Link>
+      <button type="button" onClick={dismiss} aria-label="Close" title="Hide until something else changes" className="-my-1 -mr-2 ml-auto rounded-md p-1 text-muted hover:bg-fg/5 hover:text-fg">
+        <X className="size-4" />
+      </button>
     </div>
   );
 }

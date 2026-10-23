@@ -59,7 +59,8 @@ export const linksApi = new Hono<AppEnv>()
       where.push(`(',' || tags || ',') LIKE ?${params.length} ESCAPE '\\'`);
     }
     const now = nowSec();
-    if (status === "active") where.push(`active = 1 AND (expires_at IS NULL OR expires_at > ${now})`);
+    if (status === "active") where.push(`active = 1 AND (expires_at IS NULL OR expires_at > ${now}) AND broken = 0`);
+    if (status === "broken") where.push(`active = 1 AND (expires_at IS NULL OR expires_at > ${now}) AND broken = 1`);
     if (status === "disabled") where.push("active = 0");
     if (status === "expired") where.push(`expires_at IS NOT NULL AND expires_at <= ${now}`);
     const counts = Promise.all([clicksByLink(c.env, "all"), period === "all" ? null : clicksByLink(c.env, period)]);
@@ -120,6 +121,8 @@ export const linksApi = new Hono<AppEnv>()
       notes: body.notes ?? "",
       source: "native",
       imported_clicks: null,
+      broken: 0,
+      replacement: null,
       created_at: now,
       updated_at: now,
     };
@@ -212,11 +215,20 @@ export const linksApi = new Hono<AppEnv>()
     if (body.active !== undefined) next.active = body.active ? 1 : 0;
     if (body.utm !== undefined) next.utm = body.utm ? 1 : 0;
     if (body.passQuery !== undefined) next.pass_query = body.passQuery ? 1 : 0;
+    if (body.broken !== undefined) next.broken = body.broken ? 1 : 0;
+    if (body.replacement !== undefined) {
+      const r = body.replacement;
+      if (r) {
+        if (r.domain === domain && r.slug === slug) return c.json({ error: "replacement: A link can't replace itself." }, 400);
+        if (!(await getLink(c.env.DB, r.domain, r.slug))) return c.json({ error: `replacement: ${linkKey(r.domain, r.slug)} doesn't exist.` }, 400);
+      }
+      next.replacement = r ? linkKey(r.domain, r.slug) : null;
+    }
 
     // RETURNING: a link deleted since the read above must not be published back to KV.
     const saved = await c.env.DB.prepare(
       `UPDATE links SET target = ?, active = ?, expires_at = ?, utm = ?, utm_template = ?, pass_query = ?,
-       title = ?, tags = ?, notes = ?, updated_at = ? WHERE domain = ? AND slug = ? RETURNING *`,
+       title = ?, tags = ?, notes = ?, broken = ?, replacement = ?, updated_at = ? WHERE domain = ? AND slug = ? RETURNING *`,
     )
       .bind(
         next.target,
@@ -228,6 +240,8 @@ export const linksApi = new Hono<AppEnv>()
         next.title,
         next.tags,
         next.notes,
+        next.broken,
+        next.replacement,
         next.updated_at,
         next.domain,
         next.slug,
@@ -249,6 +263,15 @@ export const linksApi = new Hono<AppEnv>()
       return c.json({ error: "Link not found" }, 404);
     }
     return c.json({ link: dto(c, saved) });
+  })
+
+  /** Links that point visitors to this one while marked "no longer working". */
+  .get("/links/:domain/:slug/dependents", validate("param", linkParamSchema), async (c) => {
+    const { domain, slug } = c.req.valid("param");
+    const { results } = await c.env.DB.prepare("SELECT * FROM links WHERE replacement = ? AND broken = 1 ORDER BY domain, slug")
+      .bind(linkKey(domain, slug))
+      .all<LinkRow>();
+    return c.json({ links: results.map((r) => dto(c, r)) });
   })
 
   .delete("/links/:domain/:slug", validate("param", linkParamSchema), async (c) => {
@@ -346,6 +369,8 @@ export const linksApi = new Hono<AppEnv>()
         notes: "",
         source: "import",
         imported_clicks: r.clicks ?? null,
+        broken: 0,
+        replacement: null,
         created_at: r.createdAt ?? now,
         updated_at: now,
       });
@@ -443,7 +468,7 @@ export const linksApi = new Hono<AppEnv>()
       return Number.isFinite(d.getTime()) ? d.toISOString() : "";
     };
     const body = csv([
-      ["domain", "slug", "short_url", "target", "active", "expires_at", "utm", "utm_template", "pass_query", "title", "tags", "notes", "source", "imported_clicks", "created_at", "updated_at"],
+      ["domain", "slug", "short_url", "target", "active", "expires_at", "utm", "utm_template", "pass_query", "title", "tags", "notes", "source", "imported_clicks", "created_at", "updated_at", "broken", "replacement"],
       ...results.map((r) => [
         r.domain,
         r.slug,
@@ -461,6 +486,8 @@ export const linksApi = new Hono<AppEnv>()
         r.imported_clicks,
         iso(r.created_at),
         iso(r.updated_at),
+        r.broken,
+        r.replacement,
       ]),
     ]);
     return c.body(body, 200, {

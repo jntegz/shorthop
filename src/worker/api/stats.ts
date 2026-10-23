@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import { rangeBounds } from "../../shared/dates";
+import { periodBounds } from "../../shared/dates";
 import { HOSTNAME_RE, linkLabel } from "../../shared/domains";
 import { clearMissesSchema, linkParamSchema, missExportQuerySchema, missPolicySchema, rangeQuerySchema } from "../../shared/schemas";
 import { IMPORT_SLUG_RE } from "../../shared/slug";
@@ -22,16 +22,20 @@ const recentQuerySchema = z.object({
 
 export const statsApi = new Hono<AppEnv>()
   .get("/overview", validate("query", rangeQuerySchema), async (c) => {
-    return c.json(await overview(c.env, c.req.valid("query").range));
+    return c.json(await overview(c.env, c.req.valid("query")));
+  })
+
+  .get("/account", validate("query", rangeQuerySchema), async (c) => {
+    return c.json(await overview(c.env, c.req.valid("query"), undefined, { dims: true }));
   })
 
   .get("/links/:domain/:slug", validate("param", linkParamSchema), validate("query", rangeQuerySchema), async (c) => {
     const { domain, slug } = c.req.valid("param");
-    return c.json(await linkStats(c.env, domain, slug, c.req.valid("query").range));
+    return c.json(await linkStats(c.env, domain, slug, c.req.valid("query")));
   })
 
   .get("/misses", validate("query", rangeQuerySchema), async (c) => {
-    return c.json(await missReport(c.env, c.req.valid("query").range));
+    return c.json(await missReport(c.env, c.req.valid("query")));
   })
 
   .post("/misses/clear", validate("json", clearMissesSchema), async (c) => {
@@ -51,8 +55,9 @@ export const statsApi = new Hono<AppEnv>()
   })
 
   .get("/misses/export.csv", validate("query", missExportQuerySchema), async (c) => {
-    const { range, probes, bots } = c.req.valid("query");
-    const { rows } = await missReport(c.env, range);
+    const { probes, bots, ...period } = c.req.valid("query");
+    const { range } = period;
+    const { rows } = await missReport(c.env, period);
     const { primary } = domainsOf(c.env);
     const why = (r: (typeof rows)[number]) =>
       r.link === "disabled"
@@ -106,8 +111,9 @@ export const statsApi = new Hono<AppEnv>()
 
   .get("/export.csv", validate("query", rangeQuerySchema), async (c) => {
     // Daily totals per link from the D1 rollups (completed days only).
-    const { range } = c.req.valid("query");
-    const { from, to } = rangeBounds(range);
+    const period = c.req.valid("query");
+    const { range } = period;
+    const { from, to } = periodBounds(period);
     const { results } = await c.env.DB.prepare(
       `SELECT date, domain, slug, clicks, uniques, bots FROM daily_dims WHERE dim = 'total' AND date BETWEEN ?1 AND ?2
        ORDER BY date, domain, slug`,

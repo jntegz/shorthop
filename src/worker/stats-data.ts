@@ -1,17 +1,19 @@
 // Stats reads: completed days come from the D1 rollups, and only days that
 // haven't been rolled up yet (normally just today) come from Analytics Engine.
 
-import { addDays, dayStartSec, rangeBounds, utcDate } from "../shared/dates";
+import { addDays, dayStartSec, periodBounds, utcDate } from "../shared/dates";
 import { linkKey } from "../shared/domains";
 import { isProbePath } from "../shared/slug";
 import {
   DIMS,
   type BreakdownRow,
   type Dim,
+  type AccountStatsDTO,
   type LinkStatsDTO,
   type MissPolicy,
   type MissRow,
   type OverviewDTO,
+  type Period,
   type Range,
   type SeriesPoint,
   type TopLink,
@@ -19,7 +21,7 @@ import {
 } from "../shared/types";
 import { aeAvailable, queryTotalsByLink, type LinkFilter } from "./ae";
 import { getSetting, jsonChunks, nowSec } from "./db";
-import { byRecent, getMissPolicy, isCleared, isNoise, isProbeCleared, missesCleared } from "./misses";
+import { getMissPolicy, isCleared, isProbeCleared, keptByPolicy, missesCleared, missKind } from "./misses";
 import { collectFromAE } from "./rollup";
 
 const TOP_N = 50;
@@ -34,8 +36,8 @@ interface Windows {
   aeAvailable: boolean;
 }
 
-export async function windows(env: Env, range: Range, now: Date = new Date()): Promise<Windows> {
-  const { from, to } = rangeBounds(range, now);
+export async function windows(env: Env, period: Period | Range, now: Date = new Date()): Promise<Windows> {
+  const { from, to } = periodBounds(period, now);
   const lastRolled = await getSetting(env.DB, "last_rolled");
   const d1To = lastRolled && lastRolled < to ? lastRolled : lastRolled ? to : null;
   const d1 = d1To && d1To >= from ? { from, to: d1To } : null;
@@ -47,7 +49,8 @@ export async function windows(env: Env, range: Range, now: Date = new Date()): P
     let start = d1To ? addDays(d1To, 1) : from;
     if (start < from) start = from;
     if (start < oldest) start = oldest;
-    if (start <= to) ae = { fromSec: dayStartSec(start), toSec: Math.floor(now.getTime() / 1000) + 60 };
+    // A custom period can end before today.
+    if (start <= to) ae = { fromSec: dayStartSec(start), toSec: Math.min(Math.floor(now.getTime() / 1000) + 60, dayStartSec(addDays(to, 1))) };
   }
   return { from, to, d1, ae, aeAvailable: available };
 }
@@ -169,8 +172,8 @@ async function safeAE(fn: () => Promise<void>): Promise<boolean> {
   }
 }
 
-export async function linkStats(env: Env, domain: string, slug: string, range: Range, now = new Date()): Promise<LinkStatsDTO> {
-  const w = await windows(env, range, now);
+export async function linkStats(env: Env, domain: string, slug: string, period: Period, now = new Date()): Promise<LinkStatsDTO> {
+  const w = await windows(env, period, now);
   const agg = new Aggregate();
   const link = { domain, slug };
   const [, aeOk] = await Promise.all([addD1(env, agg, w, link, true), safeAE(() => addAE(env, agg, w, link, true))]);
@@ -178,7 +181,7 @@ export async function linkStats(env: Env, domain: string, slug: string, range: R
   return {
     domain,
     slug,
-    range,
+    range: period.range,
     from: w.from,
     to: w.to,
     aeAvailable: w.aeAvailable && aeOk,
@@ -188,8 +191,12 @@ export async function linkStats(env: Env, domain: string, slug: string, range: R
   };
 }
 
-export async function overview(env: Env, range: Range, now = new Date()): Promise<OverviewDTO> {
-  const w = await windows(env, range, now);
+export function overview(env: Env, period: Period, now?: Date): Promise<OverviewDTO>;
+export function overview(env: Env, period: Period, now: Date | undefined, opts: { dims: true }): Promise<AccountStatsDTO>;
+/** The dashboard's summary; with `dims`, every breakdown too (the account-wide stats page). */
+export async function overview(env: Env, period: Period, now = new Date(), opts: { dims?: boolean } = {}): Promise<OverviewDTO | AccountStatsDTO> {
+  const withDims = opts.dims === true;
+  const w = await windows(env, period, now);
   const agg = new Aggregate();
   const perLink = new Map<string, Totals & Link>();
   const addLink = (domain: string, slug: string, clicks: number, uniques: number, bots: number) => {
@@ -214,23 +221,24 @@ export async function overview(env: Env, range: Range, now = new Date()): Promis
 
   const ae = async () => {
     if (!w.ae) return;
-    const { stats, dims } = await collectFromAE(env, w.ae.fromSec, w.ae.toSec, { dims: false, misses: false });
+    const { stats, dims } = await collectFromAE(env, w.ae.fromSec, w.ae.toSec, { dims: withDims, misses: false });
     for (const r of stats) for (const d of COMBO_DIMS) agg.addDim(d, r[d], r.clicks, r.bots);
     for (const r of dims) {
-      if (r.dim !== "total") continue;
-      agg.addSeries(r.date, r.clicks, r.uniques, r.bots);
-      addLink(r.domain, r.slug, r.clicks, r.uniques, r.bots);
+      if (r.dim === "total") {
+        agg.addSeries(r.date, r.clicks, r.uniques, r.bots);
+        addLink(r.domain, r.slug, r.clicks, r.uniques, r.bots);
+      } else if (withDims && (DIMS as readonly string[]).includes(r.dim)) agg.addDim(r.dim as Dim, r.value, r.clicks, r.bots);
     }
   };
 
-  const [, , aeOk] = await Promise.all([addD1(env, agg, w, undefined, false), d1Links(), safeAE(ae)]);
+  const [, , aeOk] = await Promise.all([addD1(env, agg, w, undefined, withDims), d1Links(), safeAE(ae)]);
 
   const top = [...perLink.values()].sort((a, b) => b.clicks - a.clicks || b.bots - a.bots).slice(0, 20);
   const targets = await targetsFor(env, top);
   const topLinks: TopLink[] = top.map((t) => ({ ...t, target: targets.get(linkKey(t.domain, t.slug)) ?? null }));
 
-  return {
-    range,
+  const summary: OverviewDTO = {
+    range: period.range,
     from: w.from,
     to: w.to,
     aeAvailable: w.aeAvailable && aeOk,
@@ -241,6 +249,8 @@ export async function overview(env: Env, range: Range, now = new Date()): Promis
     sources: agg.breakdown("source", 15),
     devices: agg.breakdown("device", 10),
   };
+  if (!withDims) return summary;
+  return { ...summary, dims: Object.fromEntries(DIMS.map((d) => [d, agg.breakdown(d)])) as Record<Dim, BreakdownRow[]> };
 }
 
 /** Targets keyed by linkKey. */
@@ -260,10 +270,10 @@ const MAX_REPORT_ROWS = 5000;
 
 export async function missReport(
   env: Env,
-  range: Range,
+  period: Period,
   now = new Date(),
 ): Promise<{ aeAvailable: boolean; policy: MissPolicy; rows: MissRow[] }> {
-  const [w, cleared, policy] = await Promise.all([windows(env, range, now), missesCleared(env.DB, now), getMissPolicy(env.DB, true)]);
+  const [w, cleared, policy] = await Promise.all([windows(env, period, now), missesCleared(env.DB, now), getMissPolicy(env.DB, true)]);
   type Total = Link & { hits: number; bots: number; last: string };
   const totals = new Map<string, Total>();
   // Probe-looking paths on days "Clear scanner probes" hides, until the link check below says whether they're probes.
@@ -329,14 +339,17 @@ export async function missReport(
   });
 
   // Each kind keeps its most recent paths, so a busy scanner can't push real misses out.
-  const recent = (a: MissRow, b: MissRow) => byRecent({ ...a, last: a.lastSeen }, { ...b, last: b.lastSeen });
   // The pruner's rule: any link matching regardless of case means the path isn't a probe.
-  const noisy = (r: MissRow) => isNoise(r.slug, r.hits, r.link !== "none" || r.suggestion !== null);
-  const kept = [
-    ...rows.filter((r) => !noisy(r)).sort(recent).slice(0, policy.realLimit || MAX_REPORT_ROWS),
-    ...(policy.trackNoise ? rows.filter(noisy).sort(recent).slice(0, policy.noiseLimit) : []),
-  ].sort((a, b) => b.hits - a.hits || b.bots - a.bots);
-  return { aeAvailable: w.aeAvailable && aeOk, policy, rows: kept };
+  const { kept } = keptByPolicy(
+    policy,
+    rows.map((r) => ({ ...r, last: r.lastSeen })),
+    (r) => missKind(r.slug, r.hits, r.link !== "none" || r.suggestion !== null),
+  );
+  const shown = kept
+    .map(({ last: _, ...r }) => r as MissRow)
+    .sort((a, b) => b.hits - a.hits || b.bots - a.bots)
+    .slice(0, MAX_REPORT_ROWS);
+  return { aeAvailable: w.aeAvailable && aeOk, policy, rows: shown };
 }
 
 /** How long this isolate reuses the all-time rollup sums (they change only when a rollup runs). */

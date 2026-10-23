@@ -22,7 +22,7 @@ const IMAGE_META_KEY = "cfg:not-found-image-meta";
 const IMAGE_KEY = "cfg:not-found-image";
 const CACHE_TTL = 60;
 
-const PAGE_HEADERS = {
+export const PAGE_HEADERS = {
   "Content-Type": "text/html; charset=utf-8",
   "Cache-Control": "private, max-age=0",
   "X-Robots-Tag": "noindex",
@@ -58,7 +58,7 @@ export function resetNotFoundCache(): void {
 }
 
 /** For visitors: from memory for CACHE_TTL seconds, then KV, time-boxed; the defaults on any failure. */
-async function publicNotFoundPage(env: Env): Promise<NotFoundPage> {
+export async function publicNotFoundPage(env: Env): Promise<NotFoundPage> {
   if (memo && Date.now() < memo.until) return memo.page;
   try {
     const page = await withTimeout(readPage(env, true), KV_TIMEOUT_MS, "KV read");
