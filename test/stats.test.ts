@@ -544,7 +544,7 @@ describe("miss tracking policy", () => {
       .run();
     await runRollup({ ...env, ...AE_ENV }, NOW);
     expect(await rows("SELECT slug FROM daily_dims WHERE slug = 'ancient'")).toHaveLength(1);
-    await setPolicy({ retentionDays: 180 });
+    await setPolicy({ retentionDays: 90 });
     expect(await rows("SELECT slug FROM daily_dims WHERE slug = 'ancient'")).toEqual([]);
   });
 
@@ -594,7 +594,17 @@ describe("miss tracking policy", () => {
       .bind(JSON.stringify({ trackNoise: true, noiseLimit: 250, retentionDays: 180, realLimit: 500 }))
       .run();
     resetMissPolicyCache();
-    expect(await getMissPolicy(env.DB, true)).toEqual({ trackHumans: true, trackProbes: true, trackBots: true, probeLimit: 250, botLimit: 250, retentionDays: 180, realLimit: 500 });
+    // 6 months is no longer offered, so it reads as the default, 3 months.
+    expect(await getMissPolicy(env.DB, true)).toEqual({ trackHumans: true, trackProbes: true, trackBots: true, probeLimit: 250, botLimit: 250, retentionDays: 90, realLimit: 500 });
+  });
+
+  it("keeps misses for 30 days when chosen", async () => {
+    const insert = env.DB.prepare("INSERT INTO daily_dims (date, domain, slug, dim, value, clicks, uniques, bots) VALUES (?, 'sh.example', ?, 'miss', '', 1, 0, 0)");
+    await env.DB.batch([insert.bind(addDays(TODAY, -10), "recent-typo"), insert.bind(addDays(TODAY, -45), "older-typo")]);
+    await setPolicy({ retentionDays: 30 });
+    const left = (await rows("SELECT slug FROM daily_dims WHERE dim = 'miss'")).map((r) => r.slug);
+    expect(left).toEqual(["recent-typo"]);
+    expect((await setPolicy({ retentionDays: 180 as 90 })).status).toBe(400);
   });
 
   it("reports a deleted link that someone opens again", async () => {
@@ -608,20 +618,20 @@ describe("miss tracking policy", () => {
   it("keeps only the most recent paths of each kind, within the retention", async () => {
     mockAeSql(store);
     const insert = env.DB.prepare("INSERT INTO daily_dims (date, domain, slug, dim, value, clicks, uniques, bots) VALUES (?, 'sh.example', ?, 'miss', '', ?, 0, ?)");
-    // 120 real paths and 120 probes, one per day going back; plus one bot-only path and one real path 4 months ago.
+    // 120 real paths and 120 probes, one per day going back; plus one bot-only path and one real path 80 days ago.
     await env.DB.batch([
       ...Array.from({ length: 120 }, (_, i) => insert.bind(addDays(TODAY, -1 - (i % 60)), `typo-${i}`, 1, 0)),
       ...Array.from({ length: 120 }, (_, i) => insert.bind(addDays(TODAY, -1 - (i % 60)), `scan-${i}.php`, 1, 0)),
       insert.bind(addDays(TODAY, -3), "bot-only", 0, 4),
-      insert.bind(addDays(TODAY, -120), "old-typo", 9, 0),
+      insert.bind(addDays(TODAY, -80), "old-typo", 9, 0),
       env.DB.prepare("INSERT INTO settings (key, value) VALUES ('last_rolled', ?)").bind(YESTERDAY),
     ]);
     const paths = async () => (await rows("SELECT DISTINCT slug FROM daily_dims WHERE dim = 'miss'")).map((r) => r.slug as string);
     const removed = async (res: Response) => ((await res.json()) as { removed: number }).removed;
 
-    // 6 months: old-typo survives the retention but not the 100 most recent real paths.
+    // 3 months: old-typo survives the retention but not the 100 most recent real paths.
     // Probes and bot-only paths each keep their own 100.
-    expect(await removed(await setPolicy({ retentionDays: 180, realLimit: 100, probeLimit: 100, botLimit: 100 }))).toBe(21 + 20);
+    expect(await removed(await setPolicy({ retentionDays: 90, realLimit: 100, probeLimit: 100, botLimit: 100 }))).toBe(21 + 20);
     const kept = await paths();
     expect(kept.filter((p) => p.startsWith("typo-"))).toHaveLength(100);
     expect(kept).toContain("typo-0"); // the most recent are kept

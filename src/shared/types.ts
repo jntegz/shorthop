@@ -316,7 +316,8 @@ export interface MissPolicy {
 
 export type MissKind = "human" | "probe" | "bot";
 export const NOISE_LIMITS = [100, 250, 500] as const;
-export const MISS_RETENTION_DAYS = [90, 180] as const;
+/** 30 days, 2 months, 3 months. A saved value that's no longer offered reads as the default. */
+export const MISS_RETENTION_DAYS = [30, 60, 90] as const;
 export const REAL_MISS_LIMITS = [100, 250, 500, 1000, 0] as const;
 
 export const DEFAULT_MISS_POLICY: MissPolicy = {

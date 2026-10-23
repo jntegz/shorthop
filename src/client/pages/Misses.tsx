@@ -33,7 +33,7 @@ const MISS_SORT_VALUE: Record<MissSort, (r: MissRow) => string | number> = {
   lastSeen: (r) => Date.parse(r.lastSeen) || 0,
 };
 
-const retentionLabel = (d: number) => (d === 180 ? "6 months" : `${d} days`);
+const retentionLabel = (d: number) => (d === 60 ? "2 months" : d === 90 ? "3 months" : `${d} days`);
 const realLimitLabel = (n: number) => (n === 0 ? "No limit" : `${num(n)} paths`);
 
 /** One sentence on what the policy keeps. */
