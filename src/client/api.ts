@@ -107,5 +107,6 @@ export const keys = {
   linkHistory: (domain: string, slug: string) => ["history", domain, slug] as const,
   deleted: ["deleted"] as const,
   utmPresets: ["utm-presets"] as const,
+  qrDefault: ["qr", "default"] as const,
   linkCheck: (domain: string, slug: string) => ["checks", domain, slug] as const,
 };

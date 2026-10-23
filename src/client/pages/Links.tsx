@@ -18,7 +18,9 @@ import { linkKey, linkPath, linkState, useDomains, useLinkLabel } from "../lib/l
 import { pageOf, parsePageSize, savedPageSize, savePageSize, sortRows, type PageSize, type SortDir } from "../lib/table";
 import { copy } from "../lib/utils";
 
-const QrDialog = lazy(() => import("../components/QrDialog").then((module) => ({ default: module.QrDialog })));
+// QR rendering, scan testing and zipping load only when used.
+const QrStudio = lazy(() => import("../components/QrStudio").then((module) => ({ default: module.QrStudio })));
+const BulkQr = lazy(() => import("../components/BulkQr").then((module) => ({ default: module.BulkQr })));
 
 type Status = "all" | "active" | "disabled" | "expired" | "broken" | "failing";
 type Sort = "created" | "updated" | "slug" | "target" | "total" | "clicks" | "status";
@@ -72,6 +74,7 @@ export function Links() {
   const pageParam = Number(params.get("page") ?? 1);
   const [creating, setCreating] = useState(false);
   const [showDeleted, setShowDeleted] = useState(false);
+  const [bulkQr, setBulkQr] = useState(false);
   const [qrLink, setQrLink] = useState<LinkListItem | null>(null);
   const urlSearch = params.get("q") ?? "";
   useEffect(() => setSearch(urlSearch), [urlSearch]);
@@ -133,6 +136,9 @@ export function Links() {
           <>
             <Button variant="outline" onClick={() => setShowDeleted(true)}>
               <ArchiveRestore /> Recently deleted
+            </Button>
+            <Button variant="outline" onClick={() => setBulkQr(true)} disabled={!list.length}>
+              <QrCode /> QR codes
             </Button>
             <DownloadButton href="/_admin/api/export/links.csv">
               <Download /> Export CSV
@@ -340,9 +346,14 @@ export function Links() {
         />
       ) : null}
 
-      {qrLink && <Suspense fallback={<div role="status" className="fixed right-6 bottom-24 z-40 rounded-xl border border-line bg-surface p-4 text-sm shadow-lg">Preparing QR code…</div>}><QrDialog open onOpenChange={(open) => !open && setQrLink(null)} shortUrl={qrLink.shortUrl} label={label(qrLink)} /></Suspense>}
+      {qrLink && <Suspense fallback={<div role="status" className="fixed right-6 bottom-24 z-40 rounded-xl border border-line bg-surface p-4 text-sm shadow-lg">Preparing QR code…</div>}><QrStudio open onOpenChange={(open) => !open && setQrLink(null)} link={qrLink} label={label(qrLink)} /></Suspense>}
       <LinkForm open={creating} onOpenChange={setCreating} onSaved={(l) => navigate(linkPath(l))} />
       <DeletedLinks open={showDeleted} onOpenChange={setShowDeleted} />
+      {bulkQr ? (
+        <Suspense fallback={null}>
+          <BulkQr open onOpenChange={setBulkQr} links={sorted} label={label} filtered={filtered} />
+        </Suspense>
+      ) : null}
     </>
   );
 }

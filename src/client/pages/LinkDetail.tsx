@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Copy, ExternalLink, History, Pencil, QrCode, Trash2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router";
 import { toast } from "sonner";
 import { describeRouting } from "../../shared/routing";
@@ -13,12 +13,14 @@ import { LinkHistory } from "../components/LinkHistory";
 import { RoutingResults } from "../components/RoutingResults";
 import { LinkForm } from "../components/LinkForm";
 import { PeriodPicker, periodQuery } from "../components/PeriodPicker";
-import { QrDialog } from "../components/QrDialog";
 import { Badge, Button, Card, CardHeader, Dialog, Empty, Notice, PageHeader, Spinner } from "../components/ui";
 import { countryName, date, flag, num, sourceLabel, when } from "../lib/format";
 import { linkPath, useLinkLabel } from "../lib/links";
 import { copy } from "../lib/utils";
 import { StateBadge } from "./Links";
+
+// QR rendering and scan testing load only when the studio opens.
+const QrStudio = lazy(() => import("../components/QrStudio").then((m) => ({ default: m.QrStudio })));
 
 export function LinkDetail() {
   const params = useParams();
@@ -296,7 +298,11 @@ export function LinkDetail() {
         link={link}
         markBroken={markBroken}
       />
-      <QrDialog open={qr} onOpenChange={setQr} shortUrl={link.shortUrl} label={label} />
+      {qr ? (
+        <Suspense fallback={null}>
+          <QrStudio open onOpenChange={setQr} link={link} label={label} />
+        </Suspense>
+      ) : null}
       <Dialog open={confirmDelete} onOpenChange={setConfirmDelete} title={`Delete ${label}?`} description="The short link stops working and its slug becomes free. Stats already collected stay in the rollups. You can restore it from Recently deleted for 90 days; to stop a link temporarily, disable it instead.">
         {dependents.data?.links.length ? (
           <div className="mb-4">

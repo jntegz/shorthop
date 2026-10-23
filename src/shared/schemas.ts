@@ -97,6 +97,8 @@ export const updateLinkSchema = z.object({
   monitor: z.boolean().optional(),
   routing: routingSchema.optional(),
   preview: previewSchema.optional(),
+  /** A QR code design (validateQrStyle checks it); null goes back to the default. */
+  qr: z.record(z.string(), z.unknown()).nullable().optional(),
   broken: z.boolean().optional(),
   /** The link visitors are pointed to while this one is marked broken; null for none. */
   replacement: z.object({ domain: z.string().regex(HOSTNAME_RE), slug: z.string().regex(IMPORT_SLUG_RE) }).nullish(),

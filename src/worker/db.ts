@@ -2,6 +2,7 @@
 
 import { linkKey, splitKey } from "../shared/domains";
 import { parsePreview, PREVIEW_IMAGE_PATH } from "../shared/preview";
+import { parseQrStyle } from "../shared/qr";
 import { parseRouting, type RouteDevice } from "../shared/routing";
 import type { KvPreview } from "./preview";
 import type { LinkDTO, LinkSource } from "../shared/types";
@@ -30,6 +31,8 @@ export interface LinkRow {
   routing: string | null;
   /** Custom social preview JSON (src/shared/preview.ts), or null. */
   preview: string | null;
+  /** QR code design JSON (src/shared/qr.ts), or null for the default. */
+  qr: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -153,6 +156,7 @@ export function toDTO(row: LinkRow, origin: string): LinkDTO {
     monitor: row.monitor !== 0,
     routing: parseRouting(row.routing),
     preview: parsePreview(row.preview),
+    qr: parseQrStyle(row.qr),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

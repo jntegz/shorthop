@@ -2,6 +2,7 @@ import { Hono, type Context } from "hono";
 import { linkKey } from "../../shared/domains";
 import { sameSnapshot, snapshotOf, type Snapshot } from "../../shared/history";
 import { parsePreview, validatePreview, type LinkPreview } from "../../shared/preview";
+import { validateQrStyle } from "../../shared/qr";
 import { parseRouting, splitChanged, validateRouting, type RouteRule, type Routing, type RoutingError } from "../../shared/routing";
 import { createLinkSchema, importSchema, linkParamSchema, versionParamSchema, listQuerySchema, resyncQuerySchema, updateLinkSchema } from "../../shared/schemas";
 import { isCheckProblem, type CheckStatus } from "../../shared/link-check";
@@ -29,19 +30,19 @@ const notConfigured = (domain: string) => `domain: "${domain}" is not one of you
 function insertStmt(db: D1Database, r: LinkRow): D1PreparedStatement {
   return db
     .prepare(
-      `INSERT INTO links (domain, slug, target, active, expires_at, utm, utm_template, pass_query, title, tags, notes, source, imported_clicks, broken, replacement, monitor, routing, preview, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO links (domain, slug, target, active, expires_at, utm, utm_template, pass_query, title, tags, notes, source, imported_clicks, broken, replacement, monitor, routing, preview, qr, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .bind(r.domain, r.slug, r.target, r.active, r.expires_at, r.utm, r.utm_template, r.pass_query, r.title, r.tags, r.notes, r.source, r.imported_clicks, r.broken, r.replacement, r.monitor, r.routing, r.preview, r.created_at, r.updated_at);
+    .bind(r.domain, r.slug, r.target, r.active, r.expires_at, r.utm, r.utm_template, r.pass_query, r.title, r.tags, r.notes, r.source, r.imported_clicks, r.broken, r.replacement, r.monitor, r.routing, r.preview, r.qr, r.created_at, r.updated_at);
 }
 
 function updateStmt(db: D1Database, r: LinkRow): D1PreparedStatement {
   return db
     .prepare(
       `UPDATE links SET target = ?, active = ?, expires_at = ?, utm = ?, utm_template = ?, pass_query = ?,
-       title = ?, tags = ?, notes = ?, broken = ?, replacement = ?, monitor = ?, routing = ?, preview = ?, updated_at = ? WHERE domain = ? AND slug = ? RETURNING *`,
+       title = ?, tags = ?, notes = ?, broken = ?, replacement = ?, monitor = ?, routing = ?, preview = ?, qr = ?, updated_at = ? WHERE domain = ? AND slug = ? RETURNING *`,
     )
-    .bind(r.target, r.active, r.expires_at, r.utm, r.utm_template, r.pass_query, r.title, r.tags, r.notes, r.broken, r.replacement, r.monitor, r.routing, r.preview, r.updated_at, r.domain, r.slug);
+    .bind(r.target, r.active, r.expires_at, r.utm, r.utm_template, r.pass_query, r.title, r.tags, r.notes, r.broken, r.replacement, r.monitor, r.routing, r.preview, r.qr, r.updated_at, r.domain, r.slug);
 }
 
 /** Publishes a saved link to KV; false when that failed (it's saved in D1 either way: answer 502 with the link). */
@@ -131,6 +132,7 @@ function withSnapshot(row: LinkRow, s: Snapshot, now = nowSec()): LinkRow {
     monitor: s.monitor ?? 1,
     routing: s.routing ?? null,
     preview: s.preview ?? null,
+    qr: s.qr ?? null,
     updated_at: now,
   };
 }
@@ -286,6 +288,7 @@ export const linksApi = new Hono<AppEnv>()
       monitor: body.monitor === false ? 0 : 1,
       routing: routing.json,
       preview: preview.json,
+      qr: null,
       created_at: now,
       updated_at: now,
     };
@@ -364,6 +367,14 @@ export const linksApi = new Hono<AppEnv>()
     const preview = previewFor(body.preview, row.preview);
     if (!preview.ok) return c.json({ error: preview.error }, 400);
     next.preview = preview.json;
+    if (body.qr !== undefined) {
+      if (body.qr === null) next.qr = null;
+      else {
+        const qr = validateQrStyle(body.qr);
+        if (!qr.ok) return c.json({ error: `qr: ${qr.error}` }, 400);
+        next.qr = JSON.stringify(qr.style);
+      }
+    }
     if (body.broken !== undefined) next.broken = body.broken ? 1 : 0;
     if (body.replacement !== undefined) {
       const r = body.replacement;
@@ -539,6 +550,7 @@ export const linksApi = new Hono<AppEnv>()
         monitor: 1,
         routing: null,
         preview: null,
+        qr: null,
         created_at: r.createdAt ?? now,
         updated_at: now,
       });
@@ -643,7 +655,7 @@ export const linksApi = new Hono<AppEnv>()
       return Number.isFinite(d.getTime()) ? d.toISOString() : "";
     };
     const body = csv([
-      ["domain", "slug", "short_url", "target", "active", "expires_at", "utm", "utm_template", "pass_query", "title", "tags", "notes", "source", "imported_clicks", "created_at", "updated_at", "broken", "replacement", "monitor", "routing", "preview"],
+      ["domain", "slug", "short_url", "target", "active", "expires_at", "utm", "utm_template", "pass_query", "title", "tags", "notes", "source", "imported_clicks", "created_at", "updated_at", "broken", "replacement", "monitor", "routing", "preview", "qr"],
       ...results.map((r) => [
         r.domain,
         r.slug,
@@ -666,6 +678,7 @@ export const linksApi = new Hono<AppEnv>()
         r.monitor,
         r.routing,
         r.preview,
+        r.qr,
       ]),
     ]);
     return c.body(body, 200, {

@@ -3,6 +3,7 @@
 import type { HistoryAction, StoredSnapshot } from "./history";
 import type { CheckProblem, CheckState } from "./link-check";
 import type { LinkPreview } from "./preview";
+import type { QrStyle } from "./qr";
 import type { Routing } from "./routing";
 
 export type LinkSource = "native" | "import";
@@ -35,6 +36,8 @@ export interface LinkDTO {
   routing: Routing | null;
   /** What link-preview crawlers see; null lets them follow the redirect. */
   preview: LinkPreview | null;
+  /** This link's QR code design; null uses the default. */
+  qr: QrStyle | null;
   createdAt: number;
   updatedAt: number;
 }
