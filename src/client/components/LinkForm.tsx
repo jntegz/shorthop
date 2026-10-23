@@ -79,7 +79,7 @@ function initial(link?: LinkDTO, slug = "", domain = ""): FormState {
     utm: link?.utm ?? false,
     utmTemplate: link?.utmTemplate ?? "",
     passQuery: link?.passQuery ?? false,
-    monitor: link?.monitor ?? true,
+    monitor: link?.monitor ?? false,
     broken: link?.broken ?? false,
     replacement: link?.replacement ? linkKey(link.replacement.domain, link.replacement.slug) : "",
     rules: link?.routing?.rules ?? [],
@@ -447,7 +447,7 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
             checked={f.monitor}
             onCheckedChange={(v) => set("monitor", v)}
             label="Check that the destination works"
-            description="Includes this link in automatic checks (Link health) and alerts you if it stops loading. Turn off for pages behind a login."
+            description="Off unless you switch it on. Adds this link to the checks under Link health, which run once automatic checking is turned on there, and alerts you if it stops loading. Leave off for pages behind a login."
             info={LINK_HELP.monitor}
           />
         </div>

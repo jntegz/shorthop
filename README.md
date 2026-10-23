@@ -22,7 +22,7 @@ A personal URL shortener that runs on one Cloudflare Worker. Short links on your
 - **UTM builder:** one field per parameter, saved presets, and a preview of the URL visitors land on.
 - **QR studio:** colours with a contrast check, dot and corner shapes, a logo, frames with a caption, a live scan test, SVG or PNG up to 4096 px, print sheets, and a ZIP of every link's code.
 - **Password-protected links and click limits:** visitors enter a password first, or a link stops after a set number of clicks, counted exactly by a Durable Object. Bots and previews don't count.
-- **Link health:** destination checks, off until you turn them on, then at the frequency you choose. A destination that fails 3 times in a row sends one email and gets a Fix dialog.
+- **Link health:** destination checks for the links you pick (**Check that the destination works**, off by default), once you turn automatic checking on and choose how often. A destination that fails 3 times in a row sends one email and gets a Fix dialog.
 - **Webhooks:** signed events for links created, changed or deleted, destinations down or back, and click milestones, with retries and a delivery log.
 - **People and roles:** with Cloudflare Access, add people as admins, managers or users, each with their own password and the permissions you tick.
 - **API at `/api`:** personal API keys for scripts, Zapier or Make and an [iOS Shortcut](docs/ios-shortcut.md). A key does only what it was given, can expire, and stops working when it's revoked.

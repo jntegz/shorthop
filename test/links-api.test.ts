@@ -218,6 +218,11 @@ describe("import", () => {
     expect(await kv("Guide")).toBeNull();
   });
 
+  it("imports links with destination checks off, like new links", async () => {
+    await call(`${API}/import`, json({ rows: [{ slug: "chk", target: "https://example.com/chk" }] }));
+    expect((await env.DB.prepare("SELECT monitor FROM links WHERE slug = 'chk'").first<{ monitor: number }>())?.monitor).toBe(0);
+  });
+
   it("imports links verbatim (http allowed, no UTM) and skips existing ones", async () => {
     let result = (await (await call(`${API}/import`, json({ rows }))).json()) as ImportResult;
     expect(result.created).toBe(2);

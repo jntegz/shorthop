@@ -536,7 +536,10 @@ export function Health() {
             />
             {data.items.length === 0 ? (
               <Empty icon={<Globe2 />} title="No destinations to check">
-                <p>Links that are active show up here. Disabled, expired and “no longer working” links aren't checked.</p>
+                <p>
+                  Links show up here once “Check that the destination works” is switched on in their settings (it's off for new links). Disabled, expired and “no longer
+                  working” links aren't checked.
+                </p>
               </Empty>
             ) : rows.length === 0 ? (
               <Empty title={filter ? `No destinations are “${STATE_LABEL[filter].toLowerCase()}”` : "No destinations match"}>

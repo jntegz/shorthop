@@ -80,7 +80,7 @@ export const createLinkSchema = z
     utm: z.boolean().optional(),
     utmTemplate: z.string().trim().max(512).nullish(),
     passQuery: z.boolean().optional(),
-    /** Check the destination on a schedule (default true). */
+    /** Check the destination on a schedule (default false: off until switched on). */
     monitor: z.boolean().optional(),
     routing: routingSchema.optional(),
     preview: previewSchema.optional(),

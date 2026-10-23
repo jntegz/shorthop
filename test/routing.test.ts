@@ -221,6 +221,7 @@ describe("API", () => {
 
   it("checks every routed destination and shows the worst on the link", async () => {
     await create(APP_SETUP);
+    await call(`${API}/links/sh.example/app`, { ...json({ monitor: true }), method: "PATCH" });
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) =>
       new Response(null, { status: String(input).includes("cz-b") ? 404 : 200 }),
     );

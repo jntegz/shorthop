@@ -79,7 +79,7 @@ export const LINK_HELP = {
   ),
   monitor: h(
     "Check the destination",
-    `With automatic checking on (Link health), Shorthop visits the destination as often as chosen there and lists it under Link health. After ${DOWN_AFTER_FAILS} failed checks in a row it counts as not working and you get an email. Turn off for pages that only work when signed in, or that you know block automated visitors.`,
+    `Off for new links until you switch it on. Once it's on and automatic checking is turned on under Link health, Shorthop visits the destination as often as chosen there and lists it under Link health. After ${DOWN_AFTER_FAILS} failed checks in a row it counts as not working and you get an email. Leave it off for pages that only work when signed in, or that you know block automated visitors.`,
   ),
   passQuery: h(
     "Pass query parameters through",

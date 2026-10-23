@@ -306,7 +306,7 @@ export const linksApi = new Hono<AppEnv>()
       imported_clicks: null,
       broken: 0,
       replacement: null,
-      monitor: body.monitor === false ? 0 : 1,
+      monitor: body.monitor ? 1 : 0,
       routing: routing.json,
       preview: preview.json,
       qr: null,
@@ -609,7 +609,7 @@ export const linksApi = new Hono<AppEnv>()
         imported_clicks: r.clicks ?? null,
         broken: 0,
         replacement: null,
-        monitor: 1,
+        monitor: 0,
         routing: null,
         preview: null,
         qr: null,
@@ -630,8 +630,8 @@ export const linksApi = new Hono<AppEnv>()
            updated_at = excluded.updated_at`
           : "DO NOTHING";
       const stmt = c.env.DB.prepare(
-        `INSERT INTO links (domain, slug, target, active, expires_at, utm, utm_template, pass_query, title, tags, notes, source, imported_clicks, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO links (domain, slug, target, active, expires_at, utm, utm_template, pass_query, title, tags, notes, source, imported_clicks, monitor, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (domain, slug) ${onConflict}`,
       );
       const keysJson = JSON.stringify(valid.map((r) => [r.domain, r.slug]));
@@ -651,6 +651,7 @@ export const linksApi = new Hono<AppEnv>()
             r.notes,
             r.source,
             r.imported_clicks,
+            r.monitor,
             r.created_at,
             r.updated_at,
           ),

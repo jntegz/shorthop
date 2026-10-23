@@ -89,7 +89,7 @@ describe("events", () => {
 
   it("announces a destination going down and coming back, via the cron", async () => {
     await addHook(["link.health_changed"]);
-    await createLink("dead", { target: "https://gone.example.com/" });
+    await createLink("dead", { target: "https://gone.example.com/", monitor: true });
     await enableChecks();
     for (let i = 0; i < 3; i++) {
       await runLinkChecks(env);

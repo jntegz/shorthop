@@ -43,8 +43,9 @@ const byMethod = (head: number, get: number): Route => (_u, init) => new Respons
 
 const mailEnv = { ...env, DIGEST_PROVIDER: "resend", DIGEST_API_KEY: "re_key" } as unknown as Env;
 
+/** A link with its destination check on (it's off unless asked for). */
 async function createLink(slug: string, target: string, extra: Record<string, unknown> = {}) {
-  const res = await call(`${API}/links`, json({ slug, target, ...extra }));
+  const res = await call(`${API}/links`, json({ slug, target, monitor: true, ...extra }));
   expect(res.status).toBe(201);
 }
 /** Makes every stored check due again, as if time had passed. */
@@ -387,6 +388,14 @@ describe("checks API", () => {
     const off = await (await call(`${API}/checks/links/sh.example/one`, { headers: bearer })).json();
     expect(off).toMatchObject({ monitored: false, reason: "Checks are turned off for this link." });
     expect((await call(`${API}/checks/links/sh.example/nope`, { headers: bearer })).status).toBe(404);
+  });
+
+  it("leaves a new link unchecked unless asked", async () => {
+    expect((await call(`${API}/links`, json({ slug: "plain", target: "https://a.example/" }))).status).toBe(201);
+    const { link } = (await (await call(`${API}/links/sh.example/plain`, { headers: bearer })).json()) as { link: { monitor: boolean } };
+    expect(link.monitor).toBe(false);
+    const state = await (await call(`${API}/checks/links/sh.example/plain`, { headers: bearer })).json();
+    expect(state).toMatchObject({ monitored: false, reason: "Checks are turned off for this link." });
   });
 
   it("rechecks problems on request", async () => {
