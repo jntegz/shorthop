@@ -3,6 +3,7 @@ import { isDay } from "./dates";
 import { DEAD_LINK_MAX_DELAY, DEAD_LINK_MIN_DELAY } from "./dead-link";
 import { HOSTNAME_RE } from "./domains";
 import { HEX_COLOR_RE } from "./not-found";
+import { LINK_PASSWORD_MAX, LINK_PASSWORD_MIN, MAX_CLICK_LIMIT } from "./protection";
 import { ROUTE_DEVICES } from "./routing";
 import { IMPORT_SLUG_RE } from "./slug";
 import { DIGEST_PROVIDERS, LIST_PERIODS, MISS_RETENTION_DAYS, NOISE_LIMITS, RANGES, REAL_MISS_LIMITS } from "./types";
@@ -81,6 +82,10 @@ export const createLinkSchema = z
     monitor: z.boolean().optional(),
     routing: routingSchema.optional(),
     preview: previewSchema.optional(),
+    /** Visitors must enter it first. */
+    password: z.string().min(LINK_PASSWORD_MIN).max(LINK_PASSWORD_MAX).nullish(),
+    /** Most human clicks allowed. */
+    maxClicks: z.number().int().min(1).max(MAX_CLICK_LIMIT).nullish(),
   })
   .refine((v) => v.target || v.url, { message: "target is required", path: ["target"] });
 
@@ -97,6 +102,10 @@ export const updateLinkSchema = z.object({
   monitor: z.boolean().optional(),
   routing: routingSchema.optional(),
   preview: previewSchema.optional(),
+  /** A new password; null removes protection. */
+  password: z.string().min(LINK_PASSWORD_MIN).max(LINK_PASSWORD_MAX).nullable().optional(),
+  /** null removes the limit. Setting one on a link without starts counting from 0. */
+  maxClicks: z.number().int().min(1).max(MAX_CLICK_LIMIT).nullable().optional(),
   /** A QR code design (validateQrStyle checks it); null goes back to the default. */
   qr: z.record(z.string(), z.unknown()).nullable().optional(),
   broken: z.boolean().optional(),

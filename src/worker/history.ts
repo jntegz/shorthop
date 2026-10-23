@@ -9,7 +9,7 @@ import { nowSec, type LinkRow } from "./db";
 /** SQL for a version's snapshot, built from a `links` row (keep in step with snapshotOf). */
 export const SNAPSHOT_SQL = `json_object('target', target, 'active', active, 'expires_at', expires_at, 'utm', utm, 'utm_template', utm_template,
   'pass_query', pass_query, 'title', title, 'tags', tags, 'notes', notes, 'broken', broken, 'replacement', replacement,
-  'monitor', monitor, 'routing', routing, 'preview', preview, 'qr', qr, 'source', source, 'imported_clicks', imported_clicks, 'created_at', created_at)`;
+  'monitor', monitor, 'routing', routing, 'preview', preview, 'qr', qr, 'password_hash', password_hash, 'max_clicks', max_clicks, 'source', source, 'imported_clicks', imported_clicks, 'created_at', created_at)`;
 
 /** Most versions returned for one link. */
 const LIST_LIMIT = 200;
@@ -48,13 +48,21 @@ function toDTO(r: VersionRow): VersionDTO | null {
   }
 }
 
+/** What the admin sees of a password hash: only that it's set, and whether it changed. */
+async function fingerprint(hash: string): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(hash)));
+  return `set:${[...digest.slice(0, 4)].map((b) => b.toString(16).padStart(2, "0")).join("")}`;
+}
+
 /** A link's versions, newest first. A link created again after a delete lists its earlier life too. */
 export async function listVersions(db: D1Database, domain: string, slug: string): Promise<VersionDTO[]> {
   const { results } = await db
     .prepare("SELECT id, at, action, actor, snapshot, restored_from FROM link_versions WHERE domain = ? AND slug = ? ORDER BY id DESC LIMIT ?")
     .bind(domain, slug, LIST_LIMIT)
     .all<VersionRow>();
-  return results.map(toDTO).filter((v): v is VersionDTO => v !== null);
+  const versions = results.map(toDTO).filter((v): v is VersionDTO => v !== null);
+  for (const v of versions) if (v.snapshot.password_hash) v.snapshot.password_hash = await fingerprint(v.snapshot.password_hash);
+  return versions;
 }
 
 export async function getVersion(db: D1Database, domain: string, slug: string, id: number): Promise<VersionDTO | null> {

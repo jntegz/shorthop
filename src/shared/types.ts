@@ -38,6 +38,10 @@ export interface LinkDTO {
   preview: LinkPreview | null;
   /** This link's QR code design; null uses the default. */
   qr: QrStyle | null;
+  /** Visitors must enter a password (never returned itself). */
+  protected: boolean;
+  /** Most human clicks allowed; null for no limit. */
+  maxClicks: number | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -117,6 +121,12 @@ export interface VersionDTO {
   snapshot: StoredSnapshot;
   /** For a restore: the version it copied. */
   restoredFrom: number | null;
+}
+
+/** A capped link's counter (Link page → Protection). */
+export interface CapDTO {
+  limit: number | null;
+  count: number;
 }
 
 export interface DeletedLinkDTO {

@@ -9,7 +9,10 @@ import { detectBot, detectDevice, detectOs, logHit, PREFETCH, referrerHostOf, re
 import { deadLinkResponse } from "./dead-link";
 import { isKvLink, KV_TIMEOUT_MS, kvKey, splitKey, withTimeout, type KvLink, type KvRule } from "./db";
 import { notFoundResponse } from "./not-found";
+import { capAdmit } from "./click-cap";
+import { hasAccess, tryPassword } from "./link-password";
 import { previewResponse } from "./preview";
+import { limitPage, passwordPage, unavailablePage, unlockedPage } from "./protection-pages";
 
 const MIN_CACHE_TTL = 30;
 const DEFAULT_CACHE_TTL = 60;
@@ -69,9 +72,11 @@ export function chooseRoute(request: Request, rules: readonly KvRule[]): { url: 
 }
 
 export async function handleRedirect(request: Request, env: Env, ctx: ExecutionContext, url: URL, domain: string): Promise<Response> {
-  if (request.method !== "GET" && request.method !== "HEAD") {
+  // POST only reaches a protected link's password form; anything else is turned away below.
+  if (request.method !== "GET" && request.method !== "HEAD" && request.method !== "POST") {
     return new Response("Method not allowed", { status: 405, headers: { Allow: "GET, HEAD" } });
   }
+  const notAllowed = () => new Response("Method not allowed", { status: 405, headers: { Allow: "GET, HEAD" } });
 
   const own = splitOwnParams(url.search);
   const slug = slugFromPath(url.pathname);
@@ -89,6 +94,8 @@ export async function handleRedirect(request: Request, env: Env, ctx: ExecutionC
     console.error(JSON.stringify({ message: "kv read failed", domain, slug, error: String(err) }));
     return redirectTo(env.FALLBACK_URL);
   }
+
+  if (request.method === "POST" && !link?.pw) return notAllowed();
 
   if (!link || link.a !== 1 || (link.e !== null && link.e * 1000 <= Date.now())) {
     ctx.waitUntil(logHit(request, env, url, { domain, slug, kind: "miss", probe: !link && isProbePath(slug), sourceTag: own.sourceTag, qr: own.qr }));
@@ -108,6 +115,37 @@ export async function handleRedirect(request: Request, env: Env, ctx: ExecutionC
       }
     }
     return deadLinkResponse(env, domain, slug, target && { ...target, link: replacement });
+  }
+
+  const ua = request.headers.get("User-Agent") ?? "";
+  const shortUrl = `${url.origin}/${encodeURIComponent(slug)}`;
+
+  // Password first: nothing about the destination is revealed before it.
+  if (link.pw) {
+    if (request.method === "POST") {
+      const attempt = await tryPassword(request, env, domain, slug, link.pw);
+      // Back to the short link as a GET, which now redirects (and counts the click).
+      if (attempt.ok) return unlockedPage(env, domain, slug, `${url.pathname}${url.search}`, attempt.cookie);
+      if (attempt.reason === "limited") return passwordPage(env, domain, slug, { error: "Too many tries. Wait a minute, then try again.", status: 429, retryAfter: 60 });
+      return passwordPage(env, domain, slug, { error: attempt.reason === "wrong" ? "That password isn't right. Check it and try again." : "Something went wrong. Try again.", status: 401 });
+    }
+    if (!(await hasAccess(request, env, domain, slug, link.pw))) {
+      // A custom preview is the owner's choice to show; it never leads to the destination.
+      if (link.og && isPreviewCrawler(ua)) return previewResponse(link.og, shortUrl, shortUrl, domain, request.method === "HEAD");
+      return passwordPage(env, domain, slug, { error: null, status: 200 });
+    }
+  }
+
+  // Click limit: people use one click each; bots, previews and prefetches only look.
+  if (link.mc) {
+    const bot = detectBot(request, ua, Number((request.cf as { asn?: number } | undefined)?.asn ?? 0));
+    try {
+      const cap = await capAdmit(env, domain, slug, link.mc, !bot);
+      if (!cap.ok) return limitPage(env, domain, slug);
+    } catch (err) {
+      console.error(JSON.stringify({ message: "click counter failed", domain, slug, error: String(err) }));
+      return unavailablePage(env, domain, slug);
+    }
   }
 
   const routed = link.ro?.length ? chooseRoute(request, link.ro) : null;
@@ -136,7 +174,7 @@ export async function handleRedirect(request: Request, env: Env, ctx: ExecutionC
   ctx.waitUntil(logHit(request, env, url, { domain, slug, kind: "hit", sourceTag: own.sourceTag, qr: own.qr, route: link.ro?.length ? (routed?.key ?? "-") : undefined }));
   // Preview crawlers read the owner's preview; everyone else is redirected.
   if (link.og && isPreviewCrawler(request.headers.get("User-Agent") ?? "")) {
-    return previewResponse(link.og, `${url.origin}/${encodeURIComponent(slug)}`, location, domain, request.method === "HEAD");
+    return previewResponse(link.og, shortUrl, location, domain, request.method === "HEAD");
   }
   return redirectTo(location);
 }

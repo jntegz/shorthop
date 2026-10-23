@@ -7,6 +7,8 @@ export const HISTORY_FIELDS = [
   "routing",
   "preview",
   "qr",
+  "password_hash",
+  "max_clicks",
   "title",
   "active",
   "expires_at",
@@ -42,6 +44,9 @@ export interface Snapshot {
   preview?: string | null;
   /** QR design JSON, or null. Versions saved before designs existed lack it. */
   qr?: string | null;
+  /** The password hash in storage; the admin only sees a fingerprint of it. */
+  password_hash?: string | null;
+  max_clicks?: number | null;
 }
 
 /** What's stored: the restorable fields plus what re-creating a deleted link needs. */
@@ -111,6 +116,8 @@ export function snapshotOf<T extends StoredSnapshot>(row: T): StoredSnapshot {
     routing: row.routing ?? null,
     preview: row.preview ?? null,
     qr: row.qr ?? null,
+    password_hash: row.password_hash ?? null,
+    max_clicks: row.max_clicks ?? null,
     source: row.source,
     imported_clicks: row.imported_clicks,
     created_at: row.created_at,
@@ -122,6 +129,8 @@ export const FIELD_LABEL: Record<HistoryField, string> = {
   routing: "Smart routing",
   preview: "Social preview",
   qr: "QR code design",
+  password_hash: "Password",
+  max_clicks: "Click limit",
   title: "Title",
   active: "Active",
   expires_at: "Expires",

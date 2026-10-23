@@ -108,5 +108,6 @@ export const keys = {
   deleted: ["deleted"] as const,
   utmPresets: ["utm-presets"] as const,
   qrDefault: ["qr", "default"] as const,
+  cap: (domain: string, slug: string) => ["cap", domain, slug] as const,
   linkCheck: (domain: string, slug: string) => ["checks", domain, slug] as const,
 };

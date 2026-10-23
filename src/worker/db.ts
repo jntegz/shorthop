@@ -33,6 +33,10 @@ export interface LinkRow {
   preview: string | null;
   /** QR code design JSON (src/shared/qr.ts), or null for the default. */
   qr: string | null;
+  /** PBKDF2 hash of the link's password, or null. Never sent to the admin. */
+  password_hash: string | null;
+  /** Most human clicks allowed, or null for no limit. */
+  max_clicks: number | null;
   created_at: number;
   updated_at: number;
 }
@@ -59,6 +63,10 @@ export interface KvLink {
   ro?: KvRule[];
   /** custom social preview, for link-preview crawlers */
   og?: KvPreview;
+  /** password hash: visitors must enter the password first */
+  pw?: string;
+  /** click limit, counted by the ClickCap Durable Object */
+  mc?: number;
 }
 
 /** A routing rule as the redirect needs it: no names, enabled rules only. */
@@ -88,7 +96,9 @@ export function isKvLink(v: unknown): v is KvLink {
     (r.b === undefined || r.b === 1) &&
     (r.r === undefined || typeof r.r === "string") &&
     (r.ro === undefined || Array.isArray(r.ro)) &&
-    (r.og === undefined || (typeof r.og === "object" && r.og !== null))
+    (r.og === undefined || (typeof r.og === "object" && r.og !== null)) &&
+    (r.pw === undefined || typeof r.pw === "string") &&
+    (r.mc === undefined || typeof r.mc === "number")
   );
 }
 
@@ -116,6 +126,8 @@ function toKv(row: LinkRow, defaultUtm: string): KvLink {
       ...(r.name ? { n: r.name } : {}),
     }));
   }
+  if (row.password_hash) kv.pw = row.password_hash;
+  if (row.max_clicks) kv.mc = row.max_clicks;
   const preview = parsePreview(row.preview);
   if (preview) {
     const img = preview.image;
@@ -157,6 +169,8 @@ export function toDTO(row: LinkRow, origin: string): LinkDTO {
     routing: parseRouting(row.routing),
     preview: parsePreview(row.preview),
     qr: parseQrStyle(row.qr),
+    protected: Boolean(row.password_hash),
+    maxClicks: row.max_clicks,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

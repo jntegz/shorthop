@@ -3,12 +3,14 @@ import { linkKey } from "../../shared/domains";
 import { sameSnapshot, snapshotOf, type Snapshot } from "../../shared/history";
 import { parsePreview, validatePreview, type LinkPreview } from "../../shared/preview";
 import { validateQrStyle } from "../../shared/qr";
+import { capCount, capReset } from "../click-cap";
+import { hashLinkPassword } from "../link-password";
 import { parseRouting, splitChanged, validateRouting, type RouteRule, type Routing, type RoutingError } from "../../shared/routing";
 import { createLinkSchema, importSchema, linkParamSchema, versionParamSchema, listQuerySchema, resyncQuerySchema, updateLinkSchema } from "../../shared/schemas";
 import { isCheckProblem, type CheckStatus } from "../../shared/link-check";
 import { generateSlug, validateSlug } from "../../shared/slug";
 import { normalizeTarget, validateUtmTemplate } from "../../shared/target";
-import type { ImportResult, ImportRowResult, LinkDTO, LinkListItem } from "../../shared/types";
+import type { CapDTO, ImportResult, ImportRowResult, LinkDTO, LinkListItem } from "../../shared/types";
 import { fullTokenScope, TOKEN_SCOPE_ERROR } from "../auth";
 import { getDefaultUtm, getLink, kvKey, nowSec, publish, toDTO, type LinkRow } from "../db";
 import { domainsOf, isConfiguredDomain, selfHosts, shortOrigin } from "../domains";
@@ -30,19 +32,19 @@ const notConfigured = (domain: string) => `domain: "${domain}" is not one of you
 function insertStmt(db: D1Database, r: LinkRow): D1PreparedStatement {
   return db
     .prepare(
-      `INSERT INTO links (domain, slug, target, active, expires_at, utm, utm_template, pass_query, title, tags, notes, source, imported_clicks, broken, replacement, monitor, routing, preview, qr, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO links (domain, slug, target, active, expires_at, utm, utm_template, pass_query, title, tags, notes, source, imported_clicks, broken, replacement, monitor, routing, preview, qr, password_hash, max_clicks, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .bind(r.domain, r.slug, r.target, r.active, r.expires_at, r.utm, r.utm_template, r.pass_query, r.title, r.tags, r.notes, r.source, r.imported_clicks, r.broken, r.replacement, r.monitor, r.routing, r.preview, r.qr, r.created_at, r.updated_at);
+    .bind(r.domain, r.slug, r.target, r.active, r.expires_at, r.utm, r.utm_template, r.pass_query, r.title, r.tags, r.notes, r.source, r.imported_clicks, r.broken, r.replacement, r.monitor, r.routing, r.preview, r.qr, r.password_hash, r.max_clicks, r.created_at, r.updated_at);
 }
 
 function updateStmt(db: D1Database, r: LinkRow): D1PreparedStatement {
   return db
     .prepare(
       `UPDATE links SET target = ?, active = ?, expires_at = ?, utm = ?, utm_template = ?, pass_query = ?,
-       title = ?, tags = ?, notes = ?, broken = ?, replacement = ?, monitor = ?, routing = ?, preview = ?, qr = ?, updated_at = ? WHERE domain = ? AND slug = ? RETURNING *`,
+       title = ?, tags = ?, notes = ?, broken = ?, replacement = ?, monitor = ?, routing = ?, preview = ?, qr = ?, password_hash = ?, max_clicks = ?, updated_at = ? WHERE domain = ? AND slug = ? RETURNING *`,
     )
-    .bind(r.target, r.active, r.expires_at, r.utm, r.utm_template, r.pass_query, r.title, r.tags, r.notes, r.broken, r.replacement, r.monitor, r.routing, r.preview, r.qr, r.updated_at, r.domain, r.slug);
+    .bind(r.target, r.active, r.expires_at, r.utm, r.utm_template, r.pass_query, r.title, r.tags, r.notes, r.broken, r.replacement, r.monitor, r.routing, r.preview, r.qr, r.password_hash, r.max_clicks, r.updated_at, r.domain, r.slug);
 }
 
 /** Publishes a saved link to KV; false when that failed (it's saved in D1 either way: answer 502 with the link). */
@@ -103,6 +105,15 @@ function routingFor(c: Context<AppEnv>, input: RoutingInput, prev: string | null
   return { ok: true, json: JSON.stringify(routing) };
 }
 
+/** Zeroes a link's click counter. Logged, not fatal: the link itself is saved. */
+async function resetCounter(env: Env, row: LinkRow): Promise<void> {
+  try {
+    await capReset(env, row.domain, row.slug);
+  } catch (err) {
+    console.error(JSON.stringify({ message: "click counter reset failed", domain: row.domain, slug: row.slug, error: String(err) }));
+  }
+}
+
 type PreviewInput = LinkPreview | null | undefined;
 
 /** The preview JSON to store: unchanged when not sent, null when turned off, otherwise validated. */
@@ -133,6 +144,8 @@ function withSnapshot(row: LinkRow, s: Snapshot, now = nowSec()): LinkRow {
     routing: s.routing ?? null,
     preview: s.preview ?? null,
     qr: s.qr ?? null,
+    password_hash: s.password_hash ?? null,
+    max_clicks: s.max_clicks ?? null,
     updated_at: now,
   };
 }
@@ -289,6 +302,8 @@ export const linksApi = new Hono<AppEnv>()
       routing: routing.json,
       preview: preview.json,
       qr: null,
+      password_hash: body.password ? await hashLinkPassword(body.password) : null,
+      max_clicks: body.maxClicks ?? null,
       created_at: now,
       updated_at: now,
     };
@@ -312,6 +327,8 @@ export const linksApi = new Hono<AppEnv>()
       }
     }
     if (!row) return c.json({ error: "Could not generate a free slug. Try again." }, 500);
+    // A deleted link with this slug may have left a count behind.
+    if (row.max_clicks) await resetCounter(c.env, row);
 
     try {
       await publishSaved(c.env, row);
@@ -367,6 +384,8 @@ export const linksApi = new Hono<AppEnv>()
     const preview = previewFor(body.preview, row.preview);
     if (!preview.ok) return c.json({ error: preview.error }, 400);
     next.preview = preview.json;
+    if (body.password !== undefined) next.password_hash = body.password === null ? null : await hashLinkPassword(body.password);
+    if (body.maxClicks !== undefined) next.max_clicks = body.maxClicks;
     if (body.qr !== undefined) {
       if (body.qr === null) next.qr = null;
       else {
@@ -385,6 +404,8 @@ export const linksApi = new Hono<AppEnv>()
       next.replacement = r ? linkKey(r.domain, r.slug) : null;
     }
 
+    // A new limit counts from now; changing an existing one keeps the count.
+    if (row.max_clicks === null && next.max_clicks !== null) await resetCounter(c.env, next);
     const changed = !sameSnapshot(snapshotOf(row), snapshotOf(next));
     return saveEdit(c, next, changed ? versionStmt(c.env.DB, next, "update", c.get("identity"), { at: next.updated_at }) : null);
   })
@@ -433,6 +454,25 @@ export const linksApi = new Hono<AppEnv>()
     if (invalid) return c.json({ error: invalid }, 400);
     if (sameSnapshot(snapshotOf(row), snapshotOf(next))) return c.json({ error: "The link already matches this version." }, 409);
     return saveEdit(c, next, versionStmt(c.env.DB, next, "restore", c.get("identity"), { at: next.updated_at, restoredFrom: id }));
+  })
+
+  /** A capped link's counter. */
+  .get("/links/:domain/:slug/cap", validate("param", linkParamSchema), async (c) => {
+    const { domain, slug } = c.req.valid("param");
+    const row = await getLink(c.env.DB, domain, slug);
+    if (!row) return c.json({ error: "Link not found" }, 404);
+    const cap: CapDTO = { limit: row.max_clicks, count: row.max_clicks ? await capCount(c.env, domain, slug) : 0 };
+    return c.json(cap);
+  })
+
+  /** Starts the count again, so the limit allows its full number of clicks. */
+  .post("/links/:domain/:slug/cap/reset", validate("param", linkParamSchema), async (c) => {
+    const { domain, slug } = c.req.valid("param");
+    const row = await getLink(c.env.DB, domain, slug);
+    if (!row) return c.json({ error: "Link not found" }, 404);
+    await capReset(c.env, domain, slug);
+    const cap: CapDTO = { limit: row.max_clicks, count: 0 };
+    return c.json(cap);
   })
 
   .get("/deleted", async (c) => c.json({ links: await deletedLinks(c.env.DB) }))
@@ -551,6 +591,8 @@ export const linksApi = new Hono<AppEnv>()
         routing: null,
         preview: null,
         qr: null,
+        password_hash: null,
+        max_clicks: null,
         created_at: r.createdAt ?? now,
         updated_at: now,
       });
@@ -655,7 +697,7 @@ export const linksApi = new Hono<AppEnv>()
       return Number.isFinite(d.getTime()) ? d.toISOString() : "";
     };
     const body = csv([
-      ["domain", "slug", "short_url", "target", "active", "expires_at", "utm", "utm_template", "pass_query", "title", "tags", "notes", "source", "imported_clicks", "created_at", "updated_at", "broken", "replacement", "monitor", "routing", "preview", "qr"],
+      ["domain", "slug", "short_url", "target", "active", "expires_at", "utm", "utm_template", "pass_query", "title", "tags", "notes", "source", "imported_clicks", "created_at", "updated_at", "broken", "replacement", "monitor", "routing", "preview", "qr", "password_protected", "max_clicks"],
       ...results.map((r) => [
         r.domain,
         r.slug,
@@ -679,6 +721,8 @@ export const linksApi = new Hono<AppEnv>()
         r.routing,
         r.preview,
         r.qr,
+        r.password_hash ? 1 : 0,
+        r.max_clicks,
       ]),
     ]);
     return c.body(body, 200, {

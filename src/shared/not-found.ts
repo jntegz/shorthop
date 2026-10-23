@@ -86,6 +86,8 @@ export interface PageCard {
   note?: string | null;
   /** Sends the visitor on after this many seconds (a meta refresh: the page CSP allows no scripts). */
   refresh?: { seconds: number; url: string } | null;
+  /** A password form that posts back to the page (protected links). */
+  form?: { error: string | null } | null;
 }
 
 /** The full HTML document for a card in the not-found page's style. */
@@ -119,6 +121,15 @@ ${card.refresh ? `<meta http-equiv="refresh" content="${card.refresh.seconds};ur
   a.btn:hover { transform:translateY(-1px); box-shadow:0 8px 20px color-mix(in srgb, var(--accent) 30%, transparent); }
   a.btn:focus-visible { outline:2px solid var(--fg); outline-offset:3px; }
   .note { margin:12px 0 0; color:var(--muted); font:13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap:anywhere; }
+  form { display:grid; gap:10px; margin:0 0 4px; text-align:left; }
+  form label { font-size:14px; font-weight:600; }
+  form input { font:inherit; width:100%; padding:12px 14px; border:1px solid var(--line); border-radius:12px; background:var(--card); color:var(--fg); }
+  form input:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+  form button { font:inherit; font-weight:600; border:0; border-radius:12px; padding:12px 20px; background:var(--accent); color:var(--on-accent); cursor:pointer; }
+  form button:focus-visible { outline:2px solid var(--fg); outline-offset:3px; }
+  .err { margin:0 0 4px; padding:10px 12px; border-radius:12px; background:color-mix(in srgb, #b93845 10%, var(--card)); color:#b93845; font-size:14px; text-align:left; }
+  .legal { margin:28px 0 0; font-size:12px; }
+  .legal a { color:var(--muted); }
   @media (max-width:420px) { main { padding:32px 22px 28px; } .code { font-size:72px; } h1 { font-size:21px; } }
   @media (prefers-reduced-motion:reduce) { a.btn { transition:none; } a.btn:hover { transform:none; } }
 </style>
@@ -130,6 +141,11 @@ ${card.refresh ? `<meta http-equiv="refresh" content="${card.refresh.seconds};ur
   <h1>${escapeHtml(card.heading)}</h1>
   ${card.address ? `<div class="addr">${escapeHtml(card.address)}</div>` : ""}
   ${message ? `<p>${message}</p>` : ""}
+  ${
+    card.form
+      ? `<form method="post">${card.form.error ? `<p class="err" role="alert">${escapeHtml(card.form.error)}</p>` : ""}<label for="pw">Password</label><input id="pw" name="password" type="password" autocomplete="current-password" required maxlength="128" autofocus><button type="submit">Continue</button></form>`
+      : ""
+  }
   ${card.button ? `<a class="btn" href="${escapeHtml(card.button.href)}">${escapeHtml(card.button.label)} <span aria-hidden="true">→</span></a>` : ""}
   ${card.note ? `<div class="note">${escapeHtml(card.note)}</div>` : ""}
 </main>

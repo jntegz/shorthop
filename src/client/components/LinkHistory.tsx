@@ -42,6 +42,9 @@ export function snapshotOfLink(l: LinkDTO): Snapshot {
     monitor: l.monitor ? 1 : 0,
     routing: l.routing ? JSON.stringify(l.routing) : null,
     preview: l.preview ? JSON.stringify(l.preview) : null,
+    // Only the history's fingerprints are comparable; "set" vs null is enough here.
+    password_hash: l.protected ? "set" : null,
+    max_clicks: l.maxClicks,
   };
 }
 
@@ -56,9 +59,11 @@ function Value({ field, value, old }: { field: HistoryField; value: Snapshot[His
   const cls = cn("min-w-0 rounded px-1.5 py-0.5 text-xs break-words", old ? "bg-danger-soft/70 text-muted line-through decoration-danger/40" : "bg-good-soft text-fg");
   if (BOOLEAN_FIELDS.has(field)) return <span className={cls}>{value ? "On" : "Off"}</span>;
   if (value === null || value === "") {
-    const none = field === "expires_at" ? "Never" : field === "routing" || field === "preview" ? "Off" : field === "replacement" ? "None" : field === "utm_template" ? "Default" : "Empty";
+    const none = field === "expires_at" ? "Never" : field === "routing" || field === "preview" ? "Off" : field === "password_hash" ? "None" : field === "max_clicks" ? "No limit" : field === "replacement" ? "None" : field === "utm_template" ? "Default" : "Empty";
     return <span className={cn(cls, "italic")}>{none}</span>;
   }
+  if (field === "password_hash") return <span className={cls}>{value ? "Set" : "None"}</span>;
+  if (field === "max_clicks") return <span className={cls}>{value ? `${Number(value).toLocaleString("en")} visits` : "No limit"}</span>;
   if (field === "preview") {
     const p = parsePreview(String(value));
     return <span className={cls}>{p ? `“${p.title}”${p.image ? " with image" : ""}` : "Off"}</span>;
@@ -106,7 +111,9 @@ export function ChangeList({ changes }: { changes: FieldChange[] }) {
         <div key={c.field} className="grid gap-1 text-xs sm:grid-cols-[9.5rem_1fr]">
           <dt className="pt-0.5 text-muted">{FIELD_LABEL[c.field]}</dt>
           <dd className="flex min-w-0 flex-wrap items-center gap-1.5">
-            {c.field === "tags" ? (
+            {c.field === "password_hash" && c.before && c.after ? (
+              <span className="rounded bg-good-soft px-1.5 py-0.5 text-xs text-fg">Changed to a new password</span>
+            ) : c.field === "tags" ? (
               <TagChange before={String(c.before ?? "")} after={String(c.after ?? "")} />
             ) : (
               <>
@@ -122,9 +129,9 @@ export function ChangeList({ changes }: { changes: FieldChange[] }) {
   );
 }
 
-function RestoreDialog({ link, version, onClose }: { link: LinkDTO; version: VersionDTO; onClose: () => void }) {
+function RestoreDialog({ link, current, version, onClose }: { link: LinkDTO; current: Snapshot; version: VersionDTO; onClose: () => void }) {
   const qc = useQueryClient();
-  const changes = diffSnapshots(snapshotOfLink(link), version.snapshot);
+  const changes = diffSnapshots(current, version.snapshot);
   const restore = useMutation({
     mutationFn: () =>
       call(api.links[":domain"][":slug"].history[":id"].restore.$post({ param: { domain: link.domain, slug: link.slug, id: String(version.id) } })),
@@ -169,7 +176,8 @@ export function LinkHistory({ link }: { link: LinkDTO }) {
     queryFn: () => call(api.links[":domain"][":slug"].history.$get({ param: { domain: link.domain, slug: link.slug } })),
   });
   const versions = q.data?.versions ?? [];
-  const current = snapshotOfLink(link);
+  // The admin never sees password hashes; the newest version's fingerprint stands for the current one.
+  const current: Snapshot = { ...snapshotOfLink(link), password_hash: link.protected ? (versions[0]?.snapshot.password_hash ?? "set") : null };
   const shown = all ? versions : versions.slice(0, COLLAPSED);
 
   return (
@@ -244,7 +252,7 @@ export function LinkHistory({ link }: { link: LinkDTO }) {
           ) : null}
         </>
       )}
-      {restoring ? <RestoreDialog link={link} version={restoring} onClose={() => setRestoring(null)} /> : null}
+      {restoring ? <RestoreDialog link={link} current={current} version={restoring} onClose={() => setRestoring(null)} /> : null}
     </Card>
   );
 }

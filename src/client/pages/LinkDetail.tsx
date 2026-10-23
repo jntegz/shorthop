@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Copy, ExternalLink, History, Pencil, QrCode, Trash2 } from "lucide-react";
+import { ArrowLeft, Copy, ExternalLink, Gauge, History, Lock, Pencil, QrCode, Trash2 } from "lucide-react";
 import { lazy, Suspense, useEffect, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router";
 import { toast } from "sonner";
@@ -18,6 +18,18 @@ import { countryName, date, flag, num, sourceLabel, when } from "../lib/format";
 import { linkPath, useLinkLabel } from "../lib/links";
 import { copy } from "../lib/utils";
 import { StateBadge } from "./Links";
+
+/** "37 of 100 visits used", red once the limit is reached. */
+function CapBadge({ domain, slug, limit }: { domain: string; slug: string; limit: number }) {
+  const q = useQuery({ queryKey: keys.cap(domain, slug), queryFn: () => call(api.links[":domain"][":slug"].cap.$get({ param: { domain, slug } })) });
+  const full = q.data ? q.data.count >= limit : false;
+  return (
+    <span className={full ? "inline-flex items-center gap-1 font-medium text-danger" : "inline-flex items-center gap-1"} title="Bots and link previews don't count">
+      <Gauge className="size-3" aria-hidden />
+      {q.data ? `${num(q.data.count)} of ${num(limit)} visits used${full ? ": limit reached" : ""}` : `Limit ${num(limit)} visits`}
+    </span>
+  );
+}
 
 // QR rendering and scan testing load only when the studio opens.
 const QrStudio = lazy(() => import("../components/QrStudio").then((m) => ({ default: m.QrStudio })));
@@ -183,6 +195,12 @@ export function LinkDetail() {
         <span>UTM {link.utm ? (link.utmTemplate ? "custom template" : "default template") : "off"}</span>
         {link.routing ? <span>Smart routing: {describeRouting(link.routing)}</span> : null}
         {link.preview ? <span title={link.preview.title}>Custom social preview</span> : null}
+        {link.protected ? (
+          <span className="inline-flex items-center gap-1">
+            <Lock className="size-3" aria-hidden /> Password protected
+          </span>
+        ) : null}
+        {link.maxClicks ? <CapBadge domain={link.domain} slug={link.slug} limit={link.maxClicks} /> : null}
         {link.passQuery ? <span>Passes query params</span> : null}
         {link.tags.map((t) => (
           <Badge key={t} tone="accent">

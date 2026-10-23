@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArchiveRestore, BarChart3, Copy, Split, Download, Link2, Plus, Search, QrCode, X } from "lucide-react";
+import { ArchiveRestore, BarChart3, Copy, Gauge, Lock, Split, Download, Link2, Plus, Search, QrCode, X } from "lucide-react";
 import { lazy, Suspense, useDeferredValue, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { toast } from "sonner";
@@ -257,6 +257,16 @@ export function Links() {
                         {label(l)}
                       </Link>
                       {l.source === "import" ? <Badge>Imported</Badge> : null}
+                      {l.protected ? (
+                        <span title="Password protected" className="text-muted">
+                          <Lock className="size-3.5" aria-label="Password protected" />
+                        </span>
+                      ) : null}
+                      {l.maxClicks ? (
+                        <span title={`Opens at most ${l.maxClicks.toLocaleString("en")} times`} className="text-muted">
+                          <Gauge className="size-3.5" aria-label="Visit limit" />
+                        </span>
+                      ) : null}
                       {l.routing ? (
                         <Badge tone="accent" title={`Smart routing: ${describeRouting(l.routing)}`}>
                           <Split className="size-3" aria-hidden /> Smart

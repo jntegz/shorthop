@@ -16,6 +16,9 @@ import { notFoundResponse, serveNotFoundImage } from "./not-found";
 import { handleRedirect, redirectTo } from "./redirect";
 import { pruneLoginState } from "./session";
 
+// The click-limit counter (a Durable Object class must be exported here).
+export { ClickCap } from "./click-cap";
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);

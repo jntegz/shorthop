@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import { args } from "../../scripts/lib";
 import { CHECKS_CRON, DIGEST_CRON, ROLLUP_CRON } from "../../src/shared/schedule";
-import { configFromText, deployProblems, EXAMPLE_CONFIG, EXAMPLE_FILE, parseJsonc, renderConfig, routeHosts, type SetupConfig } from "../../scripts/setup/template";
+import { configFromText, deployProblems, EXAMPLE_CONFIG, EXAMPLE_FILE, outdatedProblems, parseJsonc, renderConfig, routeHosts, type SetupConfig } from "../../scripts/setup/template";
 import {
   datasetProblem,
   defaultSender,
@@ -79,6 +79,23 @@ describe("config template", () => {
     const problems = deployProblems(EXAMPLE_CONFIG).join(" ");
     for (const p of ["account_id", "KV", "database_id", "placeholder"]) assert.match(problems, new RegExp(p));
     assert.match(deployProblems({ ...REAL, adminHost: "admin.example" }).join(), /placeholder/);
+  });
+});
+
+describe("configs from older versions", () => {
+  it("accepts the current template", () => {
+    assert.deepEqual(outdatedProblems(renderConfig(REAL)), []);
+  });
+
+  it("names the cron, rate limiter and Durable Object an older config lacks", () => {
+    const old = renderConfig(REAL)
+      .replace(`, ${JSON.stringify(CHECKS_CRON)}`, "")
+      .replace(/,\n\s*\/\/ Password attempts on a protected short link[^\n]*\n[^\n]*LINK_PASSWORD_LIMITER[^\n]*/, "")
+      .replace(/\n\s*\/\/ Exact click limits[\s\S]*?"migrations": \[[^\n]*\],/, "");
+    assert.equal(parseJsonc(old, "old").durable_objects, undefined);
+    const problems = outdatedProblems(old);
+    assert.equal(problems.length, 3);
+    assert.match(problems.join(" "), /\*\/30 \* \* \* \*.*LINK_PASSWORD_LIMITER.*CLICK_CAPS/);
   });
 });
 

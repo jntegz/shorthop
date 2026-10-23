@@ -149,8 +149,17 @@ ${routes}
     { "name": "AUTH_LIMITER", "namespace_id": "1001", "simple": { "limit": 10, "period": 60 } },
     // Admin password attempts per client network (a burst brake; the lockout
     // that counts is kept in D1).
-    { "name": "LOGIN_LIMITER", "namespace_id": "1002", "simple": { "limit": 5, "period": 60 } }
+    { "name": "LOGIN_LIMITER", "namespace_id": "1002", "simple": { "limit": 5, "period": 60 } },
+    // Password attempts on a protected short link, per client network and link.
+    { "name": "LINK_PASSWORD_LIMITER", "namespace_id": "1003", "simple": { "limit": 10, "period": 60 } }
   ],
+
+  // Exact click limits: one counter per capped link, used only by links with a
+  // limit (src/worker/click-cap.ts). SQLite-backed, so it works on the Free plan.
+  "durable_objects": {
+    "bindings": [{ "name": "CLICK_CAPS", "class_name": "ClickCap" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ClickCap"] }],
 ${sendEmail}
   "triggers": {
     // Daily rollup at 01:15 UTC, weekly digest Mondays 07:00 UTC, destination
@@ -286,5 +295,21 @@ export function deployProblems(c: SetupConfig): string[] {
   if (!c.shortDomains.length) problems.push("SHORT_DOMAINS is empty.");
   const placeholder = routeHosts(c).find(isPlaceholderHost);
   if (placeholder) problems.push(`${placeholder} is a placeholder domain.`);
+  return problems;
+}
+
+/**
+ * Entries this version needs that a wrangler.jsonc written by an older
+ * version lacks. `npm run setup -- upgrade` adds them (and applies migrations).
+ */
+export function outdatedProblems(text: string, file = CONFIG_FILE): string[] {
+  const raw = parseJsonc(text, file);
+  const crons = arr(obj(raw.triggers).crons);
+  const limiters = arr(raw.ratelimits).map((r) => obj(r).name);
+  const objects = arr(obj(raw.durable_objects).bindings).map((b) => obj(b).name);
+  const problems: string[] = [];
+  if (!crons.includes(CHECKS_CRON)) problems.push(`The cron "${CHECKS_CRON}" (destination checks) is missing from triggers.crons.`);
+  if (!limiters.includes("LINK_PASSWORD_LIMITER")) problems.push("The LINK_PASSWORD_LIMITER rate limiter (password-protected links) is missing.");
+  if (!objects.includes("CLICK_CAPS")) problems.push("The CLICK_CAPS Durable Object and its migrations entry (click limits) are missing.");
   return problems;
 }

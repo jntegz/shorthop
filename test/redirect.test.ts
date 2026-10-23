@@ -194,9 +194,10 @@ describe("redirects", () => {
 });
 
 describe("worker module", () => {
-  it("exports only the default handler (Workers reject other entry exports)", async () => {
+  it("exports only the default handler and Durable Object classes (Workers reject other entry exports)", async () => {
     const mod = await import("../src/worker/index");
-    expect(Object.keys(mod)).toEqual(["default"]);
+    expect(Object.keys(mod).sort()).toEqual(["ClickCap", "default"]);
+    expect(typeof mod.ClickCap).toBe("function");
   });
 });
 

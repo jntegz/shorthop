@@ -1,10 +1,11 @@
-import { ChevronDown, Link2, MessageSquareText, Split } from "lucide-react";
+import { ChevronDown, Link2, MessageSquareText, ShieldCheck, Split } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router";
 import { toast } from "sonner";
 import { validateSlug } from "../../shared/slug";
 import { validatePreview, type LinkPreview } from "../../shared/preview";
+import { linkPasswordProblem, MAX_CLICK_LIMIT } from "../../shared/protection";
 import { describeRouting, validateRouting, type RouteRule } from "../../shared/routing";
 import { normalizeTarget, validateUtmTemplate } from "../../shared/target";
 import type { LinkDTO } from "../../shared/types";
@@ -13,6 +14,7 @@ import { fromLocalInput, toLocalInput } from "../lib/format";
 import { LINK_HELP } from "../lib/help";
 import { linkKey, linkState, useDomains, useLinkLabel } from "../lib/links";
 import { cn, copy } from "../lib/utils";
+import { LinkProtection, type PasswordMode } from "./LinkProtection";
 import { LinkUtm } from "./LinkUtm";
 import { PreviewEditor } from "./PreviewEditor";
 import { RoutingEditor } from "./RoutingEditor";
@@ -57,6 +59,10 @@ interface FormState {
   utmCustom: boolean;
   /** Why the custom UTM fields can't be saved, from the builder. */
   utmProblem: string | null;
+  passwordMode: PasswordMode;
+  password: string;
+  capOn: boolean;
+  maxClicks: string;
 }
 
 function initial(link?: LinkDTO, slug = "", domain = ""): FormState {
@@ -79,6 +85,10 @@ function initial(link?: LinkDTO, slug = "", domain = ""): FormState {
     preview: link?.preview ?? null,
     utmCustom: Boolean(link?.utmTemplate),
     utmProblem: null,
+    passwordMode: "keep",
+    password: "",
+    capOn: Boolean(link?.maxClicks),
+    maxClicks: link?.maxClicks ? String(link.maxClicks) : "100",
   };
 }
 
@@ -92,6 +102,7 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
   const [advanced, setAdvanced] = useState(false);
   const [routingOpen, setRoutingOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [protectionOpen, setProtectionOpen] = useState(false);
 
   useEffect(() => {
     if (open) {
@@ -100,6 +111,7 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
       setAdvanced(Boolean(link));
       setRoutingOpen(Boolean(link?.routing));
       setPreviewOpen(false);
+      setProtectionOpen(false);
     }
   }, [open, link, initialSlug, initialDomain, markBroken]);
 
@@ -127,7 +139,11 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
   const routingErrors = routingCheck && !routingCheck.ok ? routingCheck.errors : [];
   const previewCheck = f.preview ? validatePreview(f.preview) : null;
   const previewProblems = previewCheck && !previewCheck.ok ? previewCheck.problems : [];
-  const valid = !errors.target && !errors.slug && !errors.utmTemplate && routingErrors.length === 0 && previewProblems.length === 0;
+  const passwordError = f.passwordMode === "set" ? linkPasswordProblem(f.password) : null;
+  const capNumber = Number(f.maxClicks);
+  const capError = f.capOn && (!Number.isInteger(capNumber) || capNumber < 1 || capNumber > MAX_CLICK_LIMIT) ? `Enter a whole number from 1 to ${MAX_CLICK_LIMIT.toLocaleString("en")}.` : null;
+  const valid =
+    !errors.target && !errors.slug && !errors.utmTemplate && routingErrors.length === 0 && previewProblems.length === 0 && !passwordError && !capError;
 
   const save = useMutation({
     mutationFn: async () => {
@@ -144,6 +160,8 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
         monitor: f.monitor,
         routing: f.rules.length ? { rules: f.rules } : null,
         preview: f.preview,
+        maxClicks: f.capOn ? capNumber : null,
+        ...(f.passwordMode === "set" ? { password: f.password } : f.passwordMode === "remove" ? { password: null } : {}),
       };
       if (link) {
         const cut = f.replacement.indexOf("/");
@@ -155,6 +173,7 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
     },
     onSuccess: (saved) => {
       void qc.invalidateQueries({ queryKey: keys.allLinks });
+      void qc.invalidateQueries({ queryKey: keys.cap(saved.domain, saved.slug) });
       qc.setQueryData(keys.link(saved.domain, saved.slug), { link: saved });
       toast.success(editing ? "Link updated" : "Link created", {
         description: "Live worldwide within about a minute.",
@@ -182,6 +201,7 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
     if (errors.utmTemplate) setAdvanced(true);
     if (routingErrors.length) setRoutingOpen(true);
     if (previewProblems.length) setPreviewOpen(true);
+    if (passwordError || capError) setProtectionOpen(true);
     if (valid && !save.isPending) save.mutate();
   };
 
@@ -283,6 +303,39 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
               destination={targetCheck?.ok ? targetCheck.url : null}
               domain={link?.domain ?? domain}
               problems={touched ? previewProblems : []}
+            />
+          </div>
+        </details>
+
+        <details open={protectionOpen} onToggle={(e) => setProtectionOpen(e.currentTarget.open)} className="group/protection rounded-xl border border-line bg-bg">
+          <summary className="flex list-none items-center gap-2 px-4 py-3 text-sm font-medium [&::-webkit-details-marker]:hidden">
+            <ShieldCheck className="size-4 shrink-0 text-accent" aria-hidden />
+            <span className="whitespace-nowrap">Protection</span>
+            <span className={cn("mr-3 ml-auto hidden min-w-0 truncate text-xs font-normal sm:block", (passwordError || capError) && touched ? "text-danger" : "text-muted")}>
+              {(passwordError || capError) && touched
+                ? "Needs attention"
+                : [
+                    (link?.protected && f.passwordMode !== "remove") || f.passwordMode === "set" ? "Password" : null,
+                    f.capOn && !capError ? `Limit ${capNumber.toLocaleString("en")} visits` : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ") || "Off · password or visit limit"}
+            </span>
+            <ChevronDown className="ml-auto size-4 shrink-0 transition-transform group-open/protection:rotate-180 sm:ml-0" />
+          </summary>
+          <div className="border-t border-line p-4">
+            <LinkProtection
+              link={link}
+              mode={f.passwordMode}
+              onMode={(m) => set("passwordMode", m)}
+              password={f.password}
+              onPassword={(p) => set("password", p)}
+              passwordError={touched || f.password ? passwordError : null}
+              capOn={f.capOn}
+              onCapOn={(v) => set("capOn", v)}
+              maxClicks={f.maxClicks}
+              onMaxClicks={(v) => set("maxClicks", v)}
+              capError={capError}
             />
           </div>
         </details>
