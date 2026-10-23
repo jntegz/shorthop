@@ -38,6 +38,23 @@ export const routingSchema = z
   })
   .nullable();
 
+/** A custom social preview; validatePreview does the real checks. null turns it off. */
+export const previewSchema = z
+  .object({
+    title: z.string().max(500),
+    description: z.string().max(2000).default(""),
+    image: z
+      .discriminatedUnion("kind", [
+        z.object({ kind: z.literal("upload"), key: z.string().max(40), width: z.number().int().nullable().default(null), height: z.number().int().nullable().default(null) }),
+        z.object({ kind: z.literal("url"), url: z.string().max(4096) }),
+      ])
+      .nullable()
+      .default(null),
+  })
+  .nullable();
+
+export const fetchPreviewSchema = z.object({ url: z.string().max(4096) });
+
 /** Unix seconds, an ISO date string, or null. */
 const expiry = z
   .union([unixSec, z.iso.datetime({ offset: true }), z.iso.date(), z.null()])
@@ -63,6 +80,7 @@ export const createLinkSchema = z
     /** Check the destination on a schedule (default true). */
     monitor: z.boolean().optional(),
     routing: routingSchema.optional(),
+    preview: previewSchema.optional(),
   })
   .refine((v) => v.target || v.url, { message: "target is required", path: ["target"] });
 
@@ -78,6 +96,7 @@ export const updateLinkSchema = z.object({
   passQuery: z.boolean().optional(),
   monitor: z.boolean().optional(),
   routing: routingSchema.optional(),
+  preview: previewSchema.optional(),
   broken: z.boolean().optional(),
   /** The link visitors are pointed to while this one is marked broken; null for none. */
   replacement: z.object({ domain: z.string().regex(HOSTNAME_RE), slug: z.string().regex(IMPORT_SLUG_RE) }).nullish(),

@@ -4,6 +4,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { splitKey } from "../../shared/domains";
 import { BOOLEAN_FIELDS, diffSnapshots, FIELD_LABEL, type FieldChange, type HistoryAction, type HistoryField, type Snapshot } from "../../shared/history";
+import { parsePreview } from "../../shared/preview";
 import { describeRouting, parseRouting } from "../../shared/routing";
 import type { LinkDTO, VersionDTO } from "../../shared/types";
 import { api, call, keys } from "../api";
@@ -40,6 +41,7 @@ export function snapshotOfLink(l: LinkDTO): Snapshot {
     replacement: l.replacement ? `${l.replacement.domain}/${l.replacement.slug}` : null,
     monitor: l.monitor ? 1 : 0,
     routing: l.routing ? JSON.stringify(l.routing) : null,
+    preview: l.preview ? JSON.stringify(l.preview) : null,
   };
 }
 
@@ -54,8 +56,12 @@ function Value({ field, value, old }: { field: HistoryField; value: Snapshot[His
   const cls = cn("min-w-0 rounded px-1.5 py-0.5 text-xs break-words", old ? "bg-danger-soft/70 text-muted line-through decoration-danger/40" : "bg-good-soft text-fg");
   if (BOOLEAN_FIELDS.has(field)) return <span className={cls}>{value ? "On" : "Off"}</span>;
   if (value === null || value === "") {
-    const none = field === "expires_at" ? "Never" : field === "routing" ? "Off" : field === "replacement" ? "None" : field === "utm_template" ? "Default" : "Empty";
+    const none = field === "expires_at" ? "Never" : field === "routing" || field === "preview" ? "Off" : field === "replacement" ? "None" : field === "utm_template" ? "Default" : "Empty";
     return <span className={cn(cls, "italic")}>{none}</span>;
+  }
+  if (field === "preview") {
+    const p = parsePreview(String(value));
+    return <span className={cls}>{p ? `“${p.title}”${p.image ? " with image" : ""}` : "Off"}</span>;
   }
   if (field === "routing") return <span className={cls}>{describeRouting(parseRouting(String(value)))}</span>;
   if (field === "expires_at") return <span className={cls}>{whenFull(Number(value))}</span>;

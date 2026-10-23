@@ -5,6 +5,7 @@
 export const HISTORY_FIELDS = [
   "target",
   "routing",
+  "preview",
   "title",
   "active",
   "expires_at",
@@ -36,6 +37,8 @@ export interface Snapshot {
   monitor: number;
   /** Smart routing JSON, or null. Versions saved before routing existed lack it. */
   routing?: string | null;
+  /** Social preview JSON, or null. Versions saved before previews existed lack it. */
+  preview?: string | null;
 }
 
 /** What's stored: the restorable fields plus what re-creating a deleted link needs. */
@@ -103,6 +106,7 @@ export function snapshotOf<T extends StoredSnapshot>(row: T): StoredSnapshot {
     replacement: row.replacement,
     monitor: row.monitor ?? 1,
     routing: row.routing ?? null,
+    preview: row.preview ?? null,
     source: row.source,
     imported_clicks: row.imported_clicks,
     created_at: row.created_at,
@@ -112,6 +116,7 @@ export function snapshotOf<T extends StoredSnapshot>(row: T): StoredSnapshot {
 export const FIELD_LABEL: Record<HistoryField, string> = {
   target: "Destination",
   routing: "Smart routing",
+  preview: "Social preview",
   title: "Title",
   active: "Active",
   expires_at: "Expires",

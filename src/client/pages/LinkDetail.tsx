@@ -180,6 +180,7 @@ export function LinkDetail() {
         {link.expiresAt ? <span>Expires {when(link.expiresAt)}</span> : null}
         <span>UTM {link.utm ? (link.utmTemplate ? "custom template" : "default template") : "off"}</span>
         {link.routing ? <span>Smart routing: {describeRouting(link.routing)}</span> : null}
+        {link.preview ? <span title={link.preview.title}>Custom social preview</span> : null}
         {link.passQuery ? <span>Passes query params</span> : null}
         {link.tags.map((t) => (
           <Badge key={t} tone="accent">

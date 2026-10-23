@@ -1,7 +1,9 @@
 // D1 link records and their KV read copies.
 
 import { linkKey, splitKey } from "../shared/domains";
+import { parsePreview, PREVIEW_IMAGE_PATH } from "../shared/preview";
 import { parseRouting, type RouteDevice } from "../shared/routing";
+import type { KvPreview } from "./preview";
 import type { LinkDTO, LinkSource } from "../shared/types";
 
 export interface LinkRow {
@@ -26,6 +28,8 @@ export interface LinkRow {
   monitor: number;
   /** Smart routing JSON (src/shared/routing.ts), or null. */
   routing: string | null;
+  /** Custom social preview JSON (src/shared/preview.ts), or null. */
+  preview: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -50,6 +54,8 @@ export interface KvLink {
   r?: string;
   /** enabled routing rules, in order; absent without routing */
   ro?: KvRule[];
+  /** custom social preview, for link-preview crawlers */
+  og?: KvPreview;
 }
 
 /** A routing rule as the redirect needs it: no names, enabled rules only. */
@@ -78,7 +84,8 @@ export function isKvLink(v: unknown): v is KvLink {
     (r.t === undefined || typeof r.t === "string") &&
     (r.b === undefined || r.b === 1) &&
     (r.r === undefined || typeof r.r === "string") &&
-    (r.ro === undefined || Array.isArray(r.ro))
+    (r.ro === undefined || Array.isArray(r.ro)) &&
+    (r.og === undefined || (typeof r.og === "object" && r.og !== null))
   );
 }
 
@@ -105,6 +112,16 @@ function toKv(row: LinkRow, defaultUtm: string): KvLink {
       variants: r.variants.map((v) => ({ id: v.id, url: v.url, weight: v.weight, l: v.label })),
       ...(r.name ? { n: r.name } : {}),
     }));
+  }
+  const preview = parsePreview(row.preview);
+  if (preview) {
+    const img = preview.image;
+    kv.og = {
+      t: preview.title,
+      d: preview.description,
+      i: img ? (img.kind === "upload" ? `${PREVIEW_IMAGE_PATH}${img.key}` : img.url) : null,
+      ...(img?.kind === "upload" && img.width && img.height ? { w: img.width, h: img.height } : {}),
+    };
   }
   return kv;
 }
@@ -135,6 +152,7 @@ export function toDTO(row: LinkRow, origin: string): LinkDTO {
     replacement: splitKey(row.replacement),
     monitor: row.monitor !== 0,
     routing: parseRouting(row.routing),
+    preview: parsePreview(row.preview),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

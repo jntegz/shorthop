@@ -73,6 +73,10 @@ export const LINK_HELP = {
     "Send visitors to different destinations by device (iPhone & iPad, Android, desktop, other) and country, or split them between destinations for an A/B test. Rules are checked from the top and the first match wins; everyone no rule matches goes to the destination URL. Devices and countries are detected from the browser and Cloudflare's location data, so VPNs and unusual browsers can land elsewhere. iPads that ask for desktop sites count as desktop. Each visit is assigned on its own, with no cookie. Bots and link previews always get the destination URL. Changes go live within about a minute.",
     "iPhone → App Store, Android → Google Play, everyone else → the website",
   ),
+  preview: h(
+    "Social preview",
+    "The title, description and image LinkedIn, Slack, X, Facebook, iMessage, WhatsApp, Discord and Telegram show when someone shares this short link. Their preview crawlers get a small page with these details; people who click are redirected as usual. Without one, the platforms show the destination's own preview. Platforms keep previews for days, so a change can take a while to appear unless you refresh it in their tools.",
+  ),
   monitor: h(
     "Check the destination",
     `Shorthop visits the destination about every ${duration(OK_INTERVAL)} and lists it under Link health. After ${DOWN_AFTER_FAILS} failed checks in a row it counts as not working and you get an email. Turn off for pages that only work when signed in, or that you know block automated visitors.`,

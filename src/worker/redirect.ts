@@ -3,11 +3,13 @@
 
 import { isProbePath, isRoutableSlug } from "../shared/slug";
 import { buildLocation, renderUtm, splitOwnParams } from "../shared/target";
+import { isPreviewCrawler } from "../shared/preview";
 import { pickRoute, routeCountry, routeDevice } from "../shared/routing";
 import { detectBot, detectDevice, detectOs, logHit, PREFETCH, referrerHostOf, resolveSource, siteHostOf } from "./analytics";
 import { deadLinkResponse } from "./dead-link";
 import { isKvLink, KV_TIMEOUT_MS, kvKey, splitKey, withTimeout, type KvLink, type KvRule } from "./db";
 import { notFoundResponse } from "./not-found";
+import { previewResponse } from "./preview";
 
 const MIN_CACHE_TTL = 30;
 const DEFAULT_CACHE_TTL = 60;
@@ -132,5 +134,9 @@ export async function handleRedirect(request: Request, env: Env, ctx: ExecutionC
   }
 
   ctx.waitUntil(logHit(request, env, url, { domain, slug, kind: "hit", sourceTag: own.sourceTag, qr: own.qr, route: link.ro?.length ? (routed?.key ?? "-") : undefined }));
+  // Preview crawlers read the owner's preview; everyone else is redirected.
+  if (link.og && isPreviewCrawler(request.headers.get("User-Agent") ?? "")) {
+    return previewResponse(link.og, `${url.origin}/${encodeURIComponent(slug)}`, location, domain, request.method === "HEAD");
+  }
   return redirectTo(location);
 }

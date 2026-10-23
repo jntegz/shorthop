@@ -8,7 +8,9 @@ import { nowSec } from "./db";
 import { SERVED_BY_HEADER } from "./dns-check";
 import { resolveSite } from "./domains";
 import { scheduledDaily, scheduledDigest, scheduledLinkChecks } from "./health";
+import { PREVIEW_IMAGE_PATH } from "../shared/preview";
 import { pruneHistory } from "./history";
+import { prunePreviewImages, servePreviewImage } from "./preview";
 import { loginApp } from "./login";
 import { notFoundResponse, serveNotFoundImage } from "./not-found";
 import { handleRedirect, redirectTo } from "./redirect";
@@ -25,7 +27,9 @@ export default {
     // The admin and the API live on the admin host only (ADMIN_HOST, or the primary domain).
     const isAdmin = path.startsWith("/api/") || path === "/_admin" || path.startsWith("/_admin/");
     if (isAdmin && !site.admin) return notFoundResponse(env, site.domain, null);
-    if (site.adminOnly && !isAdmin && path !== "/health") {
+    // Preview images also load on the admin host, where the link editor shows them.
+    const isPreviewImage = path.startsWith(PREVIEW_IMAGE_PATH);
+    if (site.adminOnly && !isAdmin && path !== "/health" && !isPreviewImage) {
       return path === "/" ? new Response(null, { status: 302, headers: { Location: "/_admin/" } }) : new Response("Not found", { status: 404 });
     }
     // Access protects /_admin/*; the bare /_admin may not be covered, so it never reaches the auth check.
@@ -38,6 +42,7 @@ export default {
     if (path === NOT_FOUND_PREVIEW_PATH) return notFoundResponse(env, site.domain, "example");
     if (path === NOT_FOUND_IMAGE_PATH && (request.method === "GET" || request.method === "HEAD")) return serveNotFoundImage(env, url, ctx);
     if (path === "/health") return new Response("ok", { headers: { "Cache-Control": "no-store", [SERVED_BY_HEADER]: "ok" } });
+    if (isPreviewImage && (request.method === "GET" || request.method === "HEAD")) return servePreviewImage(env, url, ctx);
 
     // Everything else is a slug on this domain. No framework on this path.
     return handleRedirect(request, env, ctx, url, site.domain);
@@ -51,6 +56,7 @@ export default {
       ctx.waitUntil(scheduledDaily(env, now));
       ctx.waitUntil(pruneLoginState(env.DB, nowSec()));
       ctx.waitUntil(pruneDaySalts(env.DB, utcDate(now)));
+      ctx.waitUntil(prunePreviewImages(env).catch((err) => console.error(JSON.stringify({ message: "preview image prune failed", error: String(err) }))));
       ctx.waitUntil(pruneHistory(env.DB).catch((err) => console.error(JSON.stringify({ message: "history prune failed", error: String(err) }))));
     }
   },

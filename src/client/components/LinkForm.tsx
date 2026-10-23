@@ -1,9 +1,10 @@
-import { ChevronDown, Link2, Split } from "lucide-react";
+import { ChevronDown, Link2, MessageSquareText, Split } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router";
 import { toast } from "sonner";
 import { validateSlug } from "../../shared/slug";
+import { validatePreview, type LinkPreview } from "../../shared/preview";
 import { describeRouting, validateRouting, type RouteRule } from "../../shared/routing";
 import { normalizeTarget, validateUtmTemplate } from "../../shared/target";
 import type { LinkDTO } from "../../shared/types";
@@ -12,6 +13,7 @@ import { fromLocalInput, toLocalInput } from "../lib/format";
 import { LINK_HELP } from "../lib/help";
 import { linkKey, linkState, useDomains, useLinkLabel } from "../lib/links";
 import { cn, copy } from "../lib/utils";
+import { PreviewEditor } from "./PreviewEditor";
 import { RoutingEditor } from "./RoutingEditor";
 import { Button, Dialog, Field, InfoTip, Input, Select, Switch, Textarea } from "./ui";
 
@@ -48,6 +50,8 @@ interface FormState {
   replacement: string;
   /** Smart routing rules; none means one destination for everyone. */
   rules: RouteRule[];
+  /** Custom social preview; null lets platforms read the destination's own. */
+  preview: LinkPreview | null;
 }
 
 function initial(link?: LinkDTO, slug = "", domain = ""): FormState {
@@ -67,6 +71,7 @@ function initial(link?: LinkDTO, slug = "", domain = ""): FormState {
     broken: link?.broken ?? false,
     replacement: link?.replacement ? linkKey(link.replacement.domain, link.replacement.slug) : "",
     rules: link?.routing?.rules ?? [],
+    preview: link?.preview ?? null,
   };
 }
 
@@ -79,6 +84,7 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
   const [touched, setTouched] = useState(false);
   const [advanced, setAdvanced] = useState(false);
   const [routingOpen, setRoutingOpen] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
 
   useEffect(() => {
     if (open) {
@@ -86,6 +92,7 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
       setTouched(false);
       setAdvanced(Boolean(link));
       setRoutingOpen(Boolean(link?.routing));
+      setPreviewOpen(false);
     }
   }, [open, link, initialSlug, initialDomain, markBroken]);
 
@@ -111,7 +118,9 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
   };
   const routingCheck = f.rules.length ? validateRouting({ rules: f.rules }, { selfHosts: domains }) : null;
   const routingErrors = routingCheck && !routingCheck.ok ? routingCheck.errors : [];
-  const valid = !errors.target && !errors.slug && !errors.utmTemplate && routingErrors.length === 0;
+  const previewCheck = f.preview ? validatePreview(f.preview) : null;
+  const previewProblems = previewCheck && !previewCheck.ok ? previewCheck.problems : [];
+  const valid = !errors.target && !errors.slug && !errors.utmTemplate && routingErrors.length === 0 && previewProblems.length === 0;
 
   const save = useMutation({
     mutationFn: async () => {
@@ -127,6 +136,7 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
         passQuery: f.passQuery,
         monitor: f.monitor,
         routing: f.rules.length ? { rules: f.rules } : null,
+        preview: f.preview,
       };
       if (link) {
         const cut = f.replacement.indexOf("/");
@@ -164,6 +174,7 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
     setTouched(true);
     if (errors.utmTemplate) setAdvanced(true);
     if (routingErrors.length) setRoutingOpen(true);
+    if (previewProblems.length) setPreviewOpen(true);
     if (valid && !save.isPending) save.mutate();
   };
 
@@ -173,7 +184,7 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
       onOpenChange={onOpenChange}
       title={link ? `Edit ${label(link)}` : "Create a new link"}
       description={editing ? "Update your destination and link preferences." : "A shorter link. A lasting connection."}
-      wide={routingOpen && f.rules.length ? "xl" : true}
+      wide={(routingOpen && f.rules.length) || (previewOpen && f.preview) ? "xl" : true}
     >
       <form onSubmit={submit} className="space-y-4" noValidate>
         <Field label="Destination URL" htmlFor="target" hint="Where should this link take people?" info={LINK_HELP.target} error={touched || f.target ? errors.target : null}>
@@ -235,16 +246,37 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
 
         <details open={routingOpen} onToggle={(e) => setRoutingOpen(e.currentTarget.open)} className="group/routing rounded-xl border border-line bg-bg">
           <summary className="flex list-none items-center gap-2 px-4 py-3 text-sm font-medium [&::-webkit-details-marker]:hidden">
-            <Split className="size-4 text-accent" aria-hidden />
-            Smart routing
+            <Split className="size-4 shrink-0 text-accent" aria-hidden />
+            <span className="whitespace-nowrap">Smart routing</span>
             <InfoTip help={LINK_HELP.routing} />
-            <span className={cn("mr-3 ml-auto text-xs font-normal", routingErrors.length && touched ? "text-danger" : "text-muted")}>
+            <span className={cn("mr-3 ml-auto hidden min-w-0 truncate text-xs font-normal sm:block", routingErrors.length && touched ? "text-danger" : "text-muted")}>
               {routingErrors.length && touched ? "Needs attention" : f.rules.length ? describeRouting({ rules: f.rules }) : "Off · by device, country or A/B test"}
             </span>
-            <ChevronDown className="size-4 transition-transform group-open/routing:rotate-180" />
+            <ChevronDown className="ml-auto size-4 shrink-0 transition-transform group-open/routing:rotate-180 sm:ml-0" />
           </summary>
           <div className="border-t border-line p-4">
             <RoutingEditor rules={f.rules} onChange={(rules) => set("rules", rules)} fallback={targetCheck?.ok ? targetCheck.url : f.target.trim()} errors={touched ? routingErrors : []} />
+          </div>
+        </details>
+
+        <details open={previewOpen} onToggle={(e) => setPreviewOpen(e.currentTarget.open)} className="group/preview rounded-xl border border-line bg-bg">
+          <summary className="flex list-none items-center gap-2 px-4 py-3 text-sm font-medium [&::-webkit-details-marker]:hidden">
+            <MessageSquareText className="size-4 shrink-0 text-accent" aria-hidden />
+            <span className="whitespace-nowrap">Social preview</span>
+            <InfoTip help={LINK_HELP.preview} />
+            <span className={cn("mr-3 ml-auto hidden min-w-0 truncate text-xs font-normal sm:block", previewProblems.length && touched ? "text-danger" : "text-muted")}>
+              {previewProblems.length && touched ? "Needs attention" : f.preview ? `Custom: ${f.preview.title || "untitled"}` : "Destination's own"}
+            </span>
+            <ChevronDown className="ml-auto size-4 shrink-0 transition-transform group-open/preview:rotate-180 sm:ml-0" />
+          </summary>
+          <div className="border-t border-line p-4">
+            <PreviewEditor
+              value={f.preview}
+              onChange={(p) => set("preview", p)}
+              destination={targetCheck?.ok ? targetCheck.url : null}
+              domain={link?.domain ?? domain}
+              problems={touched ? previewProblems : []}
+            />
           </div>
         </details>
 

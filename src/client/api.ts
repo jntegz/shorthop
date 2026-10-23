@@ -48,6 +48,14 @@ export async function downloadFile(path: string): Promise<void> {
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
+/** Uploads a social-preview image (raw bytes); returns the image to store in the link's preview. */
+export async function uploadPreviewImage(file: File): Promise<{ kind: "upload"; key: string; width: number | null; height: number | null }> {
+  const res = await adminFetch("/_admin/api/previews/images", { method: "POST", headers: { "Content-Type": file.type || "application/octet-stream" }, body: file });
+  const body = (await res.json().catch(() => null)) as { image?: { kind: "upload"; key: string; width: number | null; height: number | null }; error?: string } | null;
+  if (!res.ok || !body?.image) throw new ApiError(body?.error ?? `Upload failed (${res.status})`, res.status, body);
+  return body.image;
+}
+
 export const api = createApiClient(`${window.location.origin}/_admin/api`, { fetch: adminFetch });
 
 // Responses typed with an explicit error status have ok: false; success routes

@@ -9,7 +9,8 @@ const CSP = [
   "script-src 'self'",
   // Recharts and Radix set inline style attributes.
   "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: blob:",
+  // https: for social-preview images that live on the destination's site.
+  "img-src 'self' data: blob: https:",
   "font-src 'self'",
   "connect-src 'self'",
   "frame-src 'self'",

@@ -2,6 +2,7 @@
 
 import type { HistoryAction, StoredSnapshot } from "./history";
 import type { CheckProblem, CheckState } from "./link-check";
+import type { LinkPreview } from "./preview";
 import type { Routing } from "./routing";
 
 export type LinkSource = "native" | "import";
@@ -32,6 +33,8 @@ export interface LinkDTO {
   monitor: boolean;
   /** Smart routing; null sends everyone to the target. */
   routing: Routing | null;
+  /** What link-preview crawlers see; null lets them follow the redirect. */
+  preview: LinkPreview | null;
   createdAt: number;
   updatedAt: number;
 }
