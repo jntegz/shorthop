@@ -157,7 +157,16 @@ export function ShortDomains({
         info={SETTINGS_HELP.domains}
       />
       <div className="px-5">
-        <ul className="divide-y divide-line rounded-xl border border-line">
+        {!domains.length ? (
+          <div className="mb-4">
+            <Notice>
+              No short domain yet, so links can't be created. Check yours below for the DNS steps, then add it to the Wrangler config. Installed with the Deploy to
+              Cloudflare button? Edit <Code>wrangler.toml</Code> in your copy of the repository: set <Code>SHORT_DOMAINS</Code> and add a route for it (its comments show
+              how), then commit, and Workers Builds deploys it. Installed with the setup? Run <Code>npm run setup -- domains</Code>.
+            </Notice>
+          </div>
+        ) : null}
+        <ul className={domains.length || retired.length ? "divide-y divide-line rounded-xl border border-line" : "hidden"}>
           {[...domains, ...retired].map((d) => (
             <li key={d} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 text-sm">
               <Globe2 className="size-4 shrink-0 text-accent" />

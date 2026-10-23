@@ -600,7 +600,7 @@ describe("API token", () => {
 describe("password hashes", () => {
   it("round-trips and rejects out-of-range costs", async () => {
     const cfg = loginConfig({ ...env, ADMIN_PASSWORD_HASH: HASH } as Env);
-    expect(cfg?.password.iterations).toBe(10_000);
+    expect(cfg && "iterations" in cfg.password ? cfg.password.iterations : null).toBe(10_000);
     expect(HASH).toMatch(/^pbkdf2-sha256:10000:[A-Za-z0-9_-]{22}:[A-Za-z0-9_-]{43}$/);
     await expect(hashPassword(PASSWORD, 100_001)).rejects.toThrow();
     expect(loginConfig({ ...env, ADMIN_PASSWORD_HASH: HASH.replace(":10000:", ":9999:") } as Env)).toBeNull();

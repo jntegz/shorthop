@@ -1,0 +1,99 @@
+# The Deploy to Cloudflare button's Wrangler config (see the README).
+#
+# In shorthop itself this file is generated: edit scripts/setup/template.ts and
+# run `npm run config:example`. A wrangler.jsonc written by `npm run setup`
+# wins over it locally.
+#
+# In your own copy of the repository, this file is yours: edit it on GitHub or
+# GitLab and commit, and Workers Builds deploys the change. The button fills in
+# the KV and D1 ids when it creates them.
+
+name = "shorthop"
+main = "src/worker/index.ts"
+compatibility_date = "2026-10-19"
+compatibility_flags = ["nodejs_compat"]
+# Served on shorthop.<your-subdomain>.workers.dev until you add a domain.
+workers_dev = true
+preview_urls = false
+
+# Your short domains: one entry each, for a domain in a zone on this account,
+# plus SHORT_DOMAINS below (docs/SETUP.md#deploy-button).
+# routes = [{ pattern = "go.example.com", custom_domain = true }]
+
+[assets]
+binding = "ASSETS"
+html_handling = "none"
+not_found_handling = "none"
+run_worker_first = ["/_admin/*", "!/_admin/assets/*"]
+
+[[kv_namespaces]]
+binding = "LINKS"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "shorthop"
+migrations_dir = "migrations"
+
+[[analytics_engine_datasets]]
+binding = "CLICKS"
+dataset = "shorthop_clicks"
+
+[[ratelimits]]
+name = "AUTH_LIMITER"
+namespace_id = "1001"
+simple = { limit = 10, period = 60 }
+
+[[ratelimits]]
+name = "LOGIN_LIMITER"
+namespace_id = "1002"
+simple = { limit = 5, period = 60 }
+
+[[ratelimits]]
+name = "LINK_PASSWORD_LIMITER"
+namespace_id = "1003"
+simple = { limit = 10, period = 60 }
+
+[durable_objects]
+bindings = [{ name = "CLICK_CAPS", class_name = "ClickCap" }]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["ClickCap"]
+
+[triggers]
+crons = ["15 1 * * *", "0 7 * * 1", "*/30 * * * *"]
+
+[vars]
+# "password": the ADMIN_PASSWORD secret alone. Cloudflare Access can come later (docs/SETUP.md#access).
+ADMIN_AUTH = "password"
+ACCESS_TEAM_DOMAIN = ""
+ACCESS_AUD = ""
+ADMIN_EMAIL = ""
+# Your account ID: with the CF_ANALYTICS_TOKEN secret, it makes the stats readable (docs/SETUP.md#analytics).
+CF_ACCOUNT_ID = ""
+# Short domains, comma-separated, primary first. Each needs a route above. Links can't be created until one is set.
+SHORT_DOMAINS = ""
+ADMIN_HOST = ""
+# Where "/" goes, and clicks when the link store can't be read. Your own site.
+FALLBACK_URL = "https://example.com"
+KV_CACHE_TTL = "60"
+AE_DATASET = "shorthop_clicks"
+WORKERS_PLAN = "free"
+API_TOKEN_SCOPE = "create"
+# Email is off. Turn it on in the admin: Settings → Statistics & email → Set up email.
+DIGEST_PROVIDER = "off"
+DIGEST_FROM = ""
+DIGEST_TO = ""
+DEV_AUTH_BYPASS = ""
+DEV_AUTH_EMAIL = ""
+
+[observability]
+enabled = true
+
+[observability.logs]
+enabled = true
+head_sampling_rate = 1
+
+[observability.traces]
+enabled = true
+head_sampling_rate = 0.05

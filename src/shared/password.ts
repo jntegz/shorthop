@@ -15,6 +15,8 @@ const SALT_BYTES = 16;
 const HASH_BYTES = 32;
 /** Longer input is rejected before hashing, so a huge body can't cost CPU. */
 export const MAX_PASSWORD_LENGTH = 1024;
+/** Shortest admin password: the setup refuses shorter, and the Worker ignores a shorter ADMIN_PASSWORD. */
+export const MIN_ADMIN_PASSWORD_LENGTH = 9;
 
 export interface PasswordHash {
   iterations: number;

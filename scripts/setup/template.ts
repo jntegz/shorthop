@@ -9,6 +9,12 @@ import { DIGEST_PROVIDERS as PROVIDERS, type DigestProvider } from "../../src/sh
 
 export const CONFIG_FILE = "wrangler.jsonc";
 export const EXAMPLE_FILE = "wrangler.example.jsonc";
+/**
+ * The Deploy to Cloudflare button's config. TOML on purpose: Wrangler and the
+ * Vite plugin prefer wrangler.jsonc, so a config written by `npm run setup`
+ * always wins locally, and the button only ever sees this one.
+ */
+export const BUTTON_FILE = "wrangler.toml";
 
 export type Provider = DigestProvider;
 export type AuthMode = "access+password" | "password";
@@ -317,4 +323,98 @@ export function outdatedProblems(text: string, file = CONFIG_FILE): string[] {
   if (!limiters.includes("LINK_PASSWORD_LIMITER")) problems.push("The LINK_PASSWORD_LIMITER rate limiter (password-protected links) is missing.");
   if (!objects.includes("CLICK_CAPS")) problems.push("The CLICK_CAPS Durable Object and its migrations entry (click limits) are missing.");
   return problems;
+}
+
+// --- The Deploy to Cloudflare button ---------------------------------------------------------
+
+/**
+ * What the button deploys: workers.dev only, the admin password alone (the
+ * ADMIN_PASSWORD secret the deploy page asks for), no email. Resource ids are
+ * left out: the button creates the KV namespace and the D1 database.
+ */
+export const BUTTON_CONFIG: SetupConfig = {
+  ...EXAMPLE_CONFIG,
+  shortDomains: [],
+  authMode: "password",
+  adminEmail: "",
+  digestProvider: "off",
+  digestFrom: "",
+  digestTo: "",
+};
+
+const BUTTON_HEADER = `# The Deploy to Cloudflare button's Wrangler config (see the README).
+#
+# In shorthop itself this file is generated: edit scripts/setup/template.ts and
+# run \`npm run config:example\`. A wrangler.jsonc written by \`npm run setup\`
+# wins over it locally.
+#
+# In your own copy of the repository, this file is yours: edit it on GitHub or
+# GitLab and commit, and Workers Builds deploys the change. The button fills in
+# the KV and D1 ids when it creates them.
+`;
+
+/** Comment lines before a key ("vars.SHORT_DOMAINS"). */
+const BUTTON_COMMENTS: Record<string, string[]> = {
+  workers_dev: ["Served on shorthop.<your-subdomain>.workers.dev until you add a domain."],
+  preview_urls: [
+    "",
+    "Your short domains: one entry each, for a domain in a zone on this account,",
+    "plus SHORT_DOMAINS below (docs/SETUP.md#deploy-button).",
+    'routes = [{ pattern = "go.example.com", custom_domain = true }]',
+  ],
+  "vars.ADMIN_AUTH": ['"password": the ADMIN_PASSWORD secret alone. Cloudflare Access can come later (docs/SETUP.md#access).'],
+  "vars.CF_ACCOUNT_ID": ["Your account ID: with the CF_ANALYTICS_TOKEN secret, it makes the stats readable (docs/SETUP.md#analytics)."],
+  "vars.SHORT_DOMAINS": ["Short domains, comma-separated, primary first. Each needs a route above. Links can't be created until one is set."],
+  "vars.FALLBACK_URL": ['Where "/" goes, and clicks when the link store can\'t be read. Your own site.'],
+  "vars.DIGEST_PROVIDER": ["Email is off. Turn it on in the admin: Settings → Statistics & email → Set up email."],
+};
+
+const isTable = (v: unknown): v is Raw => typeof v === "object" && v !== null && !Array.isArray(v);
+
+function tomlValue(v: unknown): string {
+  if (typeof v === "string") return JSON.stringify(v);
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  if (Array.isArray(v)) return `[${v.map(tomlValue).join(", ")}]`;
+  return `{ ${Object.entries(obj(v))
+    .map(([k, x]) => `${k} = ${tomlValue(x)}`)
+    .join(", ")} }`;
+}
+
+/** TOML for a parsed config: tables for objects, [[arrays]] for top-level lists of objects, inline tables inside those. */
+function toToml(root: Raw, comments: Record<string, string[]>): string {
+  const out: string[] = [];
+  const emit = (path: string[], table: Raw, header: string | null, inline: boolean) => {
+    if (header) out.push("", header);
+    const nested: [string, unknown][] = [];
+    for (const [k, v] of Object.entries(table)) {
+      const tableArray = path.length === 0 && Array.isArray(v) && v.length > 0 && v.every(isTable);
+      if ((isTable(v) && !inline) || tableArray) {
+        nested.push([k, v]);
+        continue;
+      }
+      const key = [...path, k].join(".");
+      if (key !== "preview_urls") for (const c of comments[key] ?? []) out.push(c ? `# ${c}` : "#");
+      out.push(`${k} = ${tomlValue(v)}`);
+      if (key === "preview_urls") for (const c of comments[key] ?? []) out.push(c ? `# ${c}` : "");
+    }
+    for (const [k, v] of nested) {
+      const p = [...path, k];
+      if (Array.isArray(v)) for (const item of v) emit(p, obj(item), `[[${p.join(".")}]]`, true);
+      else emit(p, obj(v), `[${p.join(".")}]`, path.length > 0);
+    }
+  };
+  emit([], root, null, false);
+  return `${out.join("\n")}\n`;
+}
+
+/** wrangler.toml for the button, from the same template as every other config. */
+export function renderButtonConfig(c: SetupConfig = BUTTON_CONFIG): string {
+  const raw = parseJsonc(renderConfig(c), BUTTON_FILE);
+  delete raw.$schema;
+  // Added by the owner once they have a domain.
+  delete raw.routes;
+  // The deploy page asks for ADMIN_PASSWORD (.dev.vars.example); the rest is generated in D1.
+  delete raw.secrets;
+  raw.workers_dev = true;
+  return `${BUTTON_HEADER}\n${toToml(raw, BUTTON_COMMENTS)}`;
 }

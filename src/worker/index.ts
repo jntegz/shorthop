@@ -14,6 +14,7 @@ import { prunePreviewImages, servePreviewImage } from "./preview";
 import { loginApp } from "./login";
 import { notFoundResponse, serveNotFoundImage } from "./not-found";
 import { handleRedirect, redirectTo } from "./redirect";
+import { withGeneratedSecrets } from "./secrets";
 import { pruneLoginState } from "./session";
 import { pruneApiKeys } from "./users";
 
@@ -22,6 +23,8 @@ export { ClickCap } from "./click-cap";
 
 export default {
   async fetch(request, env, ctx) {
+    // Only Deploy to Cloudflare installs lack these secrets (one D1 read per isolate).
+    env = await withGeneratedSecrets(env);
     const url = new URL(request.url);
     const path = url.pathname;
     const site = resolveSite(request, env, url);
@@ -53,6 +56,7 @@ export default {
   },
 
   async scheduled(controller, env, ctx) {
+    env = await withGeneratedSecrets(env);
     const now = new Date(controller.scheduledTime);
     if (controller.cron === DIGEST_CRON) ctx.waitUntil(scheduledDigest(env, now));
     else if (controller.cron === CHECKS_CRON) ctx.waitUntil(scheduledLinkChecks(env));

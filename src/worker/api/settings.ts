@@ -14,7 +14,7 @@ import { digestData, renderDigest, runDigest } from "../digest";
 import { autoClearDemo, clearDemo, demoStatus } from "../demo";
 import { checkDomain } from "../dns-check";
 import { purgeDomain } from "../domain-purge";
-import { domainsOf, shortOrigin } from "../domains";
+import { configuredAdminHost, configuredDomains, domainsOf, shortOrigin } from "../domains";
 import { checkAndAlert, forgetJob, recordJob, systemHealth, trackedRollup } from "../health";
 import { validate, type AppEnv } from "../hono";
 import { applyMailSettings, mailerStatus, mailProviders, mailSettings, mailSettingsKey, providerName } from "../mailer";
@@ -42,15 +42,16 @@ export const settingsApi = new Hono<AppEnv>()
       demoStatus(c.env.DB),
       statsSince(c.env.DB),
     ]);
-    const { list, primary, admin: adminHost } = domainsOf(c.env);
+    const { primary } = domainsOf(c.env);
+    const list = configuredDomains(c.env);
     const digest = mailerStatus(applyMailSettings(c.env, await mailSettings(c.env.DB)));
     const settings: SettingsDTO = {
       defaultUtm,
       statsSince: since,
       publicOrigin: shortOrigin(c.env, c.req.raw, primary),
       domains: list,
-      primaryDomain: primary,
-      adminHost,
+      primaryDomain: list[0] ?? "",
+      adminHost: configuredAdminHost(c.env),
       linksPerDomain: Object.fromEntries(perDomain.results.map((r) => [r.domain, r.n])),
       demo,
       aeAvailable: aeAvailable(c.env),

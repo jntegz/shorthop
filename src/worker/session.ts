@@ -16,12 +16,19 @@ import {
   SESSION_TTL_SEC,
   WINDOW_SEC,
 } from "../shared/login-policy";
-import { derivePassword, fromBase64Url, MAX_PASSWORD_LENGTH, parsePasswordHash, toBase64Url, type PasswordHash } from "../shared/password";
+import { derivePassword, fromBase64Url, MAX_PASSWORD_LENGTH, MIN_ADMIN_PASSWORD_LENGTH, parsePasswordHash, toBase64Url, type PasswordHash } from "../shared/password";
 import { getSetting, setSettingStmt } from "./db";
 import type { UserRow } from "./users";
 
 export interface LoginConfig {
-  password: PasswordHash;
+  /** The owners' password: the ADMIN_PASSWORD_HASH hash, or the ADMIN_PASSWORD secret itself. */
+  password: PasswordHash | { plain: string };
+  /**
+   * Changes whenever the owners' password does, and is signed into every
+   * session so a new password ends them all. Only ever part of the HMAC input,
+   * never sent anywhere.
+   */
+  fingerprint: string;
   secret: string;
 }
 
@@ -29,12 +36,24 @@ const MIN_SECRET_LENGTH = 32;
 const VERSION = "v2";
 const GLOBAL_KEY = "*";
 
-/** The password login settings, or null when they're missing or malformed (callers fail closed). */
+/** The ADMIN_PASSWORD secret (Deploy to Cloudflare installs), read loosely: it's optional. */
+export function plainAdminPassword(env: Env): string {
+  return env.ADMIN_PASSWORD ?? "";
+}
+
+/**
+ * The password login settings, or null when they're missing or malformed
+ * (callers fail closed). ADMIN_PASSWORD_HASH wins; without it, an
+ * ADMIN_PASSWORD of at least MIN_ADMIN_PASSWORD_LENGTH characters is used.
+ */
 export function loginConfig(env: Env): LoginConfig | null {
   const secret = env.SESSION_SECRET ?? "";
-  const password = parsePasswordHash(env.ADMIN_PASSWORD_HASH ?? "");
-  if (secret.length < MIN_SECRET_LENGTH || !password) return null;
-  return { password, secret };
+  if (secret.length < MIN_SECRET_LENGTH) return null;
+  const hash = parsePasswordHash(env.ADMIN_PASSWORD_HASH ?? "");
+  if (hash) return { password: hash, fingerprint: toBase64Url(hash.hash), secret };
+  const plain = plainAdminPassword(env);
+  if (plain.length < MIN_ADMIN_PASSWORD_LENGTH || plain.length > MAX_PASSWORD_LENGTH) return null;
+  return { password: { plain }, fingerprint: `plain|${plain}`, secret };
 }
 
 const encoder = new TextEncoder();
@@ -62,9 +81,14 @@ export async function verifyPasswordHash(password: string, stored: PasswordHash)
   return crypto.subtle.timingSafeEqual(derived, stored.hash);
 }
 
-/** The owners' password (ADMIN_PASSWORD_HASH). */
-export function verifyPassword(password: string, cfg: LoginConfig): Promise<boolean> {
-  return verifyPasswordHash(password, cfg.password);
+/** The owners' password: ADMIN_PASSWORD_HASH, or ADMIN_PASSWORD compared in constant time. */
+export async function verifyPassword(password: string, cfg: LoginConfig): Promise<boolean> {
+  if (!("plain" in cfg.password)) return verifyPasswordHash(password, cfg.password);
+  if (!password || password.length > MAX_PASSWORD_LENGTH) return false;
+  // Hash both sides so the lengths always match.
+  const digest = (s: string) => crypto.subtle.digest("SHA-256", encoder.encode(s));
+  const [a, b] = await Promise.all([digest(password), digest(cfg.password.plain)]);
+  return crypto.subtle.timingSafeEqual(a, b);
 }
 
 // --- Sessions -----------------------------------------------------------------
@@ -87,9 +111,9 @@ export interface SessionEpochs {
 /** Settings key prefix of sessions ended by logging out, kept until they would have expired. */
 const REVOKED_PREFIX = "revoked_session:";
 
-// The admin password hash is signed in too, so changing ADMIN_PASSWORD_HASH ends every session.
+// The owners' password is signed in too (cfg.fingerprint), so changing it ends every session.
 const sessionPayload = (cfg: LoginConfig, exp: number, e: SessionEpochs, email: string) =>
-  `${VERSION}|${exp}|${e.global}|${e.user}|${toBase64Url(cfg.password.hash)}|${email}`;
+  `${VERSION}|${exp}|${e.global}|${e.user}|${cfg.fingerprint}|${email}`;
 
 export async function issueSessionCookie(cfg: LoginConfig, email: string, epochs: SessionEpochs, now: number): Promise<{ cookie: string; exp: number }> {
   const exp = now + SESSION_TTL_SEC;

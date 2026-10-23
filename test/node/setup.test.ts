@@ -6,7 +6,21 @@ import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import { args } from "../../scripts/lib";
 import { CHECKS_CRON, DIGEST_CRON, ROLLUP_CRON } from "../../src/shared/schedule";
-import { configFromText, deployProblems, EXAMPLE_CONFIG, EXAMPLE_FILE, outdatedProblems, parseJsonc, renderConfig, routeHosts, type SetupConfig } from "../../scripts/setup/template";
+import { parse as parseToml } from "smol-toml";
+import {
+  BUTTON_CONFIG,
+  BUTTON_FILE,
+  configFromText,
+  deployProblems,
+  EXAMPLE_CONFIG,
+  EXAMPLE_FILE,
+  outdatedProblems,
+  parseJsonc,
+  renderButtonConfig,
+  renderConfig,
+  routeHosts,
+  type SetupConfig,
+} from "../../scripts/setup/template";
 import {
   datasetProblem,
   defaultSender,
@@ -96,6 +110,30 @@ describe("configs from older versions", () => {
     const problems = outdatedProblems(old);
     assert.equal(problems.length, 3);
     assert.match(problems.join(" "), /\*\/30 \* \* \* \*.*LINK_PASSWORD_LIMITER.*CLICK_CAPS/);
+  });
+});
+
+describe("Deploy to Cloudflare button config", () => {
+  it("renders the committed wrangler.toml exactly (run npm run config:example after changing the template)", () => {
+    assert.equal(readFileSync(BUTTON_FILE, "utf8"), renderButtonConfig());
+  });
+
+  it("is the JSON config as TOML: workers.dev, no routes, no ids, no required secrets", () => {
+    // Through JSON: smol-toml builds null-prototype objects.
+    const toml = JSON.parse(JSON.stringify(parseToml(renderButtonConfig()))) as Record<string, unknown>;
+    const json = parseJsonc(renderConfig(BUTTON_CONFIG), "x");
+    delete json.$schema;
+    delete json.routes;
+    delete json.secrets;
+    assert.equal(toml.account_id, undefined);
+    assert.deepEqual(toml.kv_namespaces, [{ binding: "LINKS" }]);
+    assert.equal((toml.d1_databases as { database_id?: string }[])[0]!.database_id, undefined);
+    assert.equal(toml.send_email, undefined);
+    assert.equal((toml.vars as Record<string, string>).ADMIN_AUTH, "password");
+    assert.equal((toml.vars as Record<string, string>).SHORT_DOMAINS, "");
+    assert.deepEqual(outdatedProblems(JSON.stringify(toml)), []);
+    // Last: deepEqual narrows the type.
+    assert.deepEqual(toml, { ...json, workers_dev: true });
   });
 });
 

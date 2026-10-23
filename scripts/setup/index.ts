@@ -639,6 +639,10 @@ async function localStep(): Promise<void> {
     `SESSION_SECRET=${randomSecret(48)}`,
     "# Opens the admin on localhost without Cloudflare Access. Ignored on any other host.",
     "DEV_AUTH_BYPASS=1",
+    "# With the bypass, act as someone from Settings → People to see their view. Empty means an owner.",
+    "DEV_AUTH_EMAIL=",
+    "# Optional: override vars from the config, e.g. to try a second short domain.",
+    "# SHORT_DOMAINS=sh.example,alt.example",
     "",
   ];
   if (cf.isDryRun()) {

@@ -13,6 +13,25 @@
   "engines": {
     "node": ">=22.12"
   },
+  "cloudflare": {
+    "bindings": {
+      "ADMIN_PASSWORD": {
+        "description": "The admin password, at least 9 characters. Use a long random one (a password manager can make one): without Cloudflare Access, it alone protects the admin at `/_admin`. Change it later under the Worker's **Settings → Variables and Secrets**."
+      },
+      "LINKS": {
+        "description": "KV namespace holding the published links, read on every redirect."
+      },
+      "DB": {
+        "description": "D1 database: links, history, daily statistics, settings. Its migrations run on every deploy."
+      },
+      "CLICKS": {
+        "description": "Analytics Engine dataset with one data point per click. To read it, add `CF_ACCOUNT_ID` and a `CF_ANALYTICS_TOKEN` secret later ([docs/SETUP.md](https://github.com/jntegz/shorthop/blob/main/docs/SETUP.md#analytics))."
+      },
+      "CLICK_CAPS": {
+        "description": "Durable Object counting clicks exactly, used only by links with a click limit."
+      }
+    }
+  },
   "scripts": {
     "setup": "tsx scripts/setup/index.ts",
     "dev": "vite dev",
@@ -59,6 +78,7 @@
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
     "jsonc-parser": "^3.3.1",
+    "smol-toml": "^1.9.1",
     "tailwindcss": "^4.3.3",
     "tsx": "^4.23.15",
     "typescript": "~6.0.3",

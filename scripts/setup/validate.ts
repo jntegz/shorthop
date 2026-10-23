@@ -1,9 +1,9 @@
 // Input checks for the setup wizard. Pure functions, tested in test/node.
 
 import { HOSTNAME_RE } from "../../src/shared/domains";
-import { MAX_PASSWORD_LENGTH } from "../../src/shared/password";
+import { MAX_PASSWORD_LENGTH, MIN_ADMIN_PASSWORD_LENGTH } from "../../src/shared/password";
 
-export const MIN_PASSWORD_LENGTH = 9;
+export const MIN_PASSWORD_LENGTH = MIN_ADMIN_PASSWORD_LENGTH;
 
 /** Worker names: lowercase letters, digits and dashes, up to 63 characters. */
 export function workerNameProblem(name: string): string | null {

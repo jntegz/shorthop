@@ -14,7 +14,7 @@ import { normalizeTarget, validateUtmTemplate } from "../../shared/target";
 import type { CapDTO, ImportResult, ImportRowResult, LinkDTO, LinkListItem } from "../../shared/types";
 import { fullTokenScope, TOKEN_SCOPE_ERROR } from "../auth";
 import { getDefaultUtm, getLink, kvKey, nowSec, publish, toDTO, type LinkRow } from "../db";
-import { domainsOf, isConfiguredDomain, selfHosts, shortOrigin } from "../domains";
+import { configuredDomains, domainsOf, isConfiguredDomain, NO_DOMAIN_ERROR, selfHosts, shortOrigin } from "../domains";
 import { csv, validate, type AppEnv } from "../hono";
 import { changedFields, emit, linkPayload } from "../webhooks";
 import { deletedLinks, getVersion, listVersions, SNAPSHOT_SQL, versionStmt } from "../history";
@@ -274,6 +274,7 @@ export const linksApi = new Hono<AppEnv>()
   })
 
   .post("/links", validate("json", createLinkSchema), async (c) => {
+    if (!configuredDomains(c.env).length) return c.json({ error: NO_DOMAIN_ERROR, code: "no_domain" }, 409);
     const body = c.req.valid("json");
     const domain = body.domain || domainsOf(c.env).primary;
     if (!isConfiguredDomain(c.env, domain)) return c.json({ error: notConfigured(domain) }, 400);
@@ -527,6 +528,7 @@ export const linksApi = new Hono<AppEnv>()
   })
 
   .post("/import", validate("json", importSchema), async (c) => {
+    if (!configuredDomains(c.env).length) return c.json({ error: NO_DOMAIN_ERROR, code: "no_domain" }, 409);
     const { rows, mode, dryRun, defaultDomain } = c.req.valid("json");
     // Up front, even for a dry run, so a chunked import can't stop halfway.
     if (mode === "overwrite" && !can(c.get("actor"), "links.edit")) {

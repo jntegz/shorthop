@@ -6,7 +6,7 @@ import type { MeDTO } from "../../shared/types";
 import { adminAuthMode, fullTokenScope, legacyApiToken } from "../auth";
 import { getDefaultUtm, nowSec, statsSince } from "../db";
 import { demoStatus } from "../demo";
-import { domainsOf, shortOrigin } from "../domains";
+import { configuredAdminHost, configuredDomains, domainsOf, shortOrigin } from "../domains";
 import { validate, type AppEnv } from "../hono";
 import { chargeAttempt, clearFailuresStmt, getEpoch, issueSessionCookie, lock, loginConfig, verifyPasswordHash } from "../session";
 import { getUser } from "../users";
@@ -15,7 +15,8 @@ export const meApi = new Hono<AppEnv>()
   .get("/", async (c) => {
     const actor = c.get("actor");
     const [defaultUtm, since, demo] = await Promise.all([getDefaultUtm(c.env.DB), statsSince(c.env.DB), demoStatus(c.env.DB)]);
-    const { list, primary, admin } = domainsOf(c.env);
+    const { primary } = domainsOf(c.env);
+    const list = configuredDomains(c.env);
     const me: MeDTO = {
       email: actor.email,
       name: actor.name,
@@ -33,8 +34,8 @@ export const meApi = new Hono<AppEnv>()
         statsSince: since,
         publicOrigin: shortOrigin(c.env, c.req.raw, primary),
         domains: list,
-        primaryDomain: primary,
-        adminHost: admin,
+        primaryDomain: list[0] ?? "",
+        adminHost: configuredAdminHost(c.env),
         demo,
       },
     };

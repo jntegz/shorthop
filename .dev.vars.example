@@ -1,19 +1,9 @@
-# Copy to .dev.vars for local development, or run `npm run setup -- local`,
-# which writes one with random values. Never commit .dev.vars.
-# (API_TOKEN isn't read here: it's optional, so wrangler dev skips it. Create a
-# personal API key in Settings → API & webhooks instead.)
-VISITOR_SALT=dev-salt-0123456789
-# Admin password login. Leave ADMIN_PASSWORD_HASH empty to skip the password on
-# localhost, or paste the output of: npx tsx scripts/hash-password.ts --generate
-ADMIN_PASSWORD_HASH=
-SESSION_SECRET=dev-session-secret-change-me-0123456789
-# Lets the admin work on localhost without Cloudflare Access. Ignored on any
-# other hostname, so it can never open the deployed admin.
-DEV_AUTH_BYPASS=1
-# With the bypass, act as someone from Settings → People to see their view.
-# Empty means an owner.
-DEV_AUTH_EMAIL=
-# Only vars and the required secrets are read from here: optional secrets such
-# as CF_ANALYTICS_TOKEN are ignored in local dev (Analytics Engine isn't local).
-# Optional: override vars from the config, e.g. to try a second short domain.
-# SHORT_DOMAINS=sh.example,alt.example
+# The secret the Deploy to Cloudflare button asks for when it deploys Shorthop.
+# ADMIN_PASSWORD: the admin password, at least 9 characters. A long random one
+# is best: password-only sign-in is all that protects a new install. The other
+# secrets (session signing, visitor salt) are generated and kept in D1.
+ADMIN_PASSWORD=
+
+# For local development, don't copy this file: run `npm run setup -- local`,
+# which writes .dev.vars with random secrets and the localhost bypass. Never
+# commit .dev.vars.

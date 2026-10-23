@@ -7,7 +7,7 @@ import { addDays, daysBetween, isoWeek, utcDate } from "../shared/dates";
 import { isPlaceholderHost } from "../shared/domains";
 import { escapeHtml } from "../shared/html";
 import type { HealthCheck, HealthStatus, JobRun, SystemHealthDTO } from "../shared/types";
-import { parsePasswordHash, PLAN_ITERATIONS } from "../shared/password";
+import { MIN_ADMIN_PASSWORD_LENGTH, parsePasswordHash, PLAN_ITERATIONS } from "../shared/password";
 import { aeAvailable } from "./ae";
 import { accessConfigured, adminAuthMode, legacyApiToken } from "./auth";
 import { getSetting, nowSec, setSettingStmt } from "./db";
@@ -18,7 +18,7 @@ import { MailerError, mailerStatus, providerName, sendMail, withMailSettings } f
 import { runRollup, type RollupResult } from "./rollup";
 import { getCheckSettings, runLinkChecks } from "./link-check";
 import { checkMilestones, deliver, pruneDeliveries } from "./webhooks";
-import { loginConfig } from "./session";
+import { loginConfig, plainAdminPassword } from "./session";
 
 type Job = "rollup" | "digest" | "alert" | "links";
 const JOBS_KEY = "job_runs";
@@ -228,8 +228,15 @@ function setupChecks(env: Env, add: (id: string, label: string, status: HealthSt
   const configured = list.filter((d) => !d.endsWith(".invalid"));
   const placeholders = [...new Set([...configured, admin])].filter((h) => isPlaceholderHost(h));
   const domainFix: Extra = { fix: "npm run setup -- domains", docs: "docs/SETUP.md#domains" };
-  if (!configured.length) add("domains", "Short domains", "error", "SHORT_DOMAINS is empty or invalid, so no short link can be served.", domainFix);
-  else if (placeholders.length) add("domains", "Short domains", "error", `${placeholders.join(", ")} ${placeholders.length === 1 ? "is a placeholder" : "are placeholders"}: set your own domain.`, domainFix);
+  if (!configured.length) {
+    add(
+      "domains",
+      "Short domains",
+      "error",
+      "SHORT_DOMAINS is empty or invalid, so links can't be created or served. Installed with the Deploy to Cloudflare button? Add your domain in wrangler.toml in your copy of the repository.",
+      { fix: "npm run setup -- domains", docs: "docs/SETUP.md#deploy-button" },
+    );
+  } else if (placeholders.length) add("domains", "Short domains", "error", `${placeholders.join(", ")} ${placeholders.length === 1 ? "is a placeholder" : "are placeholders"}: set your own domain.`, domainFix);
   else add("domains", "Short domains", "ok", `${configured.join(", ")}${admin !== configured[0] ? `; admin on ${admin}` : ""}.`);
 
   // Sign-in: Access (unless deliberately off) and the password.
@@ -257,9 +264,25 @@ function setupChecks(env: Env, add: (id: string, label: string, status: HealthSt
 
   const passwordFix: Extra = { fix: "npm run setup -- password", docs: "docs/SETUP.md#password" };
   const hash = parsePasswordHash(env.ADMIN_PASSWORD_HASH ?? "");
+  const plain = plainAdminPassword(env);
   if (!loginConfig(env)) {
-    const missing = [hash ? "" : "ADMIN_PASSWORD_HASH", (env.SESSION_SECRET ?? "").length >= 32 ? "" : "SESSION_SECRET (32+ characters)"].filter(Boolean);
+    const password = hash
+      ? ""
+      : plain
+        ? plain.length < MIN_ADMIN_PASSWORD_LENGTH
+          ? `ADMIN_PASSWORD (${MIN_ADMIN_PASSWORD_LENGTH} or more characters)`
+          : ""
+        : "ADMIN_PASSWORD_HASH (or ADMIN_PASSWORD)";
+    const missing = [password, (env.SESSION_SECRET ?? "").length >= 32 ? "" : "SESSION_SECRET (32+ characters)"].filter(Boolean);
     add("password", "Admin password", "error", `Missing or invalid: ${missing.join(" and ")}. The admin stays closed until it's set.`, passwordFix);
+  } else if (!hash) {
+    add(
+      "password",
+      "Admin password",
+      "warn",
+      "Set as the plain ADMIN_PASSWORD secret. A hashed one (ADMIN_PASSWORD_HASH) is safer if the secret ever leaks: run npm run setup -- password, then delete ADMIN_PASSWORD.",
+      { ...passwordFix, advisory: true },
+    );
   } else if (env.WORKERS_PLAN !== "paid" && hash!.iterations > PLAN_ITERATIONS.free) {
     add(
       "password",

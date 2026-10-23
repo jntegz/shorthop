@@ -29,6 +29,24 @@ export function domainsOf(env: Env): Domains {
   return d;
 }
 
+/** The short domains actually configured: empty while SHORT_DOMAINS is (the fallback placeholder isn't one). */
+export function configuredDomains(env: Env): string[] {
+  return domainsOf(env).list.filter((d) => d !== FALLBACK_DOMAIN);
+}
+
+/** The admin host, or "" while no short domain is configured. */
+export function configuredAdminHost(env: Env): string {
+  const { admin } = domainsOf(env);
+  return admin === FALLBACK_DOMAIN ? "" : admin;
+}
+
+/**
+ * Why links can't be created yet. A Deploy to Cloudflare install starts on
+ * workers.dev with no short domain, and links saved under the placeholder
+ * would be stranded once a real one is added.
+ */
+export const NO_DOMAIN_ERROR = "Add a short domain first: set SHORT_DOMAINS and a route for it in your Wrangler config, then deploy. Settings → Short domains has the steps.";
+
 export function isConfiguredDomain(env: Env, domain: string): boolean {
   return domainsOf(env).list.includes(domain);
 }
