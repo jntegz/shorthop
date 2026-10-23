@@ -1,6 +1,6 @@
 # iOS Shortcut: shorten a link from the share sheet
 
-Creates a short link from any app's share sheet and copies it to the clipboard. With a saved token it takes about 3 seconds.
+Creates a short link from any app's share sheet and copies it to the clipboard. With a saved API key it takes about 3 seconds.
 
 ## Build it
 
@@ -11,7 +11,7 @@ Creates a short link from any app's share sheet and copies it to the clipboard. 
    | # | Action | Settings |
    |---|---|---|
    | 1 | **Ask for Input** (optional) | Prompt: "Custom slug (leave empty for random)", Input Type: Text |
-   | 2 | **Get Contents of URL** | URL: `https://ADMIN_HOST/api/links?format=text` · Method: **POST** · Headers: `Authorization` = `Bearer YOUR_API_TOKEN` · Request Body: **JSON** with `url` (Text) = **Shortcut Input**, and `slug` (Text) = **Provided Input** from step 1 |
+   | 2 | **Get Contents of URL** | URL: `https://ADMIN_HOST/api/links?format=text` (the API lives on the admin host) · Method: **POST** · Headers: `Authorization` = `Bearer YOUR_API_KEY` · Request Body: **JSON** with `url` (Text) = **Shortcut Input**, and `slug` (Text) = **Provided Input** from step 1 |
    | 3 | **If** | *Contents of URL* **begins with** `https://` |
    | 4 | **Copy to Clipboard** | *Contents of URL* |
    | 5 | **Show Notification** | "Copied *Contents of URL*" |
@@ -19,7 +19,7 @@ Creates a short link from any app's share sheet and copies it to the clipboard. 
    | 7 | **Show Alert** | *Dictionary Value* |
    | 8 | **End If** | |
 
-4. Replace `ADMIN_HOST` with your admin host (the primary short domain if you have no separate one), and `YOUR_API_TOKEN` with the API token the setup showed you (stored in your password manager).
+4. Replace `ADMIN_HOST` with your admin host (the primary short domain if you have no separate one), and `YOUR_API_KEY` with a personal key: Admin → Settings → API & webhooks → **Create API key**, named "iOS Shortcut", with only **Create links** ticked. It's shown once, so paste it straight in. If the phone is lost, revoke that key in the same place. (An older `API_TOKEN` secret also works, limited to reading and creating links unless `API_TOKEN_SCOPE` is `"full"`.)
 
 If you skip step 1, leave out `slug` and every link gets a random 6-character slug.
 
@@ -33,8 +33,8 @@ Add `?s=li` (LinkedIn), `?s=nl` (newsletter) or any other tag when you post the 
 
 | Message | Cause |
 |---|---|
-| `Missing or invalid API token.` | The `Authorization` header is wrong or the token was rotated (`npm run setup -- secrets --rotate`) |
-| `Too many failed attempts…` | 10 bad tokens in a minute from your IP; wait a minute |
+| `Missing or invalid API key.` | The `Authorization` header is wrong, or the key was revoked or has expired: create a new one in Settings → API & webhooks |
+| `Too many failed attempts…` | 10 bad keys in a minute from your network; wait a minute (repeated failures lock it for longer) |
 | `Target must start with https://.` | The shared item isn't an https URL |
 | `slug: "x" is already taken on <domain>.` | Pick another slug |
 | A web page or a Cloudflare Access sign-in instead of a link | Access covers `/api`: limit the Access application to the paths `_admin` and `_admin/*` ([setup manual](SETUP.md#access)) |

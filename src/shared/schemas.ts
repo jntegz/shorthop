@@ -3,6 +3,7 @@ import { isDay } from "./dates";
 import { DEAD_LINK_MAX_DELAY, DEAD_LINK_MIN_DELAY } from "./dead-link";
 import { HOSTNAME_RE } from "./domains";
 import { HEX_COLOR_RE } from "./not-found";
+import { PERMISSIONS, ROLES } from "./permissions";
 import { LINK_PASSWORD_MAX, LINK_PASSWORD_MIN, MAX_CLICK_LIMIT } from "./protection";
 import { ROUTE_DEVICES } from "./routing";
 import { IMPORT_SLUG_RE } from "./slug";
@@ -269,3 +270,44 @@ export const mailSettingsSchema = z
   })
   .refine((s) => s.from !== "" || SENDERLESS_PROVIDERS.includes(s.provider), { path: ["from"], message: "Enter the sender address, such as digest@example.com" });
 export type MailSettings = z.infer<typeof mailSettingsSchema>;
+
+/** An email as Access reports it: trimmed and lowercased. */
+const email = z.string().trim().toLowerCase().max(254).pipe(z.email("Enter an email address"));
+const permissionList = z.array(z.enum(PERMISSIONS)).max(PERMISSIONS.length);
+
+export const personSchema = z.object({
+  email,
+  name: z.string().trim().max(80).default(""),
+  role: z.enum(ROLES),
+  permissions: permissionList.default([]),
+});
+
+export const personUpdateSchema = z.object({
+  name: z.string().trim().max(80).optional(),
+  role: z.enum(ROLES).optional(),
+  permissions: permissionList.optional(),
+});
+
+export const personParamSchema = z.object({ email });
+
+export const API_KEY_EXPIRY_DAYS = [30, 90, 365] as const;
+
+export const apiKeySchema = z.object({
+  name: z
+    .string()
+    .trim()
+    .min(1, "Give the key a name, such as the tool that uses it")
+    .max(40)
+    .regex(/^[^\p{Cc}]+$/u, "Use letters, numbers and punctuation only"),
+  permissions: permissionList.default([]),
+  /** Days until it stops working; null = never. */
+  expiresInDays: z.union([z.literal(30), z.literal(90), z.literal(365), z.null()]).default(null),
+});
+
+export const apiKeyParamSchema = z.object({ id: z.string().regex(/^[a-z0-9]{8}$/) });
+export const apiKeyListSchema = z.object({ all: z.enum(["1"]).optional() });
+
+export const passwordChangeSchema = z.object({
+  current: z.string().min(1, "Enter your current password").max(1024),
+  next: z.string().min(12, "Use at least 12 characters").max(1024),
+});

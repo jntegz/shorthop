@@ -8,6 +8,7 @@ import { parsePreview } from "../../shared/preview";
 import { describeRouting, parseRouting } from "../../shared/routing";
 import type { LinkDTO, VersionDTO } from "../../shared/types";
 import { api, call, keys } from "../api";
+import { useCan } from "../lib/me";
 import { ago, whenFull } from "../lib/format";
 import { useLinkLabel } from "../lib/links";
 import { cn } from "../lib/utils";
@@ -169,6 +170,7 @@ function RestoreDialog({ link, current, version, onClose }: { link: LinkDTO; cur
 
 /** Link page → History: every saved state, what changed in each, and a way back. */
 export function LinkHistory({ link }: { link: LinkDTO }) {
+  const edits = useCan()("links.edit");
   const [all, setAll] = useState(false);
   const [restoring, setRestoring] = useState<VersionDTO | null>(null);
   const q = useQuery({
@@ -222,7 +224,7 @@ export function LinkHistory({ link }: { link: LinkDTO }) {
                       <span className="text-xs text-muted" title={whenFull(v.at)}>
                         {ago(v.at)} · {actorName(v.actor)}
                       </span>
-                      {restorable ? (
+                      {restorable && edits ? (
                         <Button variant="ghost" size="sm" className="ml-auto h-7 px-2 text-xs" onClick={() => setRestoring(v)}>
                           <RotateCcw /> Restore
                         </Button>

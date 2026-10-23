@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { DOWN_AFTER_FAILS, problemText, STATE_LABEL, type CheckState } from "../../shared/link-check";
 import type { CheckSettings, TargetCheckDTO } from "../../shared/types";
 import { api, call, keys } from "../api";
+import { useCan } from "../lib/me";
 import { CHECK_STYLE, CheckBadge, STATE_ORDER } from "../components/CheckBadge";
 import { HealthTabs } from "../components/HealthTabs";
 import { StatsFreshness } from "../components/StatsFreshness";
@@ -239,6 +240,8 @@ export function Health() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [fixing, setFixing] = useState<TargetCheckDTO | null>(null);
   const label = useLinkLabel();
+  const can = useCan();
+  const manage = can("settings.manage");
 
   const checks = useQuery({ queryKey: keys.checks, queryFn: () => call(api.checks.$get()), refetchInterval: 60_000 });
   const data = checks.data;
@@ -307,9 +310,11 @@ export function Health() {
         description="Shorthop visits every destination about twice a day, confirms a problem before calling it, and tells you before your audience hits a dead end."
         actions={
           <>
-            <Button variant="outline" onClick={() => setSettingsOpen(true)} disabled={!data}>
-              <Settings2 /> Check settings
-            </Button>
+            {manage ? (
+              <Button variant="outline" onClick={() => setSettingsOpen(true)} disabled={!data}>
+                <Settings2 /> Check settings
+              </Button>
+            ) : null}
             <Button onClick={() => recheck.mutate()} loading={recheck.isPending} disabled={!data}>
               <RefreshCw /> Check problems now
             </Button>
@@ -330,9 +335,13 @@ export function Health() {
             <div className="mb-5">
               <Notice>
                 Automatic checks are off, so new problems aren't found.{" "}
-                <button type="button" className="font-medium underline underline-offset-2" onClick={() => setSettingsOpen(true)}>
-                  Turn them on
-                </button>
+                {manage ? (
+                  <button type="button" className="font-medium underline underline-offset-2" onClick={() => setSettingsOpen(true)}>
+                    Turn them on
+                  </button>
+                ) : (
+                  "An admin can turn them on."
+                )}
               </Notice>
             </div>
           ) : data.overdue > 25 ? (
@@ -485,7 +494,7 @@ export function Health() {
                         </td>
                         <td className="ml-auto md:px-4 md:py-4">
                           <div className="flex items-center justify-end gap-1">
-                            {failing ? (
+                            {failing && can("links.edit") ? (
                               <Button size="sm" variant="outline" onClick={() => setFixing(item)}>
                                 <Wrench /> Fix
                               </Button>

@@ -5,9 +5,11 @@ import { Badge, Button, Card, CardHeader } from "./ui";
 
 /**
  * The main endpoints, grouped. All take and return JSON unless noted. `full`:
- * the API token needs API_TOKEN_SCOPE = "full" (src/worker/app.ts, TOKEN_WRITES).
+ * the older API_TOKEN secret needs API_TOKEN_SCOPE = "full" (src/worker/app.ts,
+ * TOKEN_WRITES); personal keys only need their permission.
  */
 const ENDPOINTS: { group: string; rows: [method: string, path: string, what: string, full?: true][] }[] = [
+  { group: "Account", rows: [["GET", "/me", "Who the key acts as, and what it may do"]] },
   {
     group: "Links",
     rows: [
@@ -46,16 +48,19 @@ const ENDPOINTS: { group: string; rows: [method: string, path: string, what: str
 
 const METHOD_TONE: Record<string, "good" | "accent" | "warn" | "danger"> = { GET: "good", POST: "accent", PATCH: "warn", DELETE: "danger" };
 
-/** Settings → API: the token, the endpoints, a curl example and the iOS Shortcut. */
-export function ApiCard({ origin, tokenSet, tokenScope }: { origin: string; tokenSet: boolean; tokenScope: "create" | "full" }) {
+/**
+ * Settings → API: the base URL, the endpoints, a curl example and the iOS
+ * Shortcut. tokenSet and tokenScope: admins only (null for others).
+ */
+export function ApiCard({ origin, tokenSet, tokenScope }: { origin: string; tokenSet: boolean | null; tokenScope: "create" | "full" | null }) {
   const base = `${origin}/api`;
   const example = `curl -X POST "${base}/links?format=text" \\
-  -H "Authorization: Bearer $SHORTHOP_TOKEN" \\
+  -H "Authorization: Bearer $SHORTHOP_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{"url":"https://example.com/new-post","slug":"new-post"}'`;
   return (
     <Card id="api" className="scroll-mt-6 lg:col-span-2">
-      <CardHeader title="API" description="Scripts, automations and the iOS Shortcut use the API with a token, not your browser session." info={SETTINGS_HELP.api} />
+      <CardHeader title="API" description="What scripts and tools can do with an API key. Every request needs one in the Authorization header." info={SETTINGS_HELP.api} />
       <div className="space-y-5 px-5 pb-5 text-sm">
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="rounded-xl border border-line p-3">
@@ -69,29 +74,43 @@ export function ApiCard({ origin, tokenSet, tokenScope }: { origin: string; toke
           </div>
           <div className="rounded-xl border border-line p-3">
             <p className="flex items-center gap-1.5 text-xs text-muted">
-              <KeyRound className="size-3.5" aria-hidden /> Token
+              <KeyRound className="size-3.5" aria-hidden /> Authorization
             </p>
-            <p className="mt-1 flex flex-wrap items-center gap-2 text-xs">
-              {tokenSet ? <Badge tone="good">Set</Badge> : <Badge tone="warn">Not set</Badge>}
-              {tokenScope === "full" ? <Badge tone="warn">Full access</Badge> : <Badge>Read, create, import</Badge>}
-              <span className="text-muted">
-                The Worker secret <code className="font-mono text-fg">API_TOKEN</code>, sent as <code className="font-mono text-fg">Authorization: Bearer …</code>.{" "}
-                {tokenScope === "full" ? (
-                  <>
-                    With <code className="font-mono text-fg">API_TOKEN_SCOPE</code> set to <code className="font-mono text-fg">"full"</code> it can do everything the admin can, so keep it
-                    private.
-                  </>
-                ) : (
-                  <>
-                    It can read, create links and import new ones; changing, deleting and restoring (marked <em>full</em> below) need{" "}
-                    <code className="font-mono text-fg">API_TOKEN_SCOPE = "full"</code>. A lost token can't retarget your links.
-                  </>
-                )}{" "}
-                Replace it with <code className="font-mono text-fg">wrangler secret put API_TOKEN</code>.
-              </span>
+            <p className="mt-1 text-xs text-muted">
+              <code className="font-mono text-fg">Authorization: Bearer shp_…</code> with a key from API keys above. Each person creates their own, limited to what they may do.
             </p>
           </div>
         </div>
+        {tokenSet !== null ? (
+          <div className="rounded-xl border border-line p-3">
+            <p className="flex flex-wrap items-center gap-2 text-xs">
+              <span className="font-medium text-fg">Server token (older)</span>
+              {tokenSet ? <Badge tone="good">Set</Badge> : <Badge>Not set</Badge>}
+              {tokenSet ? tokenScope === "full" ? <Badge tone="warn">Full access</Badge> : <Badge>Read, create, import</Badge> : null}
+            </p>
+            <p className="mt-1 text-xs text-muted">
+              {tokenSet ? (
+                <>
+                  A key set as the Cloudflare secret <code className="font-mono text-fg">API_TOKEN</code> from the terminal, from before personal keys. It isn't shown here.{" "}
+                  {tokenScope === "full" ? (
+                    <>
+                      With <code className="font-mono text-fg">API_TOKEN_SCOPE</code> set to <code className="font-mono text-fg">"full"</code> it can do everything an owner can.
+                    </>
+                  ) : (
+                    <>
+                      It can read, create links and import new ones; changing, deleting and restoring (marked <em>full</em> below) need{" "}
+                      <code className="font-mono text-fg">API_TOKEN_SCOPE = "full"</code>.
+                    </>
+                  )}{" "}
+                  If your iOS Shortcut or a script still uses it, switch it to a personal key, then delete the secret with{" "}
+                  <code className="font-mono text-fg">wrangler secret delete API_TOKEN</code>.
+                </>
+              ) : (
+                <>Not set, so only personal API keys work. That's the safer setup.</>
+              )}
+            </p>
+          </div>
+        ) : null}
 
         <div className="overflow-hidden rounded-xl border border-line">
           <table className="w-full text-left text-xs">
@@ -109,8 +128,8 @@ export function ApiCard({ origin, tokenSet, tokenScope }: { origin: string; toke
                       </td>
                       <td className="px-3 py-2 font-mono text-[11px] break-all text-fg">
                         {path}
-                        {full && tokenScope !== "full" ? (
-                          <span className="ml-1.5 font-sans text-[10px] font-medium text-muted" title='The API token needs API_TOKEN_SCOPE = "full"'>
+                        {full && tokenSet && tokenScope !== "full" ? (
+                          <span className="ml-1.5 font-sans text-[10px] font-medium text-muted" title='The older API_TOKEN secret needs API_TOKEN_SCOPE = "full"; personal keys only need their permission'>
                             full
                           </span>
                         ) : null}
@@ -134,8 +153,8 @@ export function ApiCard({ origin, tokenSet, tokenScope }: { origin: string; toke
         </div>
         <p className="text-muted">
           <strong className="text-fg">iOS Shortcut:</strong> Get Contents of URL → POST to <code className="text-fg">{base}/links?format=text</code> with the{" "}
-          <code className="text-fg">Authorization</code> header and a JSON body <code className="text-fg">{"{ url: Shortcut Input }"}</code>, then Copy to Clipboard. Full steps are
-          in docs/ios-shortcut.md.
+          <code className="text-fg">Authorization</code> header (a key that can create links) and a JSON body <code className="text-fg">{"{ url: Shortcut Input }"}</code>, then
+          Copy to Clipboard. Full steps are in docs/ios-shortcut.md.
         </p>
       </div>
     </Card>

@@ -104,7 +104,7 @@ export function loginPage(opts: {
     `;
   const html = shell(
     `Log in · ${APP_NAME}`,
-    `<h1>Enter your admin password</h1>
+    `<h1>${opts.passwordOnly ? "Enter your admin password" : "Enter your password"}</h1>
   <p>${intro}</p>
   ${opts.error ? `<p class="err" role="alert">${escapeHtml(opts.error)}</p>` : ""}
   <form method="post" action="/_admin/login">
@@ -117,6 +117,32 @@ export function loginPage(opts: {
   const headers: Record<string, string> = { ...LOGIN_HEADERS };
   if (opts.retryAfter) headers["Retry-After"] = String(Math.max(1, Math.ceil(opts.retryAfter)));
   return new Response(html, { status: opts.status, headers });
+}
+
+/** Choosing a password from an invite link (the path holds the one-time token). */
+export function invitePage(opts: { action: string; email: string; minLength: number; error?: string; status: number }): Response {
+  const html = shell(
+    `Choose a password · ${APP_NAME}`,
+    `<h1>Choose your password</h1>
+  <p>You were invited to ${APP_NAME}. Signed in with Cloudflare Access; this password is the second lock. Use at least ${opts.minLength} characters.</p>
+  ${opts.error ? `<p class="err" role="alert">${escapeHtml(opts.error)}</p>` : ""}
+  <form method="post" action="${escapeHtml(opts.action)}">
+    <label for="username">Access account</label>
+    <input id="username" name="username" type="email" value="${escapeHtml(opts.email)}" autocomplete="username" readonly>
+    <label for="password">New password</label>
+    <input id="password" name="password" type="password" autocomplete="new-password" minlength="${opts.minLength}" maxlength="1024" required autofocus>
+    <label for="confirm">Repeat it</label>
+    <input id="confirm" name="confirm" type="password" autocomplete="new-password" minlength="${opts.minLength}" maxlength="1024" required>
+    <button type="submit">Save and continue</button>
+  </form>`,
+  );
+  return new Response(html, { status: opts.status, headers: LOGIN_HEADERS });
+}
+
+/** A short message on the login pages' headers (no form). */
+export function noticePage(title: string, heading: string, body: string, status: number): Response {
+  const html = page(`${title} · ${APP_NAME}`, heading, escapeHtml(body), { href: "/cdn-cgi/access/logout", label: "Sign out" });
+  return new Response(html, { status, headers: LOGIN_HEADERS });
 }
 
 /**

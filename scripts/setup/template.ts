@@ -202,15 +202,20 @@ ${sendEmail}
     // The only recipient.
     "DIGEST_TO": ${j(c.digestTo)},${mailgun}${custom}
     // Set to "1" only in .dev.vars. Honored solely on localhost/127.0.0.1.
-    "DEV_AUTH_BYPASS": ""
+    "DEV_AUTH_BYPASS": "",
+    // With DEV_AUTH_BYPASS only: act as this person (a row in Settings → People)
+    // to try their view locally. Empty means an owner.
+    "DEV_AUTH_EMAIL": ""
   },
 
   "secrets": {
-    // Set by \`npm run setup\`. API_TOKEN: Bearer token for /api. VISITOR_SALT:
-    // mixed into the visitor hash. ADMIN_PASSWORD_HASH: the admin password's PBKDF2
-    // hash. SESSION_SECRET: signs admin sessions (rotate it to log out everywhere).
-    // Optional: CF_ANALYTICS_TOKEN and the digest provider's keys.
-    "required": ["API_TOKEN", "VISITOR_SALT", "ADMIN_PASSWORD_HASH", "SESSION_SECRET"]
+    // Set by \`npm run setup\`. VISITOR_SALT: mixed into the visitor hash.
+    // ADMIN_PASSWORD_HASH: the owners' password, a PBKDF2 hash. SESSION_SECRET:
+    // signs admin sessions (rotate it to log out everywhere).
+    // Optional, not listed: CF_ANALYTICS_TOKEN, the digest provider's keys, and
+    // API_TOKEN, a Bearer token for /api from before personal API keys
+    // (Settings → API & webhooks); wrangler dev ignores it in .dev.vars.
+    "required": ["VISITOR_SALT", "ADMIN_PASSWORD_HASH", "SESSION_SECRET"]
   },
 
   "observability": {

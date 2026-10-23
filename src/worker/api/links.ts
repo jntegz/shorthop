@@ -8,6 +8,7 @@ import { hashLinkPassword } from "../link-password";
 import { parseRouting, splitChanged, validateRouting, type RouteRule, type Routing, type RoutingError } from "../../shared/routing";
 import { createLinkSchema, importSchema, linkParamSchema, versionParamSchema, listQuerySchema, resyncQuerySchema, updateLinkSchema } from "../../shared/schemas";
 import { isCheckProblem, type CheckStatus } from "../../shared/link-check";
+import { can } from "../../shared/permissions";
 import { generateSlug, validateSlug } from "../../shared/slug";
 import { normalizeTarget, validateUtmTemplate } from "../../shared/target";
 import type { CapDTO, ImportResult, ImportRowResult, LinkDTO, LinkListItem } from "../../shared/types";
@@ -175,7 +176,7 @@ function restoreProblem(c: Context<AppEnv>, r: LinkRow): string | null {
 /** Import events sent straight away; the rest wait for the cron (outbound request limits). */
 const IMPORT_EVENTS_NOW = 5;
 
-const PUBLISH_FAILED = "Saved, but publishing to KV failed. Run “Republish all links” in Settings.";
+const PUBLISH_FAILED = "Saved, but publishing to KV failed. Save it again in a minute, or use “Republish all links” in Settings → General.";
 
 /** Rows GET /links returns at most. */
 const LIST_LIMIT = 5000;
@@ -527,8 +528,12 @@ export const linksApi = new Hono<AppEnv>()
 
   .post("/import", validate("json", importSchema), async (c) => {
     const { rows, mode, dryRun, defaultDomain } = c.req.valid("json");
-    // Overwriting would retarget existing links, which the default token scope can't do.
-    if (mode === "overwrite" && c.get("identity") === "api-token" && !fullTokenScope(c.env)) {
+    // Up front, even for a dry run, so a chunked import can't stop halfway.
+    if (mode === "overwrite" && !can(c.get("actor"), "links.edit")) {
+      return c.json({ error: "Overwriting existing links needs the Edit links permission." }, 403);
+    }
+    // Overwriting would retarget existing links, which the API token's default scope can't do.
+    if (mode === "overwrite" && c.get("actor").via === "token" && !fullTokenScope(c.env)) {
       return c.json({ error: TOKEN_SCOPE_ERROR }, 403);
     }
     const now = nowSec();
@@ -615,12 +620,17 @@ export const linksApi = new Hono<AppEnv>()
     }
 
     if (!dryRun && valid.length > 0) {
+      // Skip mode never overwrites, even a link created since the check above.
+      const onConflict =
+        mode === "overwrite"
+          ? `DO UPDATE SET target = excluded.target, title = COALESCE(excluded.title, links.title),
+           imported_clicks = COALESCE(excluded.imported_clicks, links.imported_clicks), source = 'import',
+           updated_at = excluded.updated_at`
+          : "DO NOTHING";
       const stmt = c.env.DB.prepare(
         `INSERT INTO links (domain, slug, target, active, expires_at, utm, utm_template, pass_query, title, tags, notes, source, imported_clicks, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT (domain, slug) DO UPDATE SET target = excluded.target, title = COALESCE(excluded.title, links.title),
-           imported_clicks = COALESCE(excluded.imported_clicks, links.imported_clicks), source = 'import',
-           updated_at = excluded.updated_at`,
+         ON CONFLICT (domain, slug) ${onConflict}`,
       );
       const keysJson = JSON.stringify(valid.map((r) => [r.domain, r.slug]));
       await c.env.DB.batch([
@@ -644,18 +654,21 @@ export const linksApi = new Hono<AppEnv>()
           ),
         ),
         // A version per imported link, with what D1 now holds (an overwrite keeps the link's other settings).
+        // Only rows this import wrote: a link created meanwhile in skip mode isn't one.
         c.env.DB.prepare(
           `INSERT INTO link_versions (domain, slug, at, action, actor, snapshot)
            SELECT domain, slug, ?1, 'import', ?2, ${SNAPSHOT_SQL} FROM links
-           WHERE (domain, slug) IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?3))`,
+           WHERE (domain, slug) IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?3))
+             AND source = 'import' AND updated_at = ?1`,
         ).bind(now, c.get("identity"), keysJson),
       ]);
       // Publish what D1 now holds (an overwrite keeps the link's other settings).
       const { results: saved } = await c.env.DB.prepare(
         `SELECT l.* FROM json_each(?1) j
-         JOIN links l ON l.domain = json_extract(j.value, '$[0]') AND l.slug = json_extract(j.value, '$[1]')`,
+         JOIN links l ON l.domain = json_extract(j.value, '$[0]') AND l.slug = json_extract(j.value, '$[1]')
+         WHERE l.source = 'import' AND l.updated_at = ?2`,
       )
-        .bind(keysJson)
+        .bind(keysJson, now)
         .all<LinkRow>();
       const defaultUtm = await getDefaultUtm(c.env.DB);
       const failed = new Set<string>();

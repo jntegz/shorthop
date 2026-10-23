@@ -8,12 +8,14 @@ import { api, call, keys } from "../api";
 import { ago, num } from "../lib/format";
 import { LINK_HELP } from "../lib/help";
 import { linkKey, linkPath, useLinkLabel } from "../lib/links";
+import { useCan } from "../lib/me";
 import { cn } from "../lib/utils";
 import { CHECK_STYLE, CheckBadge } from "./CheckBadge";
 import { Button, Card, InfoTip, Spinner } from "./ui";
 
 /** Link page → whether the destination still loads, with "Check now" and the fixes that apply. */
 export function DestinationCheck({ link, onMarkBroken }: { link: LinkDTO; onMarkBroken: () => void }) {
+  const can = useCan();
   const { domain, slug } = link;
   const qc = useQueryClient();
   const label = useLinkLabel();
@@ -120,17 +122,17 @@ export function DestinationCheck({ link, onMarkBroken }: { link: LinkDTO; onMark
           )}
         </div>
         <div className="flex flex-wrap gap-2">
-          {data && !link.monitor ? (
+          {data && !link.monitor && can("links.edit") ? (
             <Button variant="outline" size="sm" onClick={() => turnOn.mutate()} loading={turnOn.isPending}>
               <BellRing /> Turn checks on
             </Button>
           ) : null}
-          {data?.monitored && failing && !link.broken ? (
+          {data?.monitored && failing && !link.broken && can("links.edit") ? (
             <Button variant="outline" size="sm" onClick={onMarkBroken}>
               Mark as no longer working
             </Button>
           ) : null}
-          {data?.monitored ? (
+          {data?.monitored && can("health.manage") ? (
             <Button variant="outline" size="sm" onClick={() => run.mutate()} loading={run.isPending}>
               {run.isPending ? null : <RefreshCw />} Check now
             </Button>

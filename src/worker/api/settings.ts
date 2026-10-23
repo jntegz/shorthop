@@ -7,8 +7,8 @@ import { validateUtmTemplate } from "../../shared/target";
 import type { MailSetupDTO, PurgeDomainDTO, SettingsDTO } from "../../shared/types";
 import { aeAvailable } from "../ae";
 import { readCapped } from "../body";
-import { accessConfigured, adminAuthMode, fullTokenScope } from "../auth";
-import { getDefaultUtm, getSetting, nowSec, setSettingStmt } from "../db";
+import { accessConfigured, adminAuthMode } from "../auth";
+import { getDefaultUtm, getSetting, nowSec, setSettingStmt, statsSince } from "../db";
 import { getDeadLinkPage, saveDeadLinkSettings } from "../dead-link";
 import { digestData, renderDigest, runDigest } from "../digest";
 import { autoClearDemo, clearDemo, demoStatus } from "../demo";
@@ -29,8 +29,9 @@ export const settingsApi = new Hono<AppEnv>()
   .get("/", async (c) => {
     // Sample data goes once a real domain is configured (the daily cron checks too).
     await autoClearDemo(c.env);
-    // Login activity and the recipient are for the admin, not for a token that may sit in a script or on a phone.
-    const admin = c.get("identity") !== "api-token";
+    // Login activity is for admins in the admin, not for a key or token that may sit in a script or on a phone.
+    const actor = c.get("actor");
+    const admin = actor.role === "admin" && actor.via === "session";
     const [defaultUtm, lastRolled, rollupPending, lastDigestWeek, security, perDomain, demo, since] = await Promise.all([
       getDefaultUtm(c.env.DB),
       getSetting(c.env.DB, "last_rolled"),
@@ -39,24 +40,19 @@ export const settingsApi = new Hono<AppEnv>()
       admin ? securitySummary(c.env.DB, nowSec()) : null,
       c.env.DB.prepare("SELECT domain, COUNT(*) AS n FROM links GROUP BY domain").all<{ domain: string; n: number }>(),
       demoStatus(c.env.DB),
-      c.env.DB.prepare(
-        "SELECT MIN(d) AS d FROM (SELECT MIN(date) AS d FROM daily_dims UNION ALL SELECT date(MIN(created_at), 'unixepoch') FROM links)",
-      ).first<{ d: string | null }>(),
+      statsSince(c.env.DB),
     ]);
     const { list, primary, admin: adminHost } = domainsOf(c.env);
     const digest = mailerStatus(applyMailSettings(c.env, await mailSettings(c.env.DB)));
     const settings: SettingsDTO = {
       defaultUtm,
-      statsSince: since?.d ?? null,
+      statsSince: since,
       publicOrigin: shortOrigin(c.env, c.req.raw, primary),
       domains: list,
       primaryDomain: primary,
       adminHost,
       linksPerDomain: Object.fromEntries(perDomain.results.map((r) => [r.domain, r.n])),
       demo,
-      admins: c.env.ADMIN_EMAIL.split(",").map((e) => e.trim().toLowerCase()).filter(Boolean),
-      apiTokenSet: (c.env.API_TOKEN ?? "").length >= 16,
-      tokenScope: fullTokenScope(c.env) ? ("full" as const) : ("create" as const),
       aeAvailable: aeAvailable(c.env),
       lastRolled,
       rollupPending,
@@ -160,8 +156,7 @@ export const settingsApi = new Hono<AppEnv>()
   })
 
   .get("/mail", async (c) => {
-    // Which secrets are set and the recipient are for the admin only.
-    if (c.get("identity") === "api-token") return c.json({ error: "Not available with the API token" }, 403);
+    // Which secrets are set and the recipient: admin sessions only (its rule in src/worker/permissions.ts).
     const saved = await mailSettings(c.env.DB);
     const env = applyMailSettings(c.env, saved);
     const e = env as unknown as Record<string, string | undefined>;
@@ -202,8 +197,7 @@ export const settingsApi = new Hono<AppEnv>()
   )
 
   .post("/domains/purge", validate("json", purgeDomainSchema), async (c) => {
-    // Admin sessions only, like revoking sessions: a leaked API token must not wipe a domain.
-    if (c.get("identity") === "api-token") return c.json({ error: "Not available with the API token" }, 403);
+    // Admin sessions only, like revoking sessions (its rule in src/worker/permissions.ts): a leaked key must not wipe a domain.
     const { domain } = c.req.valid("json");
     const result = await purgeDomain(c.env, domain);
     if (result.done) console.log(JSON.stringify({ message: "domain data deleted", domain, email: c.get("identity") }));
@@ -213,10 +207,11 @@ export const settingsApi = new Hono<AppEnv>()
   .delete("/demo", async (c) => c.json({ removed: await clearDemo(c.env) }))
 
   .post("/sessions/revoke", async (c) => {
-    // Admin sessions only: the API token must not be able to lock the owner out.
-    if (c.get("identity") === "api-token") return c.json({ error: "Not available with the API token" }, 403);
+    // Signed-in admins only (the rule says so too): no API key or token may lock everyone out.
+    const actor = c.get("actor");
+    if (actor.via !== "session") return c.json({ error: "Not available with an API key" }, 403);
     await revokeAllSessions(c.env.DB);
-    console.log(JSON.stringify({ message: "admin sessions revoked", email: c.get("identity") }));
+    console.log(JSON.stringify({ message: "admin sessions revoked", email: actor.email }));
     c.header("Set-Cookie", clearSessionCookie());
     return c.json({ revoked: true });
   });

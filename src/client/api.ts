@@ -18,6 +18,17 @@ async function adminFetch(input: RequestInfo | URL, init?: RequestInit): Promise
     window.location.reload();
     throw new ApiError("Your session expired. Reloading…", 401);
   }
+  // Removed from People since the page loaded: reload to show why.
+  if (res.status === 403) {
+    const body = (await res
+      .clone()
+      .json()
+      .catch(() => null)) as { code?: string } | null;
+    if (body?.code === "not_allowed") {
+      window.location.reload();
+      throw new ApiError("Your access was removed. Reloading…", 403);
+    }
+  }
   // An expired password session: back to the login page, then here again.
   if (res.status === 401) {
     const body = (await res
@@ -102,6 +113,10 @@ export const keys = {
   misses: (period: Period) => ["stats", "misses", period] as const,
   recent: (domain?: string, slug?: string) => ["stats", "recent", domain ?? "*", slug ?? "*"] as const,
   settings: ["settings"] as const,
+  // Under "settings", so saving a setting also refreshes the workspace basics.
+  me: ["settings", "me"] as const,
+  people: ["people"] as const,
+  apiKeys: (all: boolean) => ["api-keys", all] as const,
   health: ["settings", "health"] as const,
   checks: ["checks"] as const,
   linkHistory: (domain: string, slug: string) => ["history", domain, slug] as const,

@@ -8,7 +8,9 @@ import { resetNotFoundCache } from "../src/worker/not-found";
 
 export const ORIGIN = "https://sh.example";
 export const API = `${ORIGIN}/api`;
-export const bearer = { Authorization: `Bearer ${env.API_TOKEN}` };
+/** The legacy API_TOKEN secret, as vitest.config.ts binds it. */
+export const API_TOKEN = "test-api-token-0123456789abcdef";
+export const bearer = { Authorization: `Bearer ${API_TOKEN}` };
 
 /** Calls the Worker and waits for its background work (analytics) to finish. */
 export async function call(input: string | Request, init?: RequestInit, envOverride: Partial<Env> = {}): Promise<Response> {
@@ -52,6 +54,8 @@ export async function resetData(): Promise<void> {
     env.DB.prepare("DELETE FROM daily_dims"),
     env.DB.prepare("DELETE FROM auth_failures"),
     env.DB.prepare("DELETE FROM login_events"),
+    env.DB.prepare("DELETE FROM api_keys"),
+    env.DB.prepare("DELETE FROM users"),
     env.DB.prepare("DELETE FROM settings WHERE key != 'default_utm'"),
     env.DB.prepare(
       "UPDATE settings SET value = 'utm_source={domain}&utm_medium=shortlink&utm_campaign={slug}' WHERE key = 'default_utm'",

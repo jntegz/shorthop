@@ -6,7 +6,7 @@
 //   npm run setup -- password             # a new admin password
 //   npm run setup -- analytics            # the Analytics Engine read token
 //   npm run setup -- email                # digest and alert delivery
-//   npm run setup -- secrets --rotate     # new API token and session secret (--salt: visitor salt too)
+//   npm run setup -- secrets --rotate     # new session secret, and API_TOKEN if you still have one (--salt: visitor salt too)
 //   npm run setup -- deploy               # build, migrate the database, deploy
 //   npm run setup -- check                # test the live deployment
 //   npm run setup -- local                # write .dev.vars for npm run dev
@@ -497,10 +497,15 @@ function printDiff(a: string, b: string): void {
 
 // --- 10. Secrets ---------------------------------------------------------------------------
 
-/** Uploads pending secrets (generating any that are missing). Returns whether anything was sent. */
+/**
+ * Uploads pending secrets (generating any that are missing). Returns whether
+ * anything was sent. API_TOKEN is no longer created: scripts use personal API
+ * keys (Settings → API & webhooks). An existing one is kept, and rotated with
+ * --rotate.
+ */
 function secretsStep(s: State, rotate = false): boolean {
   heading("Secrets");
-  if (rotate || !s.existing.has("API_TOKEN")) {
+  if (rotate && s.existing.has("API_TOKEN")) {
     s.secrets.API_TOKEN = randomSecret(40);
     s.shown.apiToken = s.secrets.API_TOKEN;
   }
@@ -580,13 +585,13 @@ async function checkStep(s: State, token = s.shown.apiToken): Promise<void> {
     }
   }
 
-  token ??= (await confirm("Check the API with your token?", false)) ? await secret("API token (hidden)") : undefined;
+  token ??= (await confirm("Check the API with a personal API key (Settings → API & webhooks)?", false)) ? await secret("API key (hidden)") : undefined;
   if (!token) return;
   const apiRes = await fetchSoft(`https://${admin}/api/links?limit=1`, { headers: { Authorization: `Bearer ${token}` } });
-  if (apiRes?.status === 200) ok("The API accepts the token.");
+  if (apiRes?.status === 200) ok("The API accepts the key.");
   else if (apiRes?.headers.get("Location")?.includes("cloudflareaccess.com")) {
     bad("Cloudflare Access intercepts /api, so scripts and the iOS Shortcut can't reach it. Limit the Access application to the paths _admin and _admin/* (docs/SETUP.md#access).");
-  } else bad(`The API answered ${apiRes ? `HTTP ${apiRes.status}` : "nothing"} to the token.`);
+  } else bad(`The API answered ${apiRes ? `HTTP ${apiRes.status}` : "nothing"} to the key.`);
   if (apiRes?.status === 200 && s.cfg.digestProvider !== "off" && (await confirm(`Send a test digest to ${s.cfg.digestTo}?`, true))) {
     const t = await fetchSoft(`https://${admin}/api/settings/digest/test`, { method: "POST", headers: { Authorization: `Bearer ${token}` } });
     const body = (await t?.json().catch(() => null)) as { status?: string; reason?: string } | null;
@@ -609,10 +614,11 @@ function summary(s: State): void {
         : color.yellow("\nShown only this once. Save these in your password manager now:\n"),
     );
     if (password) console.log(`  Admin password   ${color.bold(password)}`);
-    if (apiToken) console.log(`  API token        ${color.bold(apiToken)}   (Bearer token for /api and the iOS Shortcut)`);
+    if (apiToken) console.log(`  API token        ${color.bold(apiToken)}   (the older Bearer token for /api; personal API keys replace it)`);
     if (webhookSecret) console.log(`  Webhook secret   ${color.bold(webhookSecret)}   (verifies X-Shorthop-Signature)`);
     console.log("");
   }
+  info(`For scripts and the iOS Shortcut, create a personal API key in ${color.bold("Settings → API & webhooks")}.`);
   info(color.dim("Change anything later with `npm run setup -- <domains|access|password|analytics|email>`; the dashboard's System status shows what's left."));
 }
 
@@ -628,7 +634,6 @@ async function localStep(): Promise<void> {
   }
   const lines = [
     "# Written by `npm run setup -- local`. Never commit this file.",
-    `API_TOKEN=${randomSecret(40)}`,
     `VISITOR_SALT=${randomSecret(32)}`,
     `ADMIN_PASSWORD_HASH=${hash}`,
     `SESSION_SECRET=${randomSecret(48)}`,

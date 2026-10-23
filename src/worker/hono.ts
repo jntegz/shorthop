@@ -1,10 +1,12 @@
 import { zValidator } from "@hono/zod-validator";
 import type { ValidationTargets } from "hono";
 import type { ZodType } from "zod";
+import type { Actor } from "../shared/permissions";
 
 export type AppEnv = {
   Bindings: Env;
-  Variables: { identity: string; sessionExp?: number };
+  /** actor: who is asking and what they may do. identity: how history records them. */
+  Variables: { actor: Actor; identity: string; sessionExp?: number };
 };
 
 /** zValidator with a consistent `{ error, details }` 400 response. */

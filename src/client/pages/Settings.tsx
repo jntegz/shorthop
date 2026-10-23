@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BarChart3, Globe2, Link2, LogOut, Mail, Plug, RefreshCw, Settings2, ShieldCheck } from "lucide-react";
+import { BarChart3, Globe2, Link2, Mail, Plug, RefreshCw, Settings2, ShieldCheck } from "lucide-react";
 import { useLocation, useNavigate } from "react-router";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -9,14 +9,17 @@ import { DownloadButton } from "../components/DownloadButton";
 import { MailSetup } from "../components/MailSetup";
 import { DeadLinkEditor } from "../components/DeadLinkEditor";
 import { NotFoundEditor } from "../components/NotFoundEditor";
-import { AccessCard } from "../components/AccessCard";
+import { AccountCard } from "../components/AccountCard";
 import { ApiCard } from "../components/ApiCard";
+import { ApiKeys } from "../components/ApiKeys";
+import { PeopleCard } from "../components/PeopleCard";
 import { UtmSettings } from "../components/UtmSettings";
 import { Webhooks } from "../components/Webhooks";
 import { ShortDomains } from "../components/ShortDomains";
 import { Badge, Button, Card, CardHeader, Dialog, Notice, PageHeader, Spinner } from "../components/ui";
 import { countryName, day, flag, num, when } from "../lib/format";
 import { SETTINGS_HELP } from "../lib/help";
+import { useCan, useMe } from "../lib/me";
 import { cn } from "../lib/utils";
 
 /** Republishes links to KV, page by page: all of them, or only those on the default UTM template. */
@@ -61,18 +64,21 @@ const TAB_OF: Record<string, SettingsTab> = {
   statistics: "reports",
   digest: "reports",
   api: "integrations",
+  "api-keys": "integrations",
   webhooks: "integrations",
+  account: "access",
+  people: "access",
   security: "access",
 };
 
-function SettingsTabs({ value, onChange }: { value: SettingsTab; onChange: (t: SettingsTab) => void }) {
+function SettingsTabs({ tabs, value, onChange }: { tabs: SettingsTab[]; value: SettingsTab; onChange: (t: SettingsTab) => void }) {
   // On a phone the bar scrolls sideways: keep the open tab in view.
   useEffect(() => {
     document.getElementById(`settings-tab-${value}`)?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }, [value]);
   return (
     <div role="tablist" aria-label="Settings sections" className="mb-6 flex gap-1 overflow-x-auto border-b border-line">
-      {TABS.map((t, i) => {
+      {tabs.map((t, i) => {
         const { label, icon: Icon } = TAB_LABELS[t];
         const on = t === value;
         return (
@@ -86,11 +92,11 @@ function SettingsTabs({ value, onChange }: { value: SettingsTab; onChange: (t: S
             tabIndex={on ? 0 : -1}
             onClick={() => onChange(t)}
             onKeyDown={(e) => {
-              const next = e.key === "ArrowRight" ? (i + 1) % TABS.length : e.key === "ArrowLeft" ? (i - 1 + TABS.length) % TABS.length : e.key === "Home" ? 0 : e.key === "End" ? TABS.length - 1 : -1;
+              const next = e.key === "ArrowRight" ? (i + 1) % tabs.length : e.key === "ArrowLeft" ? (i - 1 + tabs.length) % tabs.length : e.key === "Home" ? 0 : e.key === "End" ? tabs.length - 1 : -1;
               if (next === -1) return;
               e.preventDefault();
-              onChange(TABS[next]!);
-              requestAnimationFrame(() => document.getElementById(`settings-tab-${TABS[next]}`)?.focus());
+              onChange(tabs[next]!);
+              requestAnimationFrame(() => document.getElementById(`settings-tab-${tabs[next]}`)?.focus());
             }}
             className={cn(
               "-mb-px flex shrink-0 items-center gap-2 border-b-2 px-3 py-2.5 text-sm font-medium whitespace-nowrap transition-colors",
@@ -108,7 +114,15 @@ function SettingsTabs({ value, onChange }: { value: SettingsTab; onChange: (t: S
 
 export function Settings() {
   const qc = useQueryClient();
-  const settings = useQuery({ queryKey: keys.settings, queryFn: () => call(api.settings.$get()) });
+  const meQ = useMe();
+  const me = meQ.data;
+  const can = useCan();
+  const manage = can("settings.manage");
+  const apiUse = can("api.use");
+  const admin = me?.role === "admin";
+  // Workspace settings: people without that permission see only their account (and their API keys).
+  const settings = useQuery({ queryKey: keys.settings, queryFn: () => call(api.settings.$get()), enabled: manage });
+  const tabs = TABS.filter((t) => t === "access" || (t === "integrations" ? manage || apiUse : manage));
   const [resyncing, setResyncing] = useState<number | null>(null);
   const [preview, setPreview] = useState<{ subject: string; html: string } | null>(null);
   const [confirmRevoke, setConfirmRevoke] = useState(false);
@@ -118,11 +132,13 @@ export function Settings() {
   const { hash } = useLocation();
   const navigate = useNavigate();
   const anchor = hash.slice(1);
-  const tab: SettingsTab = TAB_OF[anchor] ?? "general";
+  const wanted = TAB_OF[anchor];
+  const tab: SettingsTab = wanted && tabs.includes(wanted) ? wanted : (tabs[0] ?? "access");
   const openTab = (t: SettingsTab) => navigate({ hash: t }, { replace: true });
+  const ready = Boolean(me) && (!manage || Boolean(settings.data));
   useEffect(() => {
-    if (settings.data && anchor && !(anchor in TAB_LABELS)) requestAnimationFrame(() => document.getElementById(anchor)?.scrollIntoView());
-  }, [settings.data, anchor]);
+    if (ready && anchor && !(anchor in TAB_LABELS)) requestAnimationFrame(() => document.getElementById(anchor)?.scrollIntoView());
+  }, [ready, anchor]);
 
   const runResync = async (scope: "all" | "default-utm" = "all") => {
     setResyncing(0);
@@ -182,24 +198,25 @@ export function Settings() {
     onError: (e) => toast.error(e.message),
   });
 
-  if (settings.isPending) {
+  if (meQ.isError) return <Notice tone="danger">{meQ.error.message}</Notice>;
+  if (settings.isError) return <Notice tone="danger">{settings.error.message}</Notice>;
+  if (!me || (manage && !settings.data)) {
     return (
       <div className="flex justify-center py-24">
         <Spinner />
       </div>
     );
   }
-  if (settings.isError) return <Notice tone="danger">{settings.error.message}</Notice>;
   const s = settings.data;
-  const security = s.security;
-  const origin = s.publicOrigin;
+  const security = s?.security ?? null;
+  const origin = me.workspace.publicOrigin;
 
   return (
     <>
-      <PageHeader title="Make it yours" description="Fine-tune your links, reporting, and workspace." />
-      <SettingsTabs value={tab} onChange={openTab} />
+      <PageHeader title="Make it yours" description={manage ? "Fine-tune your links, reporting, and workspace." : "Your account and your access."} />
+      <SettingsTabs tabs={tabs} value={tab} onChange={openTab} />
       <div role="tabpanel" id={`settings-panel-${tab}`} aria-labelledby={`settings-tab-${tab}`} className="grid gap-5 lg:grid-cols-2">
-        {tab === "general" ? (
+        {tab === "general" && s ? (
           <>
             <ShortDomains domains={s.domains} primary={s.primaryDomain} adminHost={s.adminHost} linksPerDomain={s.linksPerDomain} demo={s.demo} />
             <Card id="publishing" className="scroll-mt-6">
@@ -220,14 +237,14 @@ export function Settings() {
             <CloudflareFeatures />
           </>
         ) : null}
-        {tab === "links" ? (
+        {tab === "links" && s ? (
           <>
             <UtmSettings key={s.defaultUtm} defaultUtm={s.defaultUtm} onSaveDefault={(t) => saveUtm.mutate(t)} saving={saveUtm.isPending || resyncing !== null} />
             <NotFoundEditor domain={s.primaryDomain} />
             <DeadLinkEditor domain={s.primaryDomain} />
           </>
         ) : null}
-        {tab === "reports" ? (
+        {tab === "reports" && s ? (
           <>
             <Card id="statistics" className="scroll-mt-6">
               <CardHeader title="Statistics" description="Daily summaries preserve your history after individual click records expire." info={SETTINGS_HELP.statistics} />
@@ -290,27 +307,41 @@ export function Settings() {
         ) : null}
         {tab === "integrations" ? (
           <>
-            <ApiCard origin={origin} tokenSet={s.apiTokenSet} tokenScope={s.tokenScope} />
-            <Webhooks />
+            {apiUse ? <ApiKeys me={me} origin={origin} /> : null}
+            {apiUse ? <ApiCard origin={origin} tokenSet={me.apiTokenSet} tokenScope={me.apiTokenScope} /> : null}
+            {manage ? <Webhooks /> : null}
           </>
         ) : null}
         {tab === "access" ? (
           <>
-            {security?.mode !== "password" ? <AccessCard admins={s.admins} me={security?.email ?? ""} /> : null}
-            {security ? (
+            <AccountCard me={me} />
+            {me.authMode === "password" ? (
+              <Card id="people" className="scroll-mt-6 lg:col-span-2">
+                <CardHeader title="People" description="Give others their own sign-in and permissions." info={SETTINGS_HELP.people} />
+                <div className="px-5 pb-5 text-sm text-muted">
+                  <p>
+                    Cloudflare Access is off, so everyone who knows the admin password signs in as the owner, and history can't tell people apart. Turn on Cloudflare Access
+                    with <span className="font-mono text-xs text-fg">npm run setup -- access</span> to add people with their own passwords and permissions.
+                  </p>
+                </div>
+              </Card>
+            ) : admin || me.role === "manager" ? (
+              <PeopleCard me={me} />
+            ) : null}
+            {admin && security ? (
               <Card id="security" className="scroll-mt-6 lg:col-span-2">
                 <CardHeader
                   title="Security"
                   description={
                     security.mode === "password"
                       ? "Your admin password is the only lock: Cloudflare Access is off."
-                      : "Cloudflare Access checks who you are; your admin password confirms it."
+                      : "Cloudflare Access checks who someone is; their password confirms it."
                   }
                   info={SETTINGS_HELP.security}
                 />
                 <div className="grid gap-6 px-5 pb-5 text-sm md:grid-cols-2">
                   <div className="space-y-3">
-                    {!security.passwordConfigured ? (
+                    {!me.passwordConfigured ? (
                       <Notice>
                         No admin password is set, so localhost opens without one. The deployed admin stays closed until ADMIN_PASSWORD_HASH is set. To try the login
                         here: run <span className="font-mono text-xs">npm run setup -- local</span> (or{" "}
@@ -337,14 +368,6 @@ export function Settings() {
                         {security.accessConfigured ? " Access settings are filled in, but ignored while ADMIN_AUTH is \"password\"." : null}
                       </Notice>
                     ) : null}
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="text-muted">Signed in as</span>
-                      <span className="truncate font-medium text-fg">{security.email}</span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-muted">Session ends</span>
-                      <span className="font-medium text-fg">{security.sessionExpiresAt ? when(security.sessionExpiresAt) : "—"}</span>
-                    </div>
                     <div className="flex items-center justify-between">
                       <span className="text-muted">Failed logins (24 h)</span>
                       {security.failedLogins24h ? <Badge tone="warn">{num(security.failedLogins24h)}</Badge> : <span className="font-medium text-fg">0</span>}
@@ -354,13 +377,8 @@ export function Settings() {
                       <span className="font-medium text-fg">{num(security.lockedNetworks)}</span>
                     </div>
                     <div className="flex flex-wrap gap-2 pt-1">
-                      <form method="post" action="/_admin/logout">
-                        <Button type="submit" variant="outline">
-                          <LogOut /> Log out
-                        </Button>
-                      </form>
-                      <Button variant="outline" onClick={() => setConfirmRevoke(true)} disabled={!security.passwordConfigured}>
-                        Log out everywhere
+                      <Button variant="outline" onClick={() => setConfirmRevoke(true)} disabled={!me.passwordConfigured}>
+                        Log out everyone
                       </Button>
                     </div>
                   </div>
@@ -372,6 +390,7 @@ export function Settings() {
                           <li key={`${e.at}-${i}`} className="flex items-center gap-2">
                             {e.ok ? <Badge tone="good">Success</Badge> : <Badge tone="danger">Failed</Badge>}
                             <span className="text-muted">{when(e.at)}</span>
+                            {e.email && e.email !== "admin" ? <span className="min-w-0 truncate text-xs text-fg">{e.email}</span> : null}
                             <span className="ml-auto truncate text-xs text-muted">
                               {e.country ? `${flag(e.country)} ${countryName(e.country)}` : "Unknown"}
                             </span>
@@ -393,20 +412,20 @@ export function Settings() {
       <Dialog
         open={confirmRevoke}
         onOpenChange={setConfirmRevoke}
-        title="Log out everywhere?"
-        description="Every admin session ends now, including this one. You'll need the password again on every device."
+        title="Log out everyone?"
+        description="Every session of every person ends now, including this one. Everyone needs their password again on every device."
       >
         <div className="flex justify-end gap-2">
           <Button variant="outline" onClick={() => setConfirmRevoke(false)}>
             Cancel
           </Button>
           <Button variant="danger" onClick={() => revoke.mutate()} loading={revoke.isPending}>
-            Log out everywhere
+            Log out everyone
           </Button>
         </div>
       </Dialog>
 
-      <MailSetup open={mailSetup} onOpenChange={setMailSetup} />
+      {manage ? <MailSetup open={mailSetup} onOpenChange={setMailSetup} /> : null}
 
       <Dialog open={preview !== null} onOpenChange={(o) => !o && setPreview(null)} title={preview?.subject ?? "Digest preview"} wide>
         {preview ? <iframe title="Digest preview" sandbox="" srcDoc={preview.html} className="h-[60vh] w-full rounded-lg border border-line bg-white" /> : null}

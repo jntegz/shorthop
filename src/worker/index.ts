@@ -15,6 +15,7 @@ import { loginApp } from "./login";
 import { notFoundResponse, serveNotFoundImage } from "./not-found";
 import { handleRedirect, redirectTo } from "./redirect";
 import { pruneLoginState } from "./session";
+import { pruneApiKeys } from "./users";
 
 // The click-limit counter (a Durable Object class must be exported here).
 export { ClickCap } from "./click-cap";
@@ -38,7 +39,7 @@ export default {
     // Access protects /_admin/*; the bare /_admin may not be covered, so it never reaches the auth check.
     if (path === "/_admin") return new Response(null, { status: 301, headers: { Location: `/_admin/${url.search}` } });
     if (path.startsWith("/api/") || path.startsWith("/_admin/api/")) return app.fetch(request, env, ctx);
-    if (path === "/_admin/login" || path === "/_admin/logout") return loginApp.fetch(request, env, ctx);
+    if (path === "/_admin/login" || path === "/_admin/logout" || path.startsWith("/_admin/invite/")) return loginApp.fetch(request, env, ctx);
     if (path.startsWith("/_admin/")) return serveAdmin(request, env, url);
     if (path === "/") return redirectTo(env.FALLBACK_URL);
     // The not-found page as visitors see it, without logging a miss (Settings links here).
@@ -59,6 +60,7 @@ export default {
       ctx.waitUntil(scheduledDaily(env, now));
       ctx.waitUntil(pruneLoginState(env.DB, nowSec()));
       ctx.waitUntil(pruneDaySalts(env.DB, utcDate(now)));
+      ctx.waitUntil(pruneApiKeys(env.DB, nowSec()));
       ctx.waitUntil(prunePreviewImages(env).catch((err) => console.error(JSON.stringify({ message: "preview image prune failed", error: String(err) }))));
       ctx.waitUntil(pruneHistory(env.DB).catch((err) => console.error(JSON.stringify({ message: "history prune failed", error: String(err) }))));
     }

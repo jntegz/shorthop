@@ -7,12 +7,14 @@ import { REPO_URL } from "../../shared/brand";
 import type { HealthCheck, HealthStatus } from "../../shared/types";
 import { api, call, keys } from "../api";
 import { when } from "../lib/format";
+import { useCan } from "../lib/me";
 import { cn } from "../lib/utils";
 import { Badge, Button, Card, CardHeader, Spinner } from "./ui";
 
-/** Rechecked every 5 minutes while the admin is open. */
+/** Rechecked every 5 minutes while the admin is open, for people who manage the workspace. */
 export function useSystemHealth() {
-  return useQuery({ queryKey: keys.health, queryFn: () => call(api.settings.health.$get()), refetchInterval: 5 * 60_000, staleTime: 60_000 });
+  const enabled = useCan()("settings.manage");
+  return useQuery({ queryKey: keys.health, queryFn: () => call(api.settings.health.$get()), refetchInterval: 5 * 60_000, staleTime: 60_000, enabled });
 }
 
 const ICON: Record<HealthStatus, typeof CheckCircle2> = { ok: CheckCircle2, warn: AlertTriangle, error: XCircle };
@@ -42,8 +44,12 @@ function CheckHelp({ check }: { check: HealthCheck }) {
   );
 }
 
-/** Dashboard → System status. */
+/** Dashboard → System status (people who manage the workspace). */
 export function SystemStatus() {
+  return useCan()("settings.manage") ? <SystemStatusCard /> : null;
+}
+
+function SystemStatusCard() {
   const q = useSystemHealth();
   const test = useMutation({
     mutationFn: () => call(api.settings.health["test-alert"].$post()),

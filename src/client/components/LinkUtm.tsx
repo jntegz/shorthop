@@ -5,6 +5,7 @@ import { Link } from "react-router";
 import { toast } from "sonner";
 import { parseTemplate, PRESET_NAME_MAX, UTM_FIELDS } from "../../shared/utm";
 import { api, call, keys } from "../api";
+import { useCan, useMe } from "../lib/me";
 import { cn } from "../lib/utils";
 import { UtmBuilder, UtmPreview } from "./UtmBuilder";
 import { Button, Input, Segmented } from "./ui";
@@ -47,10 +48,11 @@ export function LinkUtm({
   onClose: () => void;
 }) {
   const qc = useQueryClient();
-  const settings = useQuery({ queryKey: keys.settings, queryFn: () => call(api.settings.$get()) });
   const presets = useQuery({ queryKey: keys.utmPresets, queryFn: () => call(api["utm-presets"].$get()) });
   const [naming, setNaming] = useState<string | null>(null);
-  const defaultTemplate = settings.data?.defaultUtm ?? "";
+  const defaultTemplate = useMe().data?.workspace.defaultUtm ?? "";
+  // Presets and the default are workspace settings.
+  const manage = useCan()("settings.manage");
   const list = presets.data?.presets ?? [];
   const matching = list.find((p) => custom && p.template === template);
 
@@ -111,7 +113,7 @@ export function LinkUtm({
           <UtmBuilder id="link-utm" value={template} onChange={onTemplate} target={target} slug={slug} />
           {matching ? (
             <p className="text-[11px] text-muted">Uses a copy of “{matching.name}”: editing the preset later won't change this link.</p>
-          ) : template ? (
+          ) : template && manage ? (
             naming === null ? (
               <button type="button" className="inline-flex items-center gap-1 text-xs font-medium text-accent hover:underline" onClick={() => setNaming("")}>
                 <Bookmark className="size-3.5" /> Save as a preset
@@ -154,9 +156,11 @@ export function LinkUtm({
             {defaultTemplate ? <TemplateChips template={defaultTemplate} /> : null}
           </div>
           <UtmPreview target={target} template={defaultTemplate} slug={slug} />
-          <Link to="/settings#utm" className="inline-block text-xs font-medium text-accent hover:underline" onClick={onClose}>
-            Change the default or manage presets in Settings
-          </Link>
+          {manage ? (
+            <Link to="/settings#utm" className="inline-block text-xs font-medium text-accent hover:underline" onClick={onClose}>
+              Change the default or manage presets in Settings
+            </Link>
+          ) : null}
         </div>
       )}
     </div>

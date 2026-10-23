@@ -10,6 +10,7 @@ import { Badge, Button, Card, CardHeader, Field, Notice, PageHeader, Select } fr
 import { num } from "../lib/format";
 import { IMPORT_HELP } from "../lib/help";
 import { linkKey, useDomains, useLinkLabel } from "../lib/links";
+import { useCan } from "../lib/me";
 import { download } from "../lib/utils";
 
 type Raw = Record<string, unknown>;
@@ -125,6 +126,7 @@ function FormatHelp() {
 }
 
 export function Import() {
+  const canEdit = useCan()("links.edit");
   const qc = useQueryClient();
   const [fileName, setFileName] = useState("");
   const [rows, setRows] = useState<Raw[]>([]);
@@ -303,7 +305,8 @@ export function Import() {
               <Field label="Existing slugs" htmlFor="mode">
                 <Select id="mode" value={mode} onChange={(e) => setMode(e.target.value as "skip" | "overwrite")}>
                   <option value="skip">Skip (keep what’s here)</option>
-                  <option value="overwrite">Overwrite destination</option>
+                  {/* Overwriting changes existing links: Edit links. */}
+                  {canEdit ? <option value="overwrite">Overwrite destination</option> : null}
                 </Select>
               </Field>
             </div>

@@ -17,6 +17,7 @@ import { PeriodPicker, periodQuery } from "../components/PeriodPicker";
 import { Badge, Button, Card, CardHeader, Dialog, Empty, Notice, PageHeader, Spinner } from "../components/ui";
 import { countryName, date, flag, num, sourceLabel, when } from "../lib/format";
 import { linkPath, useLinkLabel } from "../lib/links";
+import { useCan } from "../lib/me";
 import { copy } from "../lib/utils";
 import { StateBadge } from "./Links";
 
@@ -55,20 +56,24 @@ export function LinkDetail() {
     queryFn: () => call(api.links[":domain"][":slug"].$get({ param: { domain, slug } })),
     retry: (count, err) => !(err instanceof Error && "status" in err && err.status === 404) && count < 2,
   });
+  const can = useCan();
+  const edits = can("links.edit");
+  const showStats = can("stats.view");
   const { hash } = useLocation();
   const loaded = Boolean(linkQ.data);
   // "Statistics" on the links list opens this page at #stats; Link health's "Fix" at #edit.
   useEffect(() => {
     if (loaded && hash === "#stats") requestAnimationFrame(() => document.getElementById("stats")?.scrollIntoView({ behavior: "smooth" }));
     if (loaded && hash === "#edit") {
-      setEditing(true);
+      if (edits) setEditing(true);
       navigate({ hash: "" }, { replace: true });
     }
-  }, [loaded, hash, navigate]);
+  }, [loaded, hash, navigate, edits]);
   const stats = useQuery({
     queryKey: keys.linkStats(domain, slug, period),
     queryFn: () => call(api.stats.links[":domain"][":slug"].$get({ param: { domain, slug }, query: periodQuery(period) })),
     refetchInterval: liveInterval(period),
+    enabled: showStats,
   });
   // Links pointing visitors here while marked "no longer working"; shown before a delete.
   const dependents = useQuery({
@@ -80,6 +85,7 @@ export function LinkDetail() {
     queryKey: keys.recent(domain, slug),
     queryFn: () => call(api.stats.recent.$get({ query: { domain, slug, limit: "25" } })),
     refetchInterval: liveInterval({ range: "7d" }),
+    enabled: showStats,
   });
 
   const toggle = useMutation({
@@ -175,18 +181,24 @@ export function LinkDetail() {
             <Button variant="outline" onClick={() => setQr(true)}>
               <QrCode /> QR
             </Button>
-            <Button variant="outline" onClick={() => setEditing(true)}>
-              <Pencil /> Edit
-            </Button>
-            <Button variant="outline" onClick={() => toggle.mutate(!link.active)} loading={toggle.isPending}>
-              {link.active ? "Disable" : "Enable"}
-            </Button>
+            {edits ? (
+              <>
+                <Button variant="outline" onClick={() => setEditing(true)}>
+                  <Pencil /> Edit
+                </Button>
+                <Button variant="outline" onClick={() => toggle.mutate(!link.active)} loading={toggle.isPending}>
+                  {link.active ? "Disable" : "Enable"}
+                </Button>
+              </>
+            ) : null}
             <Button variant="outline" onClick={() => document.getElementById("history")?.scrollIntoView({ behavior: "smooth" })}>
               <History /> History
             </Button>
-            <Button variant="ghost" size="icon" aria-label="Delete link" onClick={() => setConfirmDelete(true)}>
-              <Trash2 />
-            </Button>
+            {can("links.delete") ? (
+              <Button variant="ghost" size="icon" aria-label="Delete link" onClick={() => setConfirmDelete(true)}>
+                <Trash2 />
+              </Button>
+            ) : null}
           </>
         }
       />
@@ -220,6 +232,8 @@ export function LinkDetail() {
       />
       {link.notes ? <p className="mb-4 rounded-lg bg-surface-2 px-3 py-2 text-sm whitespace-pre-wrap text-fg">{link.notes}</p> : null}
 
+      {showStats ? (
+        <>
       <div id="stats" className="mb-4 flex scroll-mt-6 flex-wrap items-center justify-between gap-2">
         <h2 className="text-base font-semibold text-fg">Statistics</h2>
         <PeriodPicker value={period} onChange={setPeriod} />
@@ -320,9 +334,12 @@ export function LinkDetail() {
         )}
       </Card>
 
+        </>
+      ) : null}
+
       <LinkHistory link={link} />
 
-      <LinkForm
+      {edits ? <LinkForm
         open={editing}
         onOpenChange={(o) => {
           setEditing(o);
@@ -330,7 +347,7 @@ export function LinkDetail() {
         }}
         link={link}
         markBroken={markBroken}
-      />
+      /> : null}
       {qr ? (
         <Suspense fallback={null}>
           <QrStudio open onOpenChange={setQr} link={link} label={label} />

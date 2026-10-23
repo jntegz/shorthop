@@ -13,6 +13,7 @@ import { api, call, keys, linkFromError } from "../api";
 import { fromLocalInput, toLocalInput } from "../lib/format";
 import { LINK_HELP } from "../lib/help";
 import { linkKey, linkState, useDomains, useLinkLabel } from "../lib/links";
+import { useCan } from "../lib/me";
 import { cn, copy } from "../lib/utils";
 import { LinkProtection, type PasswordMode } from "./LinkProtection";
 import { LinkUtm } from "./LinkUtm";
@@ -97,6 +98,7 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
   const editing = Boolean(link);
   const { domains, primary, multiple } = useDomains();
   const label = useLinkLabel();
+  const manageSettings = useCan()("settings.manage");
   const [f, setF] = useState<FormState>(() => initial(link, initialSlug, initialDomain));
   const [touched, setTouched] = useState(false);
   const [advanced, setAdvanced] = useState(false);
@@ -377,9 +379,13 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
               hint={
                 <>
                   Without one, visitors are sent to the site set in{" "}
-                  <Link to="/settings#dead-link" className="font-medium text-accent hover:underline" onClick={() => onOpenChange(false)}>
-                    Settings
-                  </Link>{" "}
+                  {manageSettings ? (
+                    <Link to="/settings#dead-link" className="font-medium text-accent hover:underline" onClick={() => onOpenChange(false)}>
+                      Settings
+                    </Link>
+                  ) : (
+                    "Settings"
+                  )}{" "}
                   after a few seconds.
                 </>
               }

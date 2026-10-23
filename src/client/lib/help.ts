@@ -125,11 +125,19 @@ export const SETTINGS_HELP = {
   ),
   api: h(
     "API and iOS Shortcut",
-    "Scripts and the Shortcut use the API_TOKEN secret as a Bearer token, not this login. By default the token can read and create links but not change or delete them (API_TOKEN_SCOPE=\"full\" in wrangler.jsonc allows that). Keep it in your password manager and rotate it with npm run setup -- secrets --rotate (which also signs out every admin session). After 10 wrong tokens in a minute, an IP is refused for a while. Add ?format=text to get only the short URL, and \"domain\" in the JSON body to use another short domain.",
+    "Scripts, tools and the Shortcut use the API with a key, not your browser session. Create a personal key under API keys: it's shown once, can only do what you allow (and never more than you can), and stops working when it's revoked, when it expires or when you lose access. An older API_TOKEN secret also works: by default it can read and create links but not change or delete them (API_TOKEN_SCOPE=\"full\" in wrangler.jsonc allows that). After 10 wrong keys in a minute, a network is refused for a while. Add ?format=text to get only the short URL, and \"domain\" in the JSON body to use another short domain.",
+  ),
+  apiKeys: h(
+    "Personal API keys",
+    "Each key acts as you, limited to the permissions you tick. If an admin later takes a permission away from you, your keys lose it too, and without “Personal API keys” they stop working. Keys can't add people, create other keys or log anyone out. Only a fingerprint is stored, so a lost key can't be shown again: revoke it and create a new one. “Last used” updates at most once an hour.",
+  ),
+  people: h(
+    "People and roles",
+    "Owners are set in ADMIN_EMAIL (wrangler.jsonc) and can do everything; they can't be changed here. Admins can do everything too, including adding admins. Managers add, change and remove users, and can only give permissions they have themselves. Users view and copy links, plus what's ticked for them. Changes apply on their next click. Removing someone ends their sessions and API keys at once, but also take them out of your Cloudflare Access policy. People are told apart by their Access email, so with ADMIN_AUTH set to \"password\" there are only owners.",
   ),
   security: h(
     "Security",
-    `With Cloudflare Access on (the default), two locks protect the admin: Access checks who you are, and this password confirms it's you. With ADMIN_AUTH set to "password", only the password does, so keep it long. A login lasts ${duration(L.SESSION_TTL_SEC)} and, with Access, only works with the same Access account. “Log out everywhere” ends every session at once, including this one. After ${L.MAX_FAILS} wrong passwords within ${duration(L.WINDOW_SEC)}, a network is locked for ${duration(L.LOCK_BASE_SEC)}, doubling with each lockout up to ${duration(L.LOCK_MAX_SEC)}. ${L.GLOBAL_MAX_FAILS} failures in an hour from ${L.GLOBAL_MIN_NETWORKS} or more networks pause all logins for ${duration(L.GLOBAL_LOCK_SEC)}. IP addresses are never stored, only a keyed hash.`,
+    `With Cloudflare Access on (the default), two locks protect the admin: Access checks who you are, and a password confirms it's you (owners use the admin password, everyone else their own). With ADMIN_AUTH set to "password", only the admin password does, so keep it long; everyone who signs in is then the owner. A login lasts ${duration(L.SESSION_TTL_SEC)} and, with Access, only works with the same Access account. Logging out ends that session; “Log out everyone” ends every session of every person at once, including this one. After ${L.MAX_FAILS} wrong passwords within ${duration(L.WINDOW_SEC)}, a network is locked for ${duration(L.LOCK_BASE_SEC)}, doubling with each lockout up to ${duration(L.LOCK_MAX_SEC)}. ${L.GLOBAL_MAX_FAILS} failures in an hour from ${L.GLOBAL_MIN_NETWORKS} or more networks pause all logins for ${duration(L.GLOBAL_LOCK_SEC)}. IP addresses are never stored, only a keyed hash.`,
   ),
 } satisfies Record<string, Help>;
 

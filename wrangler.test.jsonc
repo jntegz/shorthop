@@ -43,6 +43,7 @@
     "DIGEST_PROVIDER": "cloudflare",
     "DIGEST_FROM": "digest@sh.example",
     "DIGEST_TO": "owner@example.com",
-    "DEV_AUTH_BYPASS": ""
+    "DEV_AUTH_BYPASS": "",
+    "DEV_AUTH_EMAIL": ""
   }
 }

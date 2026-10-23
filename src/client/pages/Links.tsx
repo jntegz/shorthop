@@ -15,6 +15,7 @@ import { LinkForm } from "../components/LinkForm";
 import { Badge, Button, buttonClass, Card, Empty, Input, Notice, PageHeader, Pagination, Select, SortHeader, Spinner } from "../components/ui";
 import { ago, hostOf, num } from "../lib/format";
 import { linkKey, linkPath, linkState, useDomains, useLinkLabel } from "../lib/links";
+import { useCan } from "../lib/me";
 import { pageOf, parsePageSize, savedPageSize, savePageSize, sortRows, type PageSize, type SortDir } from "../lib/table";
 import { copy } from "../lib/utils";
 
@@ -92,6 +93,7 @@ export function Links() {
   useEffect(() => setSearch(urlSearch), [urlSearch]);
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const can = useCan();
 
   const setParam = (k: string, v: string, def: string) => {
     const next = new URLSearchParams(params);
@@ -155,9 +157,11 @@ export function Links() {
             <DownloadButton href="/_admin/api/export/links.csv">
               <Download /> Export CSV
             </DownloadButton>
-            <Button onClick={() => setCreating(true)}>
-              <Plus /> Create link
-            </Button>
+            {can("links.create") ? (
+              <Button onClick={() => setCreating(true)}>
+                <Plus /> Create link
+              </Button>
+            ) : null}
           </>
         }
       />
@@ -235,7 +239,7 @@ export function Links() {
         <Card>
           <Empty icon={<Link2 />} title={filtered ? "No links match" : "No links yet"}>
             <p>{filtered ? "Try a different search or clear your filters." : "Turn a long URL into your next meaningful connection."}</p>
-            {!filtered && <Button className="mt-4" onClick={() => setCreating(true)}><Plus /> Create your first link</Button>}
+            {!filtered && can("links.create") && <Button className="mt-4" onClick={() => setCreating(true)}><Plus /> Create your first link</Button>}
           </Empty>
         </Card>
       ) : (
@@ -325,27 +329,31 @@ export function Links() {
                   <td className="hidden text-xs text-muted md:px-4 md:py-5 xl:table-cell">{ago(l.createdAt)}</td>
                   <td className="ml-auto md:px-2 md:py-5" onClick={(e) => e.stopPropagation()}>
                     <div className="flex items-center justify-end gap-1">
-                      <Link
-                        to={`${linkPath(l)}#stats`}
-                        className={buttonClass({ variant: "outline", size: "sm" })}
-                        aria-label={`Statistics for ${label(l)}`}
-                        title="Clicks, countries, sources and devices"
-                      >
-                        <BarChart3 /> <span className="hidden sm:inline">Statistics</span>
-                      </Link>
+                      {can("stats.view") ? (
+                        <Link
+                          to={`${linkPath(l)}#stats`}
+                          className={buttonClass({ variant: "outline", size: "sm" })}
+                          aria-label={`Statistics for ${label(l)}`}
+                          title="Clicks, countries, sources and devices"
+                        >
+                          <BarChart3 /> <span className="hidden sm:inline">Statistics</span>
+                        </Link>
+                      ) : null}
                       <Button variant="ghost" size="icon-sm" aria-label={`Copy ${l.shortUrl}`} title="Copy short URL" onClick={() => void copy(l.shortUrl)}>
                         <Copy />
                       </Button>
                       <Button variant="ghost" size="icon-sm" aria-label={`QR code for ${label(l)}`} title="QR code" onClick={() => setQrLink(l)}><QrCode /></Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="hidden xl:inline-flex"
-                        onClick={() => toggle.mutate(l)}
-                        disabled={toggle.isPending && toggle.variables?.slug === l.slug && toggle.variables.domain === l.domain}
-                      >
-                        {l.active ? "Disable" : "Enable"}
-                      </Button>
+                      {can("links.edit") ? (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="hidden xl:inline-flex"
+                          onClick={() => toggle.mutate(l)}
+                          disabled={toggle.isPending && toggle.variables?.slug === l.slug && toggle.variables.domain === l.domain}
+                        >
+                          {l.active ? "Disable" : "Enable"}
+                        </Button>
+                      ) : null}
                     </div>
                   </td>
                 </tr>
@@ -369,7 +377,7 @@ export function Links() {
       ) : null}
 
       {qrLink && <Suspense fallback={<div role="status" className="fixed right-6 bottom-24 z-40 rounded-xl border border-line bg-surface p-4 text-sm shadow-lg">Preparing QR code…</div>}><QrStudio open onOpenChange={(open) => !open && setQrLink(null)} link={qrLink} label={label(qrLink)} /></Suspense>}
-      <LinkForm open={creating} onOpenChange={setCreating} onSaved={(l) => navigate(linkPath(l))} />
+      {can("links.create") ? <LinkForm open={creating} onOpenChange={setCreating} onSaved={(l) => navigate(linkPath(l))} /> : null}
       <DeletedLinks open={showDeleted} onOpenChange={setShowDeleted} />
       {bulkQr ? (
         <Suspense fallback={null}>

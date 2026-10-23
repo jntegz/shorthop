@@ -2,6 +2,7 @@
 
 import type { HistoryAction, StoredSnapshot } from "./history";
 import type { CheckProblem, CheckState } from "./link-check";
+import type { Actor, Permission, Role } from "./permissions";
 import type { LinkPreview } from "./preview";
 import type { QrStyle } from "./qr";
 import type { Routing } from "./routing";
@@ -119,7 +120,7 @@ export interface VersionDTO {
   /** Unix seconds. */
   at: number;
   action: HistoryAction;
-  /** Access email, "api-token" or "system". */
+  /** Access email, "email · API key name", "api-token" or "system". */
   actor: string;
   /** The link after the change (before it, for a delete). */
   snapshot: StoredSnapshot;
@@ -392,8 +393,9 @@ export interface DomainCheckDTO {
   checkedAt: number;
 }
 
+/** Settings → Security: admins only. */
 export interface SecurityDTO {
-  /** The Access identity of this session ("admin" without Access, "api-token" for the Bearer API). */
+  /** The Access identity of this session ("admin" without Access). */
   email: string;
   /** ADMIN_AUTH: Cloudflare Access plus the password, or the password alone. */
   mode: "access+password" | "password";
@@ -407,8 +409,91 @@ export interface SecurityDTO {
   lockedNetworks: number;
   /** Unix seconds while every login is paused, otherwise null. */
   globalLockedUntil: number | null;
-  /** Newest first. */
-  recent: { at: number; ok: boolean; country: string }[];
+  /** Newest first. email is null for logins recorded before it was kept. */
+  recent: { at: number; ok: boolean; country: string; email: string | null }[];
+}
+
+/** GET /me: who is signed in, what they may do, and what every page needs. */
+export interface MeDTO {
+  email: string;
+  name: string;
+  role: Role;
+  owner: boolean;
+  permissions: Permission[];
+  via: Actor["via"];
+  /** False only on localhost without ADMIN_PASSWORD_HASH. */
+  passwordConfigured: boolean;
+  /** Unix seconds; null without a password session. */
+  sessionExpiresAt: number | null;
+  /** Admins only (otherwise null): whether the API_TOKEN secret is set, never its value. */
+  apiTokenSet: boolean | null;
+  /** Admins only (otherwise null): what API_TOKEN may do, "create" (read, create, import) or "full". */
+  apiTokenScope: "create" | "full" | null;
+  /** ADMIN_AUTH. With "password" there's no Access to tell people apart: everyone signed in is the owner. */
+  authMode: "access+password" | "password";
+  workspace: {
+    defaultUtm: string;
+    /** The first UTC day with stats or links: the earliest a custom period can start. */
+    statsSince: string | null;
+    publicOrigin: string;
+    /** Short domains, primary first. */
+    domains: string[];
+    primaryDomain: string;
+    adminHost: string;
+    /** Sample data from `npm run seed:dev`, or null. */
+    demo: DemoDTO | null;
+  };
+}
+
+/** Someone in Settings → People. Owners come from ADMIN_EMAIL. */
+export interface PersonDTO {
+  email: string;
+  name: string;
+  role: Role;
+  owner: boolean;
+  /** What they can do (everything for admins). */
+  permissions: Permission[];
+  /** invited: waiting for them to choose a password; expired: the invite ran out. */
+  status: "owner" | "active" | "invited" | "expired";
+  inviteExpiresAt: number | null;
+  lastLoginAt: number | null;
+  createdAt: number | null;
+  createdBy: string | null;
+  /** Personal API keys they hold. */
+  keys: number;
+  /** Whether the person asking may change or remove them. */
+  manageable: boolean;
+}
+
+export interface PeopleDTO {
+  people: PersonDTO[];
+  /** The roles the person asking may give. */
+  assignableRoles: Role[];
+}
+
+/** A person just added or given a new invite: the link is shown once. */
+export interface InviteDTO {
+  person: PersonDTO;
+  inviteUrl: string;
+  inviteExpiresAt: number;
+}
+
+export interface ApiKeyDTO {
+  id: string;
+  name: string;
+  owner: string;
+  /** What the key was given (it never does more than its owner can). */
+  permissions: Permission[];
+  createdAt: number;
+  lastUsedAt: number | null;
+  expiresAt: number | null;
+  expired: boolean;
+}
+
+/** POST /keys: the whole key, shown once. */
+export interface NewApiKeyDTO {
+  key: ApiKeyDTO;
+  secret: string;
 }
 
 /** Email delivery services. Picked in Settings → Weekly digest, or DIGEST_PROVIDER in wrangler.jsonc. */
@@ -463,13 +548,7 @@ export interface SettingsDTO {
   linksPerDomain: Record<string, number>;
   /** Sample data from `npm run seed:dev`, or null. */
   demo: DemoDTO | null;
-  /** Who may sign in to the admin (ADMIN_EMAIL), lowercased. */
-  admins: string[];
-  /** Whether the API token secret is set (never its value). */
-  apiTokenSet: boolean;
-  /** What the API token may do: "create" (read, create links, import) or "full". */
-  tokenScope: "create" | "full";
-  /** Null for the API token, which doesn't see login activity. */
+  /** Admins signed in to the admin only, otherwise null. */
   security: SecurityDTO | null;
 }
 

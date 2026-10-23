@@ -13,7 +13,7 @@ import { args, fail, readExport } from "./lib";
 
 const { flags, opts } = args();
 const base = (opts.get("base") ?? fail("Pass --base, e.g. --base https://sh.example")).replace(/\/+$/, "");
-const token = process.env.SHORTHOP_TOKEN ?? fail("Set SHORTHOP_TOKEN to the Worker's API_TOKEN secret.");
+const token = process.env.SHORTHOP_TOKEN ?? fail("Set SHORTHOP_TOKEN to a personal API key that can create links (and edit them, for --overwrite), or to the API_TOKEN secret.");
 const rows = await readExport(opts.get("data") ?? "data/links.json");
 const dryRun = flags.has("dry-run");
 const mode = flags.has("overwrite") ? "overwrite" : "skip";

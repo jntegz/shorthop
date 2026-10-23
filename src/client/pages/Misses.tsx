@@ -14,6 +14,7 @@ import {
   type RecentHit,
 } from "../../shared/types";
 import { api, call, keys } from "../api";
+import { useCan } from "../lib/me";
 import { DownloadButton } from "../components/DownloadButton";
 import { HealthTabs } from "../components/HealthTabs";
 import { LinkForm } from "../components/LinkForm";
@@ -243,6 +244,7 @@ export function Misses() {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const label = useLinkLabel();
+  const can = useCan();
   const q = useQuery({ queryKey: keys.misses(period), queryFn: () => call(api.stats.misses.$get({ query: periodQuery(period) })) });
   const all = q.data?.rows ?? [];
   const policy = q.data?.policy ?? DEFAULT_MISS_POLICY;
@@ -299,9 +301,11 @@ export function Misses() {
       <HealthTabs />
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-line bg-surface px-4 py-3 text-sm">
         <span className="text-muted">{policySummary(policy)}</span>
-        <Button variant="outline" size="sm" onClick={() => setTracking(true)} disabled={!q.data}>
-          <Settings2 /> Tracking settings
-        </Button>
+        {can("settings.manage") ? (
+          <Button variant="outline" size="sm" onClick={() => setTracking(true)} disabled={!q.data}>
+            <Settings2 /> Tracking settings
+          </Button>
+        ) : null}
       </div>
       {q.data && !q.data.aeAvailable ? (
         <div className="mb-4">
@@ -392,7 +396,7 @@ export function Misses() {
                   <td className="px-4 py-2.5">
                     <div className="flex items-center justify-end gap-1">
                       {r.link === "none" ? (
-                        r.probe ? null : (
+                        r.probe || !can("links.create") ? null : (
                           <Button variant="outline" size="sm" onClick={() => setCreating({ domain: r.domain, slug: r.slug })}>
                             Create link
                           </Button>
@@ -454,13 +458,15 @@ export function Misses() {
         </div>
       </Dialog>
       {tracking ? <TrackingDialog open onOpenChange={setTracking} policy={policy} /> : null}
-      <LinkForm
-        open={creating !== null}
-        onOpenChange={(o) => !o && setCreating(null)}
-        initialSlug={creating?.slug ?? ""}
-        initialDomain={creating?.domain ?? ""}
-        onSaved={(l) => void createdFromMiss(l)}
-      />
+      {can("links.create") ? (
+        <LinkForm
+          open={creating !== null}
+          onOpenChange={(o) => !o && setCreating(null)}
+          initialSlug={creating?.slug ?? ""}
+          initialDomain={creating?.domain ?? ""}
+          onSaved={(l) => void createdFromMiss(l)}
+        />
+      ) : null}
     </>
   );
 }

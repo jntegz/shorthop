@@ -1,7 +1,6 @@
-import { useQuery } from "@tanstack/react-query";
 import { linkKey, linkLabel } from "../../shared/domains";
 import type { LinkDTO } from "../../shared/types";
-import { api, call, keys } from "../api";
+import { useMe } from "./me";
 
 export { linkKey };
 
@@ -10,11 +9,11 @@ export function linkPath(l: { domain: string; slug: string }): string {
   return `/links/${encodeURIComponent(l.domain)}/${encodeURIComponent(l.slug)}`;
 }
 
-/** The configured short domains, primary first (from Settings). */
+/** The configured short domains, primary first. */
 export function useDomains(): { domains: string[]; primary: string; multiple: boolean; demo: boolean } {
-  const settings = useQuery({ queryKey: keys.settings, queryFn: () => call(api.settings.$get()) });
-  const domains = settings.data?.domains ?? [];
-  return { domains, primary: settings.data?.primaryDomain ?? domains[0] ?? "", multiple: domains.length > 1, demo: Boolean(settings.data?.demo) };
+  const workspace = useMe().data?.workspace;
+  const domains = workspace?.domains ?? [];
+  return { domains, primary: workspace?.primaryDomain ?? domains[0] ?? "", multiple: domains.length > 1, demo: Boolean(workspace?.demo) };
 }
 
 /** Labels links as "/guide" on the primary domain and "alt.example/guide" elsewhere. */

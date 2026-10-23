@@ -6,6 +6,7 @@ import { DELETED_RETENTION_DAYS } from "../../shared/history";
 import { api, call, keys } from "../api";
 import { ago, hostOf, whenFull } from "../lib/format";
 import { linkKey, linkPath, useLinkLabel } from "../lib/links";
+import { useCan } from "../lib/me";
 import { actorName } from "./LinkHistory";
 import { Button, Dialog, Empty, Notice, Spinner } from "./ui";
 
@@ -32,6 +33,7 @@ export function DeletedLinks({ open, onOpenChange }: { open: boolean; onOpenChan
   const navigate = useNavigate();
   const q = useQuery({ queryKey: keys.deleted, queryFn: () => call(api.deleted.$get()), enabled: open });
   const restore = useRestoreDeleted();
+  const canRestore = useCan()("links.delete");
   const links = q.data?.links ?? [];
 
   return (
@@ -67,7 +69,7 @@ export function DeletedLinks({ open, onOpenChange }: { open: boolean; onOpenChan
                     {hostOf(l.target)} · deleted <span title={whenFull(l.deletedAt)}>{ago(l.deletedAt)}</span> by {actorName(l.actor)}
                   </p>
                 </div>
-                <Button
+                {canRestore ? <Button
                   size="sm"
                   variant="outline"
                   loading={busy}
@@ -82,7 +84,7 @@ export function DeletedLinks({ open, onOpenChange }: { open: boolean; onOpenChan
                   }
                 >
                   {busy ? null : <RotateCcw />} Restore
-                </Button>
+                </Button> : null}
               </li>
             );
           })}

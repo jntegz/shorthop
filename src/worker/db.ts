@@ -191,6 +191,14 @@ export async function getDefaultUtm(db: D1Database): Promise<string> {
   return (await getSetting(db, "default_utm")) ?? DEFAULT_UTM_FALLBACK;
 }
 
+/** The first UTC day with stats or links: the earliest a custom period can start. */
+export async function statsSince(db: D1Database): Promise<string | null> {
+  const row = await db
+    .prepare("SELECT MIN(d) AS d FROM (SELECT MIN(date) AS d FROM daily_dims UNION ALL SELECT date(MIN(created_at), 'unixepoch') FROM links)")
+    .first<{ d: string | null }>();
+  return row?.d ?? null;
+}
+
 export async function getLink(db: D1Database, domain: string, slug: string): Promise<LinkRow | null> {
   return db.prepare("SELECT * FROM links WHERE domain = ? AND slug = ?").bind(domain, slug).first<LinkRow>();
 }

@@ -14,6 +14,7 @@ import {
   type QrStyle,
 } from "../../shared/qr";
 import { api, call, keys, uploadPreviewImage } from "../api";
+import { useCan } from "../lib/me";
 import { logoDataUrl, openPrintSheet, qrText, renderQrSvg, svgToPng, verifyQr, type PrintOptions, type RenderedQr } from "../lib/qr";
 import { cn, download } from "../lib/utils";
 import { Button, Dialog, Input, Segmented, Select, Switch } from "./ui";
@@ -87,6 +88,7 @@ export function QrStudio({
   label: string;
 }) {
   const qc = useQueryClient();
+  const can = useCan();
   const defaults = useQuery({ queryKey: keys.qrDefault, queryFn: () => call(api.qr.default.$get()), enabled: open });
   const saved = link.qr ?? defaults.data?.style ?? null;
   const [style, setStyle] = useState<QrStyle>(link.qr ?? DEFAULT_QR_STYLE);
@@ -295,11 +297,11 @@ export function QrStudio({
                   <Trash2 />
                 </Button>
               </div>
-            ) : (
+            ) : can("links.create") || can("links.edit") ? (
               <Button type="button" variant="outline" size="sm" onClick={() => fileInput.current?.click()} loading={upload.isPending}>
                 {upload.isPending ? null : <ImagePlus />} Add a logo
               </Button>
-            )}
+            ) : null}
             <p className="text-xs text-muted">A square image with a plain background works best. A logo switches error correction to High so the code still reads.</p>
             <input
               ref={fileInput}
@@ -408,12 +410,16 @@ export function QrStudio({
           <RotateCcw /> Default design
         </Button>
         <div className="flex flex-wrap gap-2">
-          <Button type="button" variant="outline" onClick={() => saveDefault.mutate()} loading={saveDefault.isPending} disabled={!ready}>
-            Use as default
-          </Button>
-          <Button type="button" onClick={() => saveLink.mutate()} loading={saveLink.isPending} disabled={!ready || (!dirty && Boolean(link.qr))}>
-            {link.qr && !dirty ? "Design saved" : "Save to this link"}
-          </Button>
+          {can("settings.manage") ? (
+            <Button type="button" variant="outline" onClick={() => saveDefault.mutate()} loading={saveDefault.isPending} disabled={!ready}>
+              Use as default
+            </Button>
+          ) : null}
+          {can("links.edit") ? (
+            <Button type="button" onClick={() => saveLink.mutate()} loading={saveLink.isPending} disabled={!ready || (!dirty && Boolean(link.qr))}>
+              {link.qr && !dirty ? "Design saved" : "Save to this link"}
+            </Button>
+          ) : null}
         </div>
       </div>
     </Dialog>

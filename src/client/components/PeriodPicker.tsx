@@ -1,8 +1,7 @@
-import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { utcDate } from "../../shared/dates";
 import type { Period, Range } from "../../shared/types";
-import { api, call, keys } from "../api";
+import { useMe } from "../lib/me";
 import { Button, Dialog, Field, Input, Segmented } from "./ui";
 
 const QUICK = ["today", "7d", "30d", "90d"] as const;
@@ -38,9 +37,8 @@ function longerLabel(p: Period): string | null {
 /** Today · 7 days · 30 days · 90 days · Custom: longer ranges and any from–to dates (UTC). */
 export function PeriodPicker({ value, onChange }: { value: Period; onChange: (p: Period) => void }) {
   const [open, setOpen] = useState(false);
-  const settings = useQuery({ queryKey: keys.settings, queryFn: () => call(api.settings.$get()) });
   const today = utcDate();
-  const since = settings.data?.statsSince ?? undefined;
+  const since = useMe().data?.workspace.statsSince ?? undefined;
   const [from, setFrom] = useState(value.from ?? "");
   const [to, setTo] = useState(value.to ?? today);
 

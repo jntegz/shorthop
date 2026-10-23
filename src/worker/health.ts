@@ -9,7 +9,7 @@ import { escapeHtml } from "../shared/html";
 import type { HealthCheck, HealthStatus, JobRun, SystemHealthDTO } from "../shared/types";
 import { parsePasswordHash, PLAN_ITERATIONS } from "../shared/password";
 import { aeAvailable } from "./ae";
-import { accessConfigured, adminAuthMode } from "./auth";
+import { accessConfigured, adminAuthMode, legacyApiToken } from "./auth";
 import { getSetting, nowSec, setSettingStmt } from "./db";
 import { autoClearDemo } from "./demo";
 import { domainsOf } from "./domains";
@@ -275,11 +275,12 @@ function setupChecks(env: Env, add: (id: string, label: string, status: HealthSt
   }
 
   const weak = [
-    (env.API_TOKEN ?? "").length < MIN_API_TOKEN ? `API_TOKEN (${MIN_API_TOKEN}+ characters)` : "",
+    // Optional since personal API keys: only a token that is set must be long enough.
+    legacyApiToken(env) && legacyApiToken(env).length < MIN_API_TOKEN ? `API_TOKEN (${MIN_API_TOKEN}+ characters)` : "",
     (env.VISITOR_SALT ?? "").length < MIN_SALT ? `VISITOR_SALT (${MIN_SALT}+ characters)` : "",
   ].filter(Boolean);
   if (weak.length) add("secrets", "Secrets", "warn", `Too short or missing: ${weak.join(", ")}.`, { fix: "npm run setup -- secrets --rotate", docs: "docs/SETUP.md#secrets" });
-  else add("secrets", "Secrets", "ok", "API token and visitor salt are set.");
+  else add("secrets", "Secrets", "ok", legacyApiToken(env) ? "API token and visitor salt are set." : "The visitor salt is set.");
 
   if (env.DEV_AUTH_BYPASS) {
     add("devbypass", "Local development flag", "warn", "DEV_AUTH_BYPASS is set. It only works on localhost, but belongs in .dev.vars, not in the deployed config.", { fix: "npm run setup", docs: "docs/SETUP.md#configuration" });

@@ -5,8 +5,10 @@ import { SESSION_TTL_SEC } from "../src/shared/login-policy";
 import { hashPassword } from "../src/shared/password";
 import { nowSec } from "../src/worker/db";
 import { safeNext } from "../src/worker/login";
-import { globalLockedUntil, ipBucket, issueSessionCookie, loginConfig, loginEventStmt, recordGlobalFailure } from "../src/worker/session";
+import { getEpoch, globalLockedUntil, ipBucket, issueSessionCookie, loginConfig, loginEventStmt, recordGlobalFailure } from "../src/worker/session";
+import { OWNER_EPOCH } from "../src/worker/users";
 import { bearer, call, ORIGIN, resetData } from "./helpers";
+import { addKey } from "./people";
 
 const TEAM = "team.cloudflareaccess.com";
 const AUD = "aud-tag-123";
@@ -158,7 +160,7 @@ describe("admin password", () => {
     expect(res.status).toBe(303);
     expect(res.headers.get("Location")).toBe("/_admin/links");
     const cookie = res.headers.get("Set-Cookie") ?? "";
-    expect(cookie).toMatch(/^__Host-sh_admin=v1\./);
+    expect(cookie).toMatch(/^__Host-sh_admin=v2\./);
     for (const flag of ["Path=/", "HttpOnly", "Secure", "SameSite=Strict", `Max-Age=${SESSION_TTL_SEC}`]) expect(cookie).toContain(flag);
 
     const events = await env.DB.prepare("SELECT ok FROM login_events").all<{ ok: number }>();
@@ -181,7 +183,7 @@ describe("admin password", () => {
     expect((await call(withCookie(tampered, jwt), undefined, LOGIN_ENV)).status).toBe(401);
 
     const cfg = loginConfig({ ...env, ...LOGIN_ENV } as Env)!;
-    const old = await issueSessionCookie(env.DB, cfg, "owner@example.com", nowSec() - SESSION_TTL_SEC - 10);
+    const old = await issueSessionCookie(cfg, "owner@example.com", { global: await getEpoch(env.DB), user: OWNER_EPOCH }, nowSec() - SESSION_TTL_SEC - 10);
     expect((await call(withCookie(old.cookie.split(";")[0]!, jwt), undefined, LOGIN_ENV)).status).toBe(401);
   });
 
@@ -467,6 +469,25 @@ describe("password-only mode (ADMIN_AUTH=password)", () => {
     expect(res.headers.get("Location")).toBe("/_admin/login");
   });
 
+  it("is owner-only: people can't be added, and /me says why", async () => {
+    const cookie = await pwCookie();
+    const api = (path: string, init: RequestInit = {}) =>
+      call(new Request(`${ORIGIN}/_admin/api${path}`, { ...init, headers: { Cookie: cookie, Origin: ORIGIN, "Content-Type": "application/json", ...init.headers } }), undefined, pwEnv());
+    expect(await (await api("/me")).json()).toMatchObject({ email: "admin", owner: true, role: "admin", authMode: "password" });
+    const add = await api("/users", { method: "POST", body: JSON.stringify({ email: "someone@example.com", name: "Someone", role: "user", permissions: [] }) });
+    expect(add.status).toBe(409);
+    expect(await add.json()).toMatchObject({ error: expect.stringMatching(/Cloudflare Access/) });
+    expect(await env.DB.prepare("SELECT 1 FROM users").first()).toBeNull();
+  });
+
+  it("lets the owner's personal key work only while Access is off", async () => {
+    const { auth } = await addKey("admin", ["links.create"]);
+    const create = (e: Partial<Env>) => call(`${ORIGIN}/api/links`, { method: "POST", headers: { ...auth, "Content-Type": "application/json" }, body: JSON.stringify({ url: "https://example.com/k" }) }, e);
+    expect((await create(pwEnv())).status).toBe(201);
+    // Once Access is on, "admin" is nobody: the key stops working.
+    expect((await create(LOGIN_ENV)).status).toBe(401);
+  });
+
   it("shows a login page without Access wording", async () => {
     const html = await (await call(new Request(`${ORIGIN}/_admin/login`), undefined, pwEnv())).text();
     expect(html).toContain('autocomplete="current-password"');
@@ -495,9 +516,11 @@ describe("API token", () => {
     expect(statuses.at(-1)).toBe(429);
   });
 
-  it("fails closed when no token is configured", async () => {
-    const res = await call(`${ORIGIN}/api/links`, { headers: { Authorization: "Bearer " } }, { API_TOKEN: "" });
-    expect(res.status).toBe(500);
+  it("refuses everything when no token is configured", async () => {
+    const noToken = { API_TOKEN: "" } as Partial<Env>;
+    expect((await call(`${ORIGIN}/api/links`, { headers: { Authorization: "Bearer " } }, noToken)).status).toBe(401);
+    const res = await call(`${ORIGIN}/api/links`, { headers: { Authorization: "Bearer test-api-token-0123456789abcdef" } }, noToken);
+    expect(res.status).toBe(401);
   });
 
   describe("default scope", () => {
@@ -537,6 +560,35 @@ describe("API token", () => {
       expect(await env.DB.prepare("SELECT 1 FROM settings WHERE key = 'mail'").first()).toBeNull();
     });
 
+    it("reads the newer endpoints but can't use their writes", async () => {
+      await send("POST", "/links", { url: "https://example.com/a", slug: "a" });
+      for (const path of ["/checks", "/checks/links/sh.example/a", "/links/sh.example/a/history", "/deleted", "/links/sh.example/a/cap", "/utm-presets", "/qr/default"]) {
+        expect((await send("GET", path)).status, path).toBe(200);
+      }
+      const refused: [string, string, unknown?][] = [
+        ["POST", "/links/sh.example/a/history/1/restore"],
+        ["POST", "/deleted/sh.example/a/restore"],
+        ["POST", "/checks/links/sh.example/a"],
+        ["POST", "/links/sh.example/a/cap/reset"],
+        ["POST", "/utm-presets", { name: "x", template: "utm_source=x" }],
+        ["PUT", "/qr/default", {}],
+        ["POST", "/webhooks", { url: "https://example.com/hook", events: ["link.created"] }],
+        ["POST", "/previews/fetch", { url: "https://example.com/" }],
+      ];
+      for (const [method, path, body] of refused) {
+        const res = await send(method, path, body ?? {});
+        expect(res.status, `${method} ${path}`).toBe(403);
+        expect((await res.json<{ error: string }>()).error, `${method} ${path}`).toMatch(/API_TOKEN_SCOPE/);
+      }
+    });
+
+    it("doesn't limit personal API keys, which carry their own permissions", async () => {
+      await send("POST", "/links", { url: "https://example.com/a", slug: "a" });
+      const { auth: key } = await addKey("owner@example.com", ["links.edit"]);
+      const res = await call(`${ORIGIN}/api/links/sh.example/a`, { method: "PATCH", headers: { ...key, "Content-Type": "application/json" }, body: JSON.stringify({ target: "https://example.com/b" }) }, CREATE);
+      expect(res.status).toBe(200);
+    });
+
     it('treats anything but the exact value "full" as the default', async () => {
       await send("POST", "/links", { url: "https://example.com/a", slug: "a" });
       expect((await send("DELETE", "/links/sh.example/a", undefined, { API_TOKEN_SCOPE: "Full" })).status).toBe(403);
@@ -567,7 +619,7 @@ describe("sessions end", () => {
     const jwt = await token({});
     // Issued a minute earlier: two logins in the same second get the same cookie.
     const cfg = loginConfig({ ...env, ...LOGIN_ENV } as Env)!;
-    const kept = (await issueSessionCookie(env.DB, cfg, "owner@example.com", nowSec() - 60)).cookie.split(";")[0]!;
+    const kept = (await issueSessionCookie(cfg, "owner@example.com", { global: await getEpoch(env.DB), user: OWNER_EPOCH }, nowSec() - 60)).cookie.split(";")[0]!;
     const cookie = await sessionCookie(jwt);
     expect((await call(logout(cookie, jwt), undefined, LOGIN_ENV)).status).toBe(303);
     expect((await call(withCookie(cookie, jwt), undefined, LOGIN_ENV)).status).toBe(401);
@@ -587,7 +639,7 @@ describe("abuse limits", () => {
   it("doesn't pause logins for failures from a single network", async () => {
     const now = nowSec();
     for (let i = 0; i < 40; i++) {
-      await loginEventStmt(env.DB, false, "one-network", "", now).run();
+      await loginEventStmt(env.DB, false, "one-network", "", now, "owner@example.com").run();
       await recordGlobalFailure(env.DB, now);
     }
     expect(await globalLockedUntil(env.DB, now)).toBe(0);
