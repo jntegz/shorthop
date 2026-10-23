@@ -12,6 +12,7 @@ import { NotFoundEditor } from "../components/NotFoundEditor";
 import { AccountCard } from "../components/AccountCard";
 import { ApiCard } from "../components/ApiCard";
 import { ApiKeys } from "../components/ApiKeys";
+import { BotCheckCard } from "../components/BotCheckCard";
 import { PeopleCard } from "../components/PeopleCard";
 import { UtmSettings } from "../components/UtmSettings";
 import { Webhooks } from "../components/Webhooks";
@@ -69,6 +70,7 @@ const TAB_OF: Record<string, SettingsTab> = {
   account: "access",
   people: "access",
   security: "access",
+  "bot-check": "access",
 };
 
 function SettingsTabs({ tabs, value, onChange }: { tabs: SettingsTab[]; value: SettingsTab; onChange: (t: SettingsTab) => void }) {
@@ -404,7 +406,7 @@ export function Settings() {
                 </div>
               </Card>
             ) : null}
-
+            {admin ? <BotCheckCard /> : null}
           </>
         ) : null}
       </div>

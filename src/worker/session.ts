@@ -216,6 +216,8 @@ export interface AttemptState {
   fails: number;
   lockedUntil: number;
   lockouts: number;
+  /** When the current counting window began. */
+  windowStart: number;
 }
 
 // Counts an attempt atomically before the password is checked, so parallel
@@ -228,14 +230,14 @@ ON CONFLICT (key) DO UPDATE SET
   fails        = CASE WHEN locked_until > ?2 THEN fails WHEN ?2 - window_start > ?3 THEN 1 ELSE fails + 1 END,
   window_start = CASE WHEN locked_until > ?2 THEN window_start WHEN ?2 - window_start > ?3 THEN ?2 ELSE window_start END,
   updated_at   = ?2
-RETURNING fails, locked_until, lockouts`;
+RETURNING fails, locked_until, lockouts, window_start`;
 
 export async function chargeAttempt(db: D1Database, key: string, now: number, windowSec = WINDOW_SEC): Promise<AttemptState> {
   const row = await db
     .prepare(CHARGE)
     .bind(key, now, windowSec)
-    .first<{ fails: number; locked_until: number; lockouts: number }>();
-  return { fails: row?.fails ?? 1, lockedUntil: row?.locked_until ?? 0, lockouts: row?.lockouts ?? 0 };
+    .first<{ fails: number; locked_until: number; lockouts: number; window_start: number }>();
+  return { fails: row?.fails ?? 1, lockedUntil: row?.locked_until ?? 0, lockouts: row?.lockouts ?? 0, windowStart: row?.window_start ?? now };
 }
 
 /** Locks a key: 1 minute, doubling with every lockout in a row, at most a day. Returns the unlock time. */

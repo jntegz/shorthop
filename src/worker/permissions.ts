@@ -111,6 +111,9 @@ export const RULES: Record<string, Rule> = {
   "POST /settings/domains/purge": session("admin"),
   "DELETE /settings/demo": need("settings.manage"),
   "POST /settings/sessions/revoke": session("admin"),
+  "GET /settings/turnstile": session("admin"),
+  "PUT /settings/turnstile": session("admin"),
+  "DELETE /settings/turnstile": session("admin"),
 
   // The signed-in person, people and API keys.
   "GET /me": signedIn,

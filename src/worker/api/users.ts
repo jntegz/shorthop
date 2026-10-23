@@ -5,12 +5,14 @@
 
 import { Hono, type Context } from "hono";
 import { assignableRoles, canManage, formatPermissions, parsePermissions, type Actor, type Permission, type Role } from "../../shared/permissions";
-import { pauseSchema, personParamSchema, personSchema, personUpdateSchema } from "../../shared/schemas";
+import { escapeHtml } from "../../shared/html";
+import { pauseSchema, personParamSchema, personSchema, personUpdateSchema, reinviteSchema } from "../../shared/schemas";
 import type { InviteDTO, PeopleDTO, PersonDTO } from "../../shared/types";
 import { adminAuthMode } from "../auth";
 import { nowSec } from "../db";
 import { validate, type AppEnv } from "../hono";
-import { getUser, INVITE_TTL_SEC, isPaused, mergeManagedPermissions, ownerEmails, randomToken, sha256Hex, userActor, type UserRow } from "../users";
+import { peopleMailStatus, sendPersonMail, withMailSettings } from "../mailer";
+import { getUser, INVITE_TTL_SEC, isPaused, mergeManagedPermissions, ownerEmails, randomToken, sha256Hex, userActor, utcText, type UserRow } from "../users";
 
 const PASSWORD_ONLY = "Turn on Cloudflare Access to add people with their own permissions: without it, everyone who signs in is the owner.";
 
@@ -65,6 +67,36 @@ async function newInvite(c: Context<AppEnv>, now: number): Promise<{ url: string
   return { url: `${new URL(c.req.url).origin}/_admin/invite/${token}`, hash: await sha256Hex(token), expires: now + INVITE_TTL_SEC };
 }
 
+/**
+ * Emails a new invite link to the person's own address, when asked and when
+ * email can reach people. The link is still shown to whoever made it.
+ */
+async function emailInvite(env: Env, row: UserRow, actor: Actor, invite: { url: string; expires: number }, asked: boolean): Promise<Pick<InviteDTO, "emailed" | "emailProblem">> {
+  if (!asked) return { emailed: false, emailProblem: null };
+  const mailEnv = await withMailSettings(env);
+  const { problem } = peopleMailStatus(mailEnv);
+  if (problem) return { emailed: false, emailProblem: problem };
+  const by = actor.name ? `${actor.name} (${actor.email})` : actor.email;
+  const until = utcText(invite.expires);
+  // `row` is as it was before the link: someone who had a password is getting a reset.
+  const reset = row.password_hash !== null || row.last_login_at !== null;
+  const lead = reset ? `${by} sent you a link to choose a new Shorthop password.` : `${by} invited you to Shorthop.`;
+  const text = `${lead}\n\nSign in with Cloudflare Access as ${row.email}, then choose your password here. The link works once, until ${until}:\n${invite.url}`;
+  try {
+    await sendPersonMail(mailEnv, row, {
+      from: { email: mailEnv.DIGEST_FROM, name: "Shorthop" },
+      subject: reset ? "Your new Shorthop password link" : "You're invited to Shorthop",
+      text,
+      html: `<p>${escapeHtml(lead)}</p>
+<p>Sign in with Cloudflare Access as <strong>${escapeHtml(row.email)}</strong>, then <a href="${escapeHtml(invite.url)}">choose your password</a>. The link works once, until ${escapeHtml(until)}.</p>`,
+    });
+    return { emailed: true, emailProblem: null };
+  } catch (err) {
+    console.error(JSON.stringify({ message: "invite email failed", email: row.email, error: String(err) }));
+    return { emailed: false, emailProblem: `The email couldn't be sent: ${err instanceof Error ? err.message : String(err)}` };
+  }
+}
+
 /** Managers may only give what they hold themselves. */
 function beyondOwn(actor: Actor, wanted: readonly Permission[]): boolean {
   return actor.role !== "admin" && wanted.some((p) => !actor.permissions.includes(p));
@@ -103,6 +135,7 @@ export const usersApi = new Hono<AppEnv>()
           .map((u) => personOf(u, actor, now, keysBy.get(u.email) ?? 0)),
       ],
       assignableRoles: assignableRoles(actor),
+      emailProblem: peopleMailStatus(await withMailSettings(c.env)).problem,
     };
     return c.json(result);
   })
@@ -131,7 +164,12 @@ export const usersApi = new Hono<AppEnv>()
     }
     const row = (await getUser(c.env.DB, body.email))!;
     console.log(JSON.stringify({ message: "person added", email: row.email, role: row.role, by: actor.email }));
-    const result: InviteDTO = { person: personOf(row, actor, now, 0), inviteUrl: invite.url, inviteExpiresAt: invite.expires };
+    const result: InviteDTO = {
+      person: personOf(row, actor, now, 0),
+      inviteUrl: invite.url,
+      inviteExpiresAt: invite.expires,
+      ...(await emailInvite(c.env, row, actor, invite, body.sendEmail)),
+    };
     return c.json(result, 201);
   })
 
@@ -189,10 +227,11 @@ export const usersApi = new Hono<AppEnv>()
 
   // A new invite link: clears their password and ends their sessions, so it
   // doubles as "reset password". Older links stop working.
-  .post("/:email/invite", validate("param", personParamSchema), async (c) => {
+  .post("/:email/invite", validate("param", personParamSchema), validate("json", reinviteSchema), async (c) => {
     const actor = c.get("actor");
     const { email } = c.req.valid("param");
     if (adminAuthMode(c.env) === "password") return c.json({ error: PASSWORD_ONLY }, 409);
+    const { sendEmail } = c.req.valid("json");
     const target = ownerEmails(c.env).includes(email) ? null : await getUser(c.env.DB, email);
     if (!target) return c.json({ error: "Not found" }, 404);
     if (!canManage(actor, target)) return c.json({ error: "You can't reset this person's password." }, 403);
@@ -208,7 +247,12 @@ export const usersApi = new Hono<AppEnv>()
     if (!res.meta.changes) return c.json({ error: CHANGED }, 409);
     const row = (await getUser(c.env.DB, email))!;
     console.log(JSON.stringify({ message: "invite created", email, by: actor.email }));
-    const result: InviteDTO = { person: personOf(row, actor, now, await keyCount(c.env.DB, email)), inviteUrl: invite.url, inviteExpiresAt: invite.expires };
+    const result: InviteDTO = {
+      person: personOf(row, actor, now, await keyCount(c.env.DB, email)),
+      inviteUrl: invite.url,
+      inviteExpiresAt: invite.expires,
+      ...(await emailInvite(c.env, target, actor, invite, sendEmail)),
+    };
     return c.json(result);
   })
 

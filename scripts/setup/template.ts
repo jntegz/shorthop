@@ -101,6 +101,10 @@ export function renderConfig(c: SetupConfig): string {
       "destination_address": ${j(c.digestTo)},
       "allowed_sender_addresses": [${j(c.digestFrom)}]
     }
+    // Optional: lets the "cloudflare" provider email invite and reset links to
+    // the people in Settings → People. Needs Email Sending on Workers Paid
+    // (docs/SETUP.md#people). Uncomment and use your sender address:
+    // , { "name": "PEOPLE_MAIL", "allowed_sender_addresses": ["you@your-domain"] }
   ],
 `
       : "";
@@ -218,9 +222,10 @@ ${sendEmail}
     // Set by \`npm run setup\`. VISITOR_SALT: mixed into the visitor hash.
     // ADMIN_PASSWORD_HASH: the owners' password, a PBKDF2 hash. SESSION_SECRET:
     // signs admin sessions (rotate it to log out everywhere).
-    // Optional, not listed: CF_ANALYTICS_TOKEN, the digest provider's keys, and
-    // API_TOKEN, a Bearer token for /api from before personal API keys
-    // (Settings → API & webhooks); wrangler dev ignores it in .dev.vars.
+    // Optional, not listed: CF_ANALYTICS_TOKEN, the digest provider's keys,
+    // API_TOKEN (a Bearer token for /api from before personal API keys) and
+    // TURNSTILE_SECRET (the optional bot check, Settings → Access & security).
+    // wrangler dev ignores them in .dev.vars.
     "required": ["VISITOR_SALT", "ADMIN_PASSWORD_HASH", "SESSION_SECRET"]
   },
 

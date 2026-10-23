@@ -474,6 +474,8 @@ export interface PeopleDTO {
   people: PersonDTO[];
   /** The roles the person asking may give. */
   assignableRoles: Role[];
+  /** Whether invite links can be emailed to people, and if not why. */
+  emailProblem: string | null;
 }
 
 /** A person just added or given a new invite: the link is shown once. */
@@ -481,6 +483,19 @@ export interface InviteDTO {
   person: PersonDTO;
   inviteUrl: string;
   inviteExpiresAt: number;
+  /** Whether the link was also emailed to them, and why not if that was asked for and failed. */
+  emailed: boolean;
+  emailProblem: string | null;
+}
+
+/** Settings → Bot check: the optional Turnstile check on the password pages. */
+export interface TurnstileDTO {
+  enabled: boolean;
+  siteKey: string;
+  /** Whether the TURNSTILE_SECRET secret is set (it's never shown). */
+  secretSet: boolean;
+  /** The admin host, which the Turnstile widget must list. */
+  hostname: string;
 }
 
 export interface ApiKeyDTO {

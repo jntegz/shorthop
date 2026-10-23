@@ -2,9 +2,9 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { HOSTNAME_RE } from "../../shared/domains";
 import { NOT_FOUND_IMAGE_MAX_BYTES } from "../../shared/not-found";
-import { deadLinkSchema, mailSettingsSchema, notFoundSchema, purgeDomainSchema, settingsSchema } from "../../shared/schemas";
+import { deadLinkSchema, mailSettingsSchema, notFoundSchema, purgeDomainSchema, settingsSchema, turnstileSchema } from "../../shared/schemas";
 import { validateUtmTemplate } from "../../shared/target";
-import type { MailSetupDTO, PurgeDomainDTO, SettingsDTO } from "../../shared/types";
+import type { MailSetupDTO, PurgeDomainDTO, SettingsDTO, TurnstileDTO } from "../../shared/types";
 import { aeAvailable } from "../ae";
 import { readCapped } from "../body";
 import { accessConfigured, adminAuthMode } from "../auth";
@@ -21,6 +21,7 @@ import { applyMailSettings, mailerStatus, mailProviders, mailSettings, mailSetti
 import { deleteNotFoundImage, getNotFoundPage, notFoundImage, saveNotFoundImage, saveNotFoundSettings, sniffImageType } from "../not-found";
 import { pendingRollup } from "../rollup";
 import { clearSessionCookie, loginConfig, revokeAllSessions, securitySummary } from "../session";
+import { saveTurnstileStmt, turnstileSecret, turnstileSettings } from "../turnstile";
 
 const DIGEST_TEST_KEY = "digest_test_at";
 const DIGEST_TEST_INTERVAL_SEC = 60;
@@ -215,4 +216,28 @@ export const settingsApi = new Hono<AppEnv>()
     console.log(JSON.stringify({ message: "admin sessions revoked", email: actor.email }));
     c.header("Set-Cookie", clearSessionCookie());
     return c.json({ revoked: true });
+  })
+
+  // The optional Turnstile bot check. Saving a site key keeps it off: it turns
+  // on only on /_admin/bot-check, after a check passes with it and the secret.
+  .get("/turnstile", async (c) => {
+    const s = await turnstileSettings(c.env.DB);
+    const dto: TurnstileDTO = { ...s, secretSet: Boolean(turnstileSecret(c.env)), hostname: new URL(c.req.url).hostname };
+    return c.json(dto);
+  })
+
+  .put("/turnstile", validate("json", turnstileSchema), async (c) => {
+    const { siteKey } = c.req.valid("json");
+    await saveTurnstileStmt(c.env.DB, { enabled: false, siteKey }).run();
+    console.log(JSON.stringify({ message: "bot check site key saved", by: c.get("identity") }));
+    const dto: TurnstileDTO = { enabled: false, siteKey, secretSet: Boolean(turnstileSecret(c.env)), hostname: new URL(c.req.url).hostname };
+    return c.json(dto);
+  })
+
+  .delete("/turnstile", async (c) => {
+    const s = await turnstileSettings(c.env.DB);
+    await saveTurnstileStmt(c.env.DB, { enabled: false, siteKey: s.siteKey }).run();
+    console.log(JSON.stringify({ message: "bot check turned off", by: c.get("identity") }));
+    const dto: TurnstileDTO = { enabled: false, siteKey: s.siteKey, secretSet: Boolean(turnstileSecret(c.env)), hostname: new URL(c.req.url).hostname };
+    return c.json(dto);
   });

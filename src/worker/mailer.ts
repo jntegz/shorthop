@@ -9,18 +9,26 @@
 // provider's key to another. Provider hosts are fixed here, and the custom and
 // webhook URLs are secrets, so nothing the admin can change sends a key
 // anywhere new. Redirects are refused, so credentials never follow one. The
-// recipient comes from config only, never from a request.
+// recipient is DIGEST_TO, or (sendPersonMail) someone's row in Settings →
+// People; never an address from a request.
 
 import { HOSTNAME_RE } from "../shared/domains";
 import { DIGEST_PROVIDERS, type DigestProvider, type MailProviderDTO } from "../shared/types";
 import { mailSettingsSchema, type MailSettings } from "../shared/schemas";
 import { getSetting } from "./db";
+import type { UserRow } from "./users";
 
 export { DIGEST_PROVIDERS, type DigestProvider };
 
 /** Optional settings that aren't in every deployment's wrangler.jsonc. */
 interface DigestEnv {
   DIGEST?: SendEmail;
+  /**
+   * Optional send_email binding without a fixed recipient, for mail to people
+   * in Settings → People (invite and password links) with the "cloudflare"
+   * provider. Needs Cloudflare Email Sending on the Workers Paid plan.
+   */
+  PEOPLE_MAIL?: SendEmail;
   DIGEST_PROVIDER?: string;
   /** Secret: API key of the provider named in DIGEST_PROVIDER (older setups). */
   DIGEST_API_KEY?: string;
@@ -263,6 +271,21 @@ export function mailerStatus(env: Env): MailerStatus {
   return { provider: p, problem };
 }
 
+/**
+ * Whether mail can reach the people in Settings → People, not just DIGEST_TO.
+ * The DIGEST binding is pinned to one address and a webhook only delivers the
+ * digest, so those need another way.
+ */
+export function peopleMailStatus(env: Env): MailerStatus {
+  const status = mailerStatus(env);
+  if (status.problem) return status;
+  if (status.provider === "webhook") return { ...status, problem: "The digest webhook can't email people." };
+  if (status.provider === "cloudflare" && !digestEnv(env).PEOPLE_MAIL) {
+    return { ...status, problem: "The DIGEST binding only sends to DIGEST_TO. Add a PEOPLE_MAIL send_email binding (Email Sending, Workers Paid) or use another provider." };
+  }
+  return status;
+}
+
 export class MailerError extends Error {
   constructor(public code: string) {
     super(code);
@@ -416,4 +439,15 @@ async function deliver(env: Env, msg: OutgoingEmail): Promise<{ messageId?: stri
     default:
       throw new MailerError(`Unsupported provider ${p}`);
   }
+}
+
+/** Sends one email to someone in Settings → People: the address is their row's, never a request's. */
+export async function sendPersonMail(env: Env, person: Pick<UserRow, "email">, msg: Omit<OutgoingEmail, "to">): Promise<{ messageId?: string }> {
+  const { provider: p, problem } = peopleMailStatus(env);
+  if (problem) throw new MailerError(problem);
+  if (p === "cloudflare") {
+    const r = await digestEnv(env).PEOPLE_MAIL!.send({ from: msg.from, to: person.email, subject: msg.subject, html: msg.html, text: msg.text });
+    return { messageId: r.messageId };
+  }
+  return sendMail(env, { ...msg, to: person.email });
 }

@@ -24,3 +24,11 @@ export const API_WINDOW_SEC = 60;
 
 /** Login events (success and failure) are kept this long. */
 export const LOGIN_EVENT_RETENTION_SEC = 30 * 24 * 60 * 60;
+
+/** "Forgot password" links work once, for this long. */
+export const RESET_TTL_SEC = 60 * 60;
+/** Reset emails (or notes to an admin): one per person per cooldown, a few a day, per network and overall. */
+export const RESET_COOLDOWN_SEC = 15 * 60;
+export const RESET_MAX_PER_DAY = 3;
+export const RESET_MAX_PER_NETWORK_HOUR = 5;
+export const RESET_MAX_GLOBAL_HOUR = 20;

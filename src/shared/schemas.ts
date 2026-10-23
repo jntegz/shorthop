@@ -283,7 +283,11 @@ export const personSchema = z.object({
   name: z.string().trim().max(80).default(""),
   role: z.enum(ROLES),
   permissions: permissionList.default([]),
+  /** Also email the invite link to them (when email can reach people). */
+  sendEmail: z.boolean().default(false),
 });
+
+export const reinviteSchema = z.object({ sendEmail: z.boolean().default(false) });
 
 export const personUpdateSchema = z.object({
   name: z.string().trim().max(80).optional(),
@@ -295,6 +299,14 @@ export const personParamSchema = z.object({ email });
 
 /** Pause someone's access: until a time, or (null) until someone resumes them. */
 export const pauseSchema = z.object({ until: z.number().int().positive().nullable() });
+
+/** A Turnstile site key, as the Cloudflare dashboard shows it (0x4AAAA…). */
+export const turnstileSchema = z.object({
+  siteKey: z
+    .string()
+    .trim()
+    .regex(/^[0-9A-Za-z_-]{10,100}$/, "Paste the site key from your Turnstile widget"),
+});
 
 export const API_KEY_EXPIRY_DAYS = [30, 90, 365] as const;
 

@@ -40,6 +40,11 @@ describe("ADMIN_PASSWORD", () => {
     expect((await login("not-the-password")).status).toBe(401);
   });
 
+  it("offers no self-service reset: the owner's password is a secret", async () => {
+    const html = await (await call(new Request(`${ORIGIN}/_admin/login`), undefined, BUTTON)).text();
+    expect(html).not.toContain("/_admin/forgot");
+  });
+
   it("keeps the admin closed when it's shorter than 9 characters", async () => {
     const short = { ...BUTTON, ADMIN_PASSWORD: "12345678" };
     expect((await login("12345678", short)).status).toBe(403);

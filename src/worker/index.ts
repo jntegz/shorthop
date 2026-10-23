@@ -18,6 +18,9 @@ import { withGeneratedSecrets } from "./secrets";
 import { pruneLoginState } from "./session";
 import { pruneApiKeys } from "./users";
 
+/** Server-rendered password pages (src/worker/login.ts). */
+const LOGIN_PATHS = new Set(["/_admin/login", "/_admin/logout", "/_admin/forgot", "/_admin/bot-check"]);
+
 // The click-limit counter (a Durable Object class must be exported here).
 export { ClickCap } from "./click-cap";
 
@@ -42,7 +45,7 @@ export default {
     // Access protects /_admin/*; the bare /_admin may not be covered, so it never reaches the auth check.
     if (path === "/_admin") return new Response(null, { status: 301, headers: { Location: `/_admin/${url.search}` } });
     if (path.startsWith("/api/") || path.startsWith("/_admin/api/")) return app.fetch(request, env, ctx);
-    if (path === "/_admin/login" || path === "/_admin/logout" || path.startsWith("/_admin/invite/")) return loginApp.fetch(request, env, ctx);
+    if (LOGIN_PATHS.has(path) || path.startsWith("/_admin/invite/") || path.startsWith("/_admin/reset/")) return loginApp.fetch(request, env, ctx);
     if (path.startsWith("/_admin/")) return serveAdmin(request, env, url);
     if (path === "/") return redirectTo(env.FALLBACK_URL);
     // The not-found page as visitors see it, without logging a miss (Settings links here).

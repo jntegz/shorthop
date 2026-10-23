@@ -49,8 +49,10 @@ export function PeopleCard({ me }: { me: MeDTO }) {
   const [removing, setRemoving] = useState<PersonDTO | null>(null);
   const [pausing, setPausing] = useState<PersonDTO | null>(null);
 
+  // With email that reaches people, a new link is also emailed to them.
+  const canEmail = Boolean(q.data) && !q.data?.emailProblem;
   const reinvite = useMutation({
-    mutationFn: (p: PersonDTO) => call(api.users[":email"].invite.$post({ param: { email: encodeURIComponent(p.email) } })),
+    mutationFn: (p: PersonDTO) => call(api.users[":email"].invite.$post({ param: { email: encodeURIComponent(p.email) }, json: { sendEmail: canEmail } })),
     onSuccess: (r) => {
       void qc.invalidateQueries({ queryKey: keys.people });
       setInvite(r);
@@ -153,6 +155,7 @@ export function PeopleCard({ me }: { me: MeDTO }) {
                       ) : null}
                       <MenuItem icon={<KeyRound />} onSelect={() => reinvite.mutate(p)}>
                         {p.status === "invited" || p.status === "expired" ? "New invite link" : "Reset password (new invite link)"}
+                        {canEmail ? " by email" : ""}
                       </MenuItem>
                       <MenuSeparator />
                       <MenuItem icon={<Trash2 />} tone="danger" onSelect={() => setRemoving(p)}>
@@ -203,6 +206,7 @@ export function PeopleCard({ me }: { me: MeDTO }) {
           me={me}
           person={editing === "new" ? null : editing}
           roles={q.data?.assignableRoles ?? []}
+          canEmail={canEmail}
           onClose={() => setEditing(null)}
           onInvited={setInvite}
         />
@@ -233,12 +237,14 @@ function PersonDialog({
   me,
   person,
   roles,
+  canEmail,
   onClose,
   onInvited,
 }: {
   me: MeDTO;
   person: PersonDTO | null;
   roles: Role[];
+  canEmail: boolean;
   onClose: () => void;
   onInvited: (invite: InviteDTO) => void;
 }) {
@@ -248,6 +254,7 @@ function PersonDialog({
   const [role, setRole] = useState<Role>(person?.role ?? "user");
   // Demoting an admin starts from nothing ticked, so the choice is explicit.
   const [perms, setPerms] = useState<Permission[]>(person && person.role !== "admin" ? person.permissions : []);
+  const [sendEmail, setSendEmail] = useState(canEmail);
   // Managers can only switch what they hold; the rest stays as it is.
   const mine = (p: Permission) => me.role === "admin" || me.permissions.includes(p);
 
@@ -256,7 +263,7 @@ function PersonDialog({
       // A manager sends only what they hold; the server keeps the rest as it was.
       const permissions = role === "admin" ? [] : perms.filter(mine);
       if (person) return { kind: "edit" as const, r: await call(api.users[":email"].$patch({ param: { email: encodeURIComponent(person.email) }, json: { name, role, permissions } })) };
-      return { kind: "new" as const, r: await call(api.users.$post({ json: { email, name, role, permissions } })) };
+      return { kind: "new" as const, r: await call(api.users.$post({ json: { email, name, role, permissions, sendEmail: canEmail && sendEmail } })) };
     },
     onSuccess: (res) => {
       void qc.invalidateQueries({ queryKey: keys.people });
@@ -327,6 +334,12 @@ function PersonDialog({
             </ul>
           </fieldset>
         )}
+        {!person && canEmail ? (
+          <label className="flex cursor-pointer items-center gap-2 text-sm text-fg">
+            <input type="checkbox" className="accent-[var(--accent)]" checked={sendEmail} onChange={(e) => setSendEmail(e.target.checked)} />
+            Also email the invite link to them
+          </label>
+        ) : null}
         <div className="flex justify-end gap-2">
           <Button type="button" variant="outline" onClick={onClose}>
             Cancel
@@ -414,6 +427,13 @@ function InviteDialog({ invite, onClose }: { invite: InviteDTO | null; onClose: 
     >
       {invite ? (
         <div className="space-y-4 text-sm">
+          {invite.emailed ? (
+            <Notice tone="accent">
+              Emailed to <strong>{invite.person.email}</strong>. You can also copy the link below.
+            </Notice>
+          ) : invite.emailProblem ? (
+            <Notice>Not emailed: {invite.emailProblem} Copy the link below and send it yourself.</Notice>
+          ) : null}
           <div className="flex items-center gap-2 rounded-xl border border-line bg-bg p-3">
             <code className="min-w-0 flex-1 font-mono text-xs break-all text-fg">{invite.inviteUrl}</code>
             <Button variant="outline" size="sm" onClick={() => void copy(invite.inviteUrl, "Invite link copied")}>
@@ -428,7 +448,7 @@ function InviteDialog({ invite, onClose }: { invite: InviteDTO | null; onClose: 
               </a>{" "}
               → Access → Applications). Without it, the link can't open.
             </li>
-            <li>Send them the link. They sign in with that email, choose a password, and they're in.</li>
+            <li>{invite.emailed ? "They open the link" : "Send them the link"}. They sign in with that email, choose a password, and they're in.</li>
           </ol>
           <div className="flex justify-end">
             <Button onClick={onClose}>Done</Button>
