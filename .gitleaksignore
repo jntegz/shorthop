@@ -1,0 +1,8 @@
+# Made-up keys in tests, flagged by gitleaks' generic-api-key rule in commits
+# made before the lines carried a gitleaks:allow comment.
+# test/qr.test.ts: the QR logo storage key "abcdefghij0123456789.png".
+d4a64280722d1a5f0726634d31fe320f078b6424:test/qr.test.ts:generic-api-key:13
+d4a64280722d1a5f0726634d31fe320f078b6424:test/qr.test.ts:generic-api-key:22
+# test/mailer.test.ts: fake Resend keys ("re_key_…", "re_secret_…").
+9dbb48cd12ad483fd5f88aad564031cd590cb313:test/mailer.test.ts:generic-api-key:148
+9dbb48cd12ad483fd5f88aad564031cd590cb313:test/mailer.test.ts:generic-api-key:154
