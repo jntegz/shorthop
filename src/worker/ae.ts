@@ -91,6 +91,8 @@ export const AE_DIMS = {
   referrer: ["blob11"],
   language: ["blob13"],
   bot: ["blob14"],
+  // Smart-routed links only: "rule" or "rule.variant", "-" for the fallback.
+  route: ["blob18"],
 } as const;
 export type AeDim = keyof typeof AE_DIMS;
 
@@ -146,7 +148,7 @@ export async function queryDim(env: Env, dim: AeDim, fromSec: number, toSec: num
   const cols = AE_DIMS[dim];
   const select = cols.map((c, i) => `${c} AS v${i}`).join(", ");
   const group = cols.map((_, i) => `v${i}`).join(", ");
-  const extra = dim === "bot" ? "blob1 = 'bot'" : "blob1 != 'miss'";
+  const extra = dim === "bot" ? "blob1 = 'bot'" : dim === "route" ? "blob1 != 'miss' AND blob18 != ''" : "blob1 != 'miss'";
   const sql = `SELECT ${DAY} AS day, blob17 AS domain, index1 AS slug, ${select}, ${CLICKS} AS clicks, ${BOTS} AS bots
 FROM ${dataset(env)} WHERE ${where(fromSec, toSec, filter, extra)}
 GROUP BY day, domain, slug, ${group} ORDER BY ${dim === "bot" ? "bots" : "clicks"} DESC LIMIT ${ROW_LIMIT} FORMAT JSON`;

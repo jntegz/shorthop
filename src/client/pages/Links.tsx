@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArchiveRestore, BarChart3, Copy, Download, Link2, Plus, Search, QrCode, X } from "lucide-react";
+import { ArchiveRestore, BarChart3, Copy, Split, Download, Link2, Plus, Search, QrCode, X } from "lucide-react";
 import { lazy, Suspense, useDeferredValue, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { toast } from "sonner";
@@ -7,6 +7,7 @@ import type { LinkDTO, LinkListItem, ListPeriod } from "../../shared/types";
 import { api, call, keys } from "../api";
 
 import { problemText } from "../../shared/link-check";
+import { describeRouting } from "../../shared/routing";
 import { CheckBadge } from "../components/CheckBadge";
 import { DeletedLinks } from "../components/DeletedLinks";
 import { DownloadButton } from "../components/DownloadButton";
@@ -250,6 +251,11 @@ export function Links() {
                         {label(l)}
                       </Link>
                       {l.source === "import" ? <Badge>Imported</Badge> : null}
+                      {l.routing ? (
+                        <Badge tone="accent" title={`Smart routing: ${describeRouting(l.routing)}`}>
+                          <Split className="size-3" aria-hidden /> Smart
+                        </Badge>
+                      ) : null}
                     </div>
                     {l.title ? <div className="mt-1 max-w-56 truncate text-xs text-muted">{l.title}</div> : null}
                     {l.tags.length ? (

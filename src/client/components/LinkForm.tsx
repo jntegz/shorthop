@@ -1,17 +1,19 @@
-import { ChevronDown, Link2 } from "lucide-react";
+import { ChevronDown, Link2, Split } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router";
 import { toast } from "sonner";
 import { validateSlug } from "../../shared/slug";
+import { describeRouting, validateRouting, type RouteRule } from "../../shared/routing";
 import { normalizeTarget, validateUtmTemplate } from "../../shared/target";
 import type { LinkDTO } from "../../shared/types";
 import { api, call, keys, linkFromError } from "../api";
 import { fromLocalInput, toLocalInput } from "../lib/format";
 import { LINK_HELP } from "../lib/help";
 import { linkKey, linkState, useDomains, useLinkLabel } from "../lib/links";
-import { copy } from "../lib/utils";
-import { Button, Dialog, Field, Input, Select, Switch, Textarea } from "./ui";
+import { cn, copy } from "../lib/utils";
+import { RoutingEditor } from "./RoutingEditor";
+import { Button, Dialog, Field, InfoTip, Input, Select, Switch, Textarea } from "./ui";
 
 interface Props {
   open: boolean;
@@ -44,6 +46,8 @@ interface FormState {
   broken: boolean;
   /** "domain/slug" of the replacement, or "" for none. */
   replacement: string;
+  /** Smart routing rules; none means one destination for everyone. */
+  rules: RouteRule[];
 }
 
 function initial(link?: LinkDTO, slug = "", domain = ""): FormState {
@@ -62,6 +66,7 @@ function initial(link?: LinkDTO, slug = "", domain = ""): FormState {
     monitor: link?.monitor ?? true,
     broken: link?.broken ?? false,
     replacement: link?.replacement ? linkKey(link.replacement.domain, link.replacement.slug) : "",
+    rules: link?.routing?.rules ?? [],
   };
 }
 
@@ -73,12 +78,14 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
   const [f, setF] = useState<FormState>(() => initial(link, initialSlug, initialDomain));
   const [touched, setTouched] = useState(false);
   const [advanced, setAdvanced] = useState(false);
+  const [routingOpen, setRoutingOpen] = useState(false);
 
   useEffect(() => {
     if (open) {
       setF({ ...initial(link, initialSlug, initialDomain), ...(link && markBroken ? { broken: true } : {}) });
       setTouched(false);
       setAdvanced(Boolean(link));
+      setRoutingOpen(Boolean(link?.routing));
     }
   }, [open, link, initialSlug, initialDomain, markBroken]);
 
@@ -102,7 +109,9 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
     slug: !editing && f.slug ? validateSlug(f.slug, "native") : null,
     utmTemplate: f.utm && f.utmTemplate ? validateUtmTemplate(f.utmTemplate) : null,
   };
-  const valid = !errors.target && !errors.slug && !errors.utmTemplate;
+  const routingCheck = f.rules.length ? validateRouting({ rules: f.rules }, { selfHosts: domains }) : null;
+  const routingErrors = routingCheck && !routingCheck.ok ? routingCheck.errors : [];
+  const valid = !errors.target && !errors.slug && !errors.utmTemplate && routingErrors.length === 0;
 
   const save = useMutation({
     mutationFn: async () => {
@@ -117,6 +126,7 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
         utmTemplate: f.utm && f.utmTemplate.trim() ? f.utmTemplate.trim() : null,
         passQuery: f.passQuery,
         monitor: f.monitor,
+        routing: f.rules.length ? { rules: f.rules } : null,
       };
       if (link) {
         const cut = f.replacement.indexOf("/");
@@ -153,6 +163,7 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
     e.preventDefault();
     setTouched(true);
     if (errors.utmTemplate) setAdvanced(true);
+    if (routingErrors.length) setRoutingOpen(true);
     if (valid && !save.isPending) save.mutate();
   };
 
@@ -162,7 +173,7 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
       onOpenChange={onOpenChange}
       title={link ? `Edit ${label(link)}` : "Create a new link"}
       description={editing ? "Update your destination and link preferences." : "A shorter link. A lasting connection."}
-      wide
+      wide={routingOpen && f.rules.length ? "xl" : true}
     >
       <form onSubmit={submit} className="space-y-4" noValidate>
         <Field label="Destination URL" htmlFor="target" hint="Where should this link take people?" info={LINK_HELP.target} error={touched || f.target ? errors.target : null}>
@@ -221,6 +232,21 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
             <Input id="tags" placeholder="linkedin, ebook" value={f.tags} onChange={(e) => set("tags", e.target.value)} />
           </Field>
         </div>
+
+        <details open={routingOpen} onToggle={(e) => setRoutingOpen(e.currentTarget.open)} className="group/routing rounded-xl border border-line bg-bg">
+          <summary className="flex list-none items-center gap-2 px-4 py-3 text-sm font-medium [&::-webkit-details-marker]:hidden">
+            <Split className="size-4 text-accent" aria-hidden />
+            Smart routing
+            <InfoTip help={LINK_HELP.routing} />
+            <span className={cn("mr-3 ml-auto text-xs font-normal", routingErrors.length && touched ? "text-danger" : "text-muted")}>
+              {routingErrors.length && touched ? "Needs attention" : f.rules.length ? describeRouting({ rules: f.rules }) : "Off · by device, country or A/B test"}
+            </span>
+            <ChevronDown className="size-4 transition-transform group-open/routing:rotate-180" />
+          </summary>
+          <div className="border-t border-line p-4">
+            <RoutingEditor rules={f.rules} onChange={(rules) => set("rules", rules)} fallback={targetCheck?.ok ? targetCheck.url : f.target.trim()} errors={touched ? routingErrors : []} />
+          </div>
+        </details>
 
         <details open={advanced} onToggle={(e) => setAdvanced(e.currentTarget.open)} className="group rounded-xl border border-line bg-bg">
           <summary className="flex list-none items-center justify-between px-4 py-3 text-sm font-medium [&::-webkit-details-marker]:hidden">Link settings <span className="ml-auto mr-3 text-xs font-normal text-muted">Tracking, expiry & notes</span><ChevronDown className="size-4 transition-transform group-open:rotate-180" /></summary>
@@ -295,7 +321,7 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
             info={LINK_HELP.utm}
           />
           {f.utm ? (
-            <Field label="Custom UTM template" htmlFor="utmTemplate" hint="Leave empty to use the default from Settings. Placeholders: {slug}, {source}, {domain}." error={errors.utmTemplate} info={LINK_HELP.utmTemplate}>
+            <Field label="Custom UTM template" htmlFor="utmTemplate" hint="Leave empty to use the default from Settings. Placeholders: {slug}, {source}, {domain}, {variant}." error={errors.utmTemplate} info={LINK_HELP.utmTemplate}>
               <Input
                 id="utmTemplate"
                 className="font-mono text-xs"

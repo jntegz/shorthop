@@ -4,6 +4,7 @@
 /** The fields a version records and a restore puts back. */
 export const HISTORY_FIELDS = [
   "target",
+  "routing",
   "title",
   "active",
   "expires_at",
@@ -33,6 +34,8 @@ export interface Snapshot {
   /** "domain/slug" or null. */
   replacement: string | null;
   monitor: number;
+  /** Smart routing JSON, or null. Versions saved before routing existed lack it. */
+  routing?: string | null;
 }
 
 /** What's stored: the restorable fields plus what re-creating a deleted link needs. */
@@ -59,6 +62,14 @@ export interface FieldChange {
 /** Normalizes values so "" and null, or a missing monitor flag, don't count as changes. */
 function norm(field: HistoryField, v: unknown): unknown {
   if (v === undefined || v === "") return field === "monitor" ? 1 : null;
+  // Only the rules matter, not when the split last changed.
+  if (field === "routing" && typeof v === "string") {
+    try {
+      return JSON.stringify((JSON.parse(v) as { rules?: unknown }).rules ?? null);
+    } catch {
+      return v;
+    }
+  }
   return v;
 }
 
@@ -91,6 +102,7 @@ export function snapshotOf<T extends StoredSnapshot>(row: T): StoredSnapshot {
     broken: row.broken,
     replacement: row.replacement,
     monitor: row.monitor ?? 1,
+    routing: row.routing ?? null,
     source: row.source,
     imported_clicks: row.imported_clicks,
     created_at: row.created_at,
@@ -99,6 +111,7 @@ export function snapshotOf<T extends StoredSnapshot>(row: T): StoredSnapshot {
 
 export const FIELD_LABEL: Record<HistoryField, string> = {
   target: "Destination",
+  routing: "Smart routing",
   title: "Title",
   active: "Active",
   expires_at: "Expires",

@@ -9,7 +9,7 @@ import { nowSec, type LinkRow } from "./db";
 /** SQL for a version's snapshot, built from a `links` row (keep in step with snapshotOf). */
 export const SNAPSHOT_SQL = `json_object('target', target, 'active', active, 'expires_at', expires_at, 'utm', utm, 'utm_template', utm_template,
   'pass_query', pass_query, 'title', title, 'tags', tags, 'notes', notes, 'broken', broken, 'replacement', replacement,
-  'monitor', monitor, 'source', source, 'imported_clicks', imported_clicks, 'created_at', created_at)`;
+  'monitor', monitor, 'routing', routing, 'source', source, 'imported_clicks', imported_clicks, 'created_at', created_at)`;
 
 /** Most versions returned for one link. */
 const LIST_LIMIT = 200;

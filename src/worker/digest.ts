@@ -77,7 +77,7 @@ export async function digestData(env: Env, now: Date = new Date()): Promise<Dige
       )
       .bind(missFrom, to, JSON.stringify(cleared.links)),
     db.prepare(
-      `SELECT l.domain, l.slug, l.target, c.problem, c.http_status FROM target_checks c JOIN links l ON l.target = c.target
+      `SELECT DISTINCT l.domain, l.slug, l.url AS target, c.problem, c.http_status, c.since FROM target_checks c JOIN link_destinations l ON l.url = c.target
        WHERE c.status = 'down' AND l.active = 1 AND l.broken = 0 AND l.monitor = 1 ORDER BY c.since, l.domain, l.slug LIMIT 10`,
     ),
   ]);

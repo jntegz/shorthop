@@ -79,7 +79,7 @@ export interface Classification {
   language: string;
 }
 
-const PREFETCH = "Prefetch";
+export const PREFETCH = "Prefetch";
 
 export function detectBot(request: Request, ua: string, asn: number): string {
   if (!ua) return "No user agent";
@@ -316,6 +316,8 @@ export interface HitInput {
   probe?: boolean;
   sourceTag: string | null;
   qr: boolean;
+  /** Smart-routed links: the rule (and variant) used, "-" for the fallback. */
+  route?: string;
 }
 
 /**
@@ -354,6 +356,7 @@ export function buildDataPoint(
       hash,
       c.sourceKind,
       cap(input.domain),
+      input.route ?? "",
     ],
     doubles: [1, c.isBot ? 1 : 0, Number(cf?.asn ?? 0)],
   };

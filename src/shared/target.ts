@@ -54,12 +54,13 @@ export function validateUtmTemplate(template: string): string | null {
   return null;
 }
 
-/** Fills the {slug}, {source} and {domain} placeholders. */
-export function renderUtm(template: string, vars: { slug: string; source: string; domain: string }): string {
+/** Fills {slug}, {source}, {domain} and {variant} (the smart-routing destination's name; "default" for the fallback). */
+export function renderUtm(template: string, vars: { slug: string; source: string; domain: string; variant?: string }): string {
   return template
     .replaceAll("{slug}", encodeURIComponent(vars.slug))
     .replaceAll("{domain}", encodeURIComponent(vars.domain))
-    .replaceAll("{source}", encodeURIComponent(vars.source));
+    .replaceAll("{source}", encodeURIComponent(vars.source))
+    .replaceAll("{variant}", encodeURIComponent(vars.variant ?? "default"));
 }
 
 export interface OwnParams {

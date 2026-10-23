@@ -120,8 +120,9 @@ describe("data point", () => {
     const c = classify(request, url, "nl", false);
     const p = buildDataPoint(request, c, { domain: "sh.example", slug: "guide", kind: "hit", sourceTag: "nl", qr: false }, "abcd1234abcd1234");
     expect(p.indexes).toEqual(["guide"]);
-    expect(p.blobs).toHaveLength(17);
+    expect(p.blobs).toHaveLength(18);
     expect(p.blobs?.[16]).toBe("sh.example");
+    expect(p.blobs?.[17]).toBe(""); // route: smart-routed links only
     expect(p.blobs?.[0]).toBe("click");
     expect(p.blobs?.[7]).toBe("mobile");
     expect(p.blobs?.[10]).toBe("linkedin.com");

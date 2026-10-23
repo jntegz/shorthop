@@ -3,6 +3,7 @@ import { isDay } from "./dates";
 import { DEAD_LINK_MAX_DELAY, DEAD_LINK_MIN_DELAY } from "./dead-link";
 import { HOSTNAME_RE } from "./domains";
 import { HEX_COLOR_RE } from "./not-found";
+import { ROUTE_DEVICES } from "./routing";
 import { IMPORT_SLUG_RE } from "./slug";
 import { DIGEST_PROVIDERS, LIST_PERIODS, MISS_RETENTION_DAYS, NOISE_LIMITS, RANGES, REAL_MISS_LIMITS } from "./types";
 
@@ -16,6 +17,26 @@ const tags = z
 /** The end of year 9999 in Unix seconds: later values (milliseconds sent by mistake) break date formatting. */
 const MAX_UNIX_SEC = 253402300799;
 const unixSec = z.number().int().positive().max(MAX_UNIX_SEC, "Use Unix seconds, not milliseconds.");
+/** Smart routing as the editor sends it; validateRouting does the real checks. null turns it off. */
+export const routingSchema = z
+  .object({
+    rules: z
+      .array(
+        z.object({
+          id: z.string().max(8),
+          name: z.string().max(60).default(""),
+          enabled: z.boolean().default(true),
+          devices: z.array(z.enum(ROUTE_DEVICES)).max(ROUTE_DEVICES.length).default([]),
+          countries: z.array(z.string().max(2)).max(250).default([]),
+          countryMode: z.enum(["in", "not_in"]).default("in"),
+          variants: z
+            .array(z.object({ id: z.string().max(8), label: z.string().max(40).default(""), url: z.string().max(4096), weight: z.number().int().default(100) }))
+            .max(10),
+        }),
+      )
+      .max(10),
+  })
+  .nullable();
 
 /** Unix seconds, an ISO date string, or null. */
 const expiry = z
@@ -41,6 +62,7 @@ export const createLinkSchema = z
     passQuery: z.boolean().optional(),
     /** Check the destination on a schedule (default true). */
     monitor: z.boolean().optional(),
+    routing: routingSchema.optional(),
   })
   .refine((v) => v.target || v.url, { message: "target is required", path: ["target"] });
 
@@ -55,6 +77,7 @@ export const updateLinkSchema = z.object({
   utmTemplate: z.string().trim().max(512).nullish(),
   passQuery: z.boolean().optional(),
   monitor: z.boolean().optional(),
+  routing: routingSchema.optional(),
   broken: z.boolean().optional(),
   /** The link visitors are pointed to while this one is marked broken; null for none. */
   replacement: z.object({ domain: z.string().regex(HOSTNAME_RE), slug: z.string().regex(IMPORT_SLUG_RE) }).nullish(),

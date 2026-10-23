@@ -3,9 +3,10 @@
 
 import { isProbePath, isRoutableSlug } from "../shared/slug";
 import { buildLocation, renderUtm, splitOwnParams } from "../shared/target";
-import { logHit, referrerHostOf, resolveSource, siteHostOf } from "./analytics";
+import { pickRoute, routeCountry, routeDevice } from "../shared/routing";
+import { detectBot, detectDevice, detectOs, logHit, PREFETCH, referrerHostOf, resolveSource, siteHostOf } from "./analytics";
 import { deadLinkResponse } from "./dead-link";
-import { isKvLink, KV_TIMEOUT_MS, kvKey, splitKey, withTimeout, type KvLink } from "./db";
+import { isKvLink, KV_TIMEOUT_MS, kvKey, splitKey, withTimeout, type KvLink, type KvRule } from "./db";
 import { notFoundResponse } from "./not-found";
 
 const MIN_CACHE_TTL = 30;
@@ -44,6 +45,25 @@ async function readLink(env: Env, key: string): Promise<KvLink | null> {
   if (value === null) return null;
   if (!isKvLink(value)) throw new Error("Malformed KV record");
   return value;
+}
+
+/**
+ * Smart routing for one request. Bots and link previews always get the
+ * fallback, so previews stay stable and A/B results count people only. No
+ * cookie is set: each visit is assigned afresh.
+ */
+export function chooseRoute(request: Request, rules: readonly KvRule[]): { url: string; key: string; variant: string } | null {
+  const ua = request.headers.get("User-Agent") ?? "";
+  const cf = request.cf as { country?: string; asn?: number } | undefined;
+  // A prefetch comes from the visitor's own browser, which may show this very response.
+  const bot = detectBot(request, ua, Number(cf?.asn ?? 0));
+  if (bot && bot !== PREFETCH) return null;
+  const device = routeDevice(detectOs(ua, request.headers.get("Sec-CH-UA-Platform")), detectDevice(ua, request.headers.get("Sec-CH-UA-Mobile")));
+  const picked = pickRoute(rules, { device, country: routeCountry(cf?.country) }, Math.random());
+  if (!picked) return null;
+  const rule = rules.find((r) => r.id === picked.ruleId);
+  const variant = rule && rule.variants.length > 1 ? rule.variants.find((v) => v.id === picked.variantId)?.l : rule?.n;
+  return { url: picked.url, key: picked.key, variant: variant || picked.key };
 }
 
 export async function handleRedirect(request: Request, env: Env, ctx: ExecutionContext, url: URL, domain: string): Promise<Response> {
@@ -88,7 +108,9 @@ export async function handleRedirect(request: Request, env: Env, ctx: ExecutionC
     return deadLinkResponse(env, domain, slug, target && { ...target, link: replacement });
   }
 
-  let location = link.u;
+  const routed = link.ro?.length ? chooseRoute(request, link.ro) : null;
+  const target = routed?.url ?? link.u;
+  let location = target;
   try {
     let utm: string | null = null;
     if (link.utm === 1 && link.t) {
@@ -101,14 +123,14 @@ export async function handleRedirect(request: Request, env: Env, ctx: ExecutionC
             siteHostOf(env),
           ).source
         : "";
-      utm = renderUtm(link.t, { slug, source, domain });
+      utm = renderUtm(link.t, { slug, source, domain, variant: routed?.variant });
     }
-    location = buildLocation(link.u, link.qp === 1 ? own.passthrough : [], utm);
+    location = buildLocation(target, link.qp === 1 ? own.passthrough : [], utm);
   } catch (err) {
     // Fall back to the bare target rather than failing the click.
     console.error(JSON.stringify({ message: "location build failed", domain, slug, error: String(err) }));
   }
 
-  ctx.waitUntil(logHit(request, env, url, { domain, slug, kind: "hit", sourceTag: own.sourceTag, qr: own.qr }));
+  ctx.waitUntil(logHit(request, env, url, { domain, slug, kind: "hit", sourceTag: own.sourceTag, qr: own.qr, route: link.ro?.length ? (routed?.key ?? "-") : undefined }));
   return redirectTo(location);
 }

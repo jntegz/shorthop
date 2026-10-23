@@ -65,8 +65,13 @@ export const LINK_HELP = {
   ),
   utmTemplate: h(
     "Custom UTM template",
-    "Replaces the default template for this link only: key=value pairs joined by &, ASCII only, without spaces, ? or #, up to 512 characters. {slug} becomes the slug, {domain} the short domain. {source} becomes the ?s= tag, qr for QR scans, the in-app browser (li, fb, ig, x), the referrer or direct. Leave empty to follow the default, including later changes to it.",
+    "Replaces the default template for this link only: key=value pairs joined by &, ASCII only, without spaces, ? or #, up to 512 characters. {slug} becomes the slug, {domain} the short domain. {source} becomes the ?s= tag, qr for QR scans, the in-app browser (li, fb, ig, x), the referrer or direct. {variant} becomes the smart-routing destination's name (or its rule's), or default. Leave empty to follow the default, including later changes to it.",
     "utm_source=linkedin&utm_campaign={slug}&utm_content={source}",
+  ),
+  routing: h(
+    "Smart routing",
+    "Send visitors to different destinations by device (iPhone & iPad, Android, desktop, other) and country, or split them between destinations for an A/B test. Rules are checked from the top and the first match wins; everyone no rule matches goes to the destination URL. Devices and countries are detected from the browser and Cloudflare's location data, so VPNs and unusual browsers can land elsewhere. iPads that ask for desktop sites count as desktop. Each visit is assigned on its own, with no cookie. Bots and link previews always get the destination URL. Changes go live within about a minute.",
+    "iPhone → App Store, Android → Google Play, everyone else → the website",
   ),
   monitor: h(
     "Check the destination",

@@ -1,11 +1,14 @@
 // Small shadcn-style primitives on Radix, styled with the semantic tokens.
 
 import { cva, type VariantProps } from "class-variance-authority";
-import { ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight, Info, Loader2, X } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, Check, ChevronDown, ChevronLeft, ChevronRight, Info, Loader2, Search, X } from "lucide-react";
 import { Dialog as D, Popover as P, Switch as S } from "radix-ui";
 import {
   createContext,
   useContext,
+  useEffect,
+  useRef,
+  useState,
   forwardRef,
   type ButtonHTMLAttributes,
   type HTMLAttributes,
@@ -265,7 +268,8 @@ export function Dialog({
   title: string;
   description?: string;
   children: ReactNode;
-  wide?: boolean;
+  /** true: max-w-2xl; "xl": max-w-3xl, for editors with side-by-side columns. */
+  wide?: boolean | "xl";
 }) {
   return (
     <D.Root open={open} onOpenChange={onOpenChange}>
@@ -274,7 +278,7 @@ export function Dialog({
         <D.Content
           className={cn(
             "fixed top-1/2 left-1/2 z-50 max-h-[90vh] w-[calc(100vw-2rem)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-2xl border border-line bg-surface p-6 shadow-2xl focus:outline-none",
-            wide ? "max-w-2xl" : "max-w-lg",
+            wide === "xl" ? "max-w-3xl" : wide ? "max-w-2xl" : "max-w-lg",
           )}
         >
           <div className="mb-4 flex items-start justify-between gap-4">
@@ -417,5 +421,182 @@ export function Pagination({ page, pages, size, total, onPage, onSize }: { page:
         <Button variant="outline" size="icon-sm" aria-label="Next page" disabled={page >= pages} onClick={() => onPage(page + 1)}><ChevronRight /></Button>
       </div>
     </nav>
+  );
+}
+
+export interface ComboOption {
+  value: string;
+  label: string;
+  /** Muted text after the label, e.g. the link title. */
+  detail?: string;
+  /** Small note at the end, e.g. "deleted". */
+  note?: string;
+}
+
+/**
+ * A select you can type into: the list filters as you type (label and detail).
+ * The list opens in the page flow, not floating, so it scrolls with a dialog and is never clipped.
+ */
+export function Combobox({
+  id,
+  value,
+  onChange,
+  options,
+  noneLabel,
+  placeholder = "Type to search…",
+  disabled,
+}: {
+  id: string;
+  value: string;
+  onChange: (value: string) => void;
+  options: ComboOption[];
+  /** Label of the empty choice, listed first; omit to have no empty choice. */
+  noneLabel?: string;
+  placeholder?: string;
+  disabled?: boolean;
+}) {
+  const context = useContext(FieldContext);
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [active, setActive] = useState(0);
+  const listRef = useRef<HTMLUListElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+
+  const q = query.trim().toLowerCase();
+  const all: ComboOption[] = noneLabel === undefined ? options : [{ value: "", label: noneLabel }, ...options];
+  const shown = q ? options.filter((o) => `${o.label} ${o.detail ?? ""}`.toLowerCase().includes(q)) : all;
+  const selected = all.find((o) => o.value === value);
+
+  useEffect(() => {
+    if (open) inputRef.current?.focus();
+  }, [open]);
+  useEffect(() => {
+    listRef.current?.querySelector(`[data-index="${active}"]`)?.scrollIntoView({ block: "nearest" });
+  }, [active, open]);
+
+  const show = (seed = "") => {
+    setQuery(seed);
+    setActive(seed ? 0 : Math.max(0, all.findIndex((o) => o.value === value)));
+    setOpen(true);
+  };
+  const close = (refocus = true) => {
+    setOpen(false);
+    if (refocus) requestAnimationFrame(() => triggerRef.current?.focus());
+  };
+  const pick = (o: ComboOption) => {
+    onChange(o.value);
+    close();
+  };
+
+  if (!open) {
+    return (
+      <button
+        ref={triggerRef}
+        type="button"
+        id={id}
+        role="combobox"
+        aria-expanded={false}
+        aria-describedby={context.describedBy}
+        disabled={disabled}
+        onClick={() => show()}
+        onKeyDown={(e) => {
+          if (e.key.length === 1 && e.key !== " " && !e.metaKey && !e.ctrlKey && !e.altKey) {
+            e.preventDefault();
+            show(e.key);
+          } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+            e.preventDefault();
+            show();
+          }
+        }}
+        className={cn(field, "flex h-10 cursor-pointer items-center gap-2 text-left")}
+      >
+        <span className="min-w-0 flex-1 truncate">
+          {selected ? (
+            <>
+              <span className={selected.value ? "font-medium" : "text-muted"}>{selected.label}</span>
+              {selected.detail ? <span className="text-muted"> · {selected.detail}</span> : null}
+              {selected.note ? <span className="text-subtle"> ({selected.note})</span> : null}
+            </>
+          ) : (
+            <span className="text-subtle">{noneLabel ?? placeholder}</span>
+          )}
+        </span>
+        <ChevronDown className="size-4 shrink-0 text-muted" aria-hidden />
+      </button>
+    );
+  }
+
+  return (
+    <div
+      className="overflow-hidden rounded-lg border border-accent ring-2 ring-accent/25"
+      onBlur={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) close(false);
+      }}
+    >
+      <div className="flex items-center gap-2 border-b border-line px-3">
+        <Search className="size-4 shrink-0 text-muted" aria-hidden />
+        <input
+          ref={inputRef}
+          id={id}
+          role="combobox"
+          aria-expanded
+          aria-controls={`${id}-list`}
+          aria-activedescendant={shown[active] ? `${id}-opt-${active}` : undefined}
+          aria-describedby={context.describedBy}
+          autoComplete="off"
+          placeholder={placeholder}
+          value={query}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setActive(0);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "ArrowDown") {
+              e.preventDefault();
+              setActive((i) => Math.min(i + 1, shown.length - 1));
+            } else if (e.key === "ArrowUp") {
+              e.preventDefault();
+              setActive((i) => Math.max(i - 1, 0));
+            } else if (e.key === "Enter") {
+              e.preventDefault();
+              if (shown[active]) pick(shown[active]);
+            } else if (e.key === "Tab") {
+              close(false);
+            }
+          }}
+          className="h-10 min-w-0 flex-1 bg-transparent text-sm text-fg placeholder:text-subtle focus:outline-none"
+        />
+      </div>
+      <ul ref={listRef} id={`${id}-list`} role="listbox" className="max-h-60 overflow-y-auto overscroll-contain py-1">
+        {shown.length === 0 ? (
+          <li className="px-3 py-2 text-sm text-muted">No matches</li>
+        ) : (
+          shown.map((o, i) => (
+            <li
+              key={o.value || "__none"}
+              id={`${id}-opt-${i}`}
+              data-index={i}
+              role="option"
+              aria-selected={o.value === value}
+              onMouseDown={(e) => e.preventDefault()}
+              onMouseMove={() => setActive(i)}
+              onClick={() => pick(o)}
+              className={cn(
+                "flex cursor-pointer items-center gap-2 px-3 py-2 text-sm",
+                i === active ? "bg-surface-2" : "",
+              )}
+            >
+              <span className="min-w-0 flex-1 truncate">
+                <span className={o.value ? "font-medium text-fg" : "text-muted"}>{o.label}</span>
+                {o.detail ? <span className="text-muted"> · {o.detail}</span> : null}
+                {o.note ? <span className="text-subtle"> ({o.note})</span> : null}
+              </span>
+              {o.value === value ? <Check className="size-4 shrink-0 text-accent" aria-hidden /> : null}
+            </li>
+          ))
+        )}
+      </ul>
+    </div>
   );
 }

@@ -2,6 +2,7 @@
 
 import type { HistoryAction, StoredSnapshot } from "./history";
 import type { CheckProblem, CheckState } from "./link-check";
+import type { Routing } from "./routing";
 
 export type LinkSource = "native" | "import";
 
@@ -29,6 +30,8 @@ export interface LinkDTO {
   replacement: { domain: string; slug: string } | null;
   /** Whether the destination is checked on a schedule (Link health). */
   monitor: boolean;
+  /** Smart routing; null sends everyone to the target. */
+  routing: Routing | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -156,6 +159,7 @@ export const DIMS = [
   "referrer",
   "language",
   "bot",
+  "route",
 ] as const;
 export type Dim = (typeof DIMS)[number];
 

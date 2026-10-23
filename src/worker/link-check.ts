@@ -176,7 +176,11 @@ interface CheckRow {
 
 const toRecord = (r: CheckRow): CheckRecord => ({ status: r.status, fails: r.fails, since: r.since, lastOkAt: r.last_ok_at, notified: r.notified === 1 });
 
-/** Links whose target is checked: live (active, not expired, not marked as not working) and not excluded. */
+/**
+ * Links whose destinations are checked: live (active, not expired, not marked
+ * as not working) and not excluded. Used on link_destinations, which lists a
+ * link's target and every destination of its enabled routing rules.
+ */
 const MONITORED = (now: string) => `active = 1 AND broken = 0 AND monitor = 1 AND (expires_at IS NULL OR expires_at > ${now})`;
 
 /** Targets due now, the longest-waiting first (never-checked ones before all). */
@@ -185,7 +189,7 @@ async function dueTargets(db: D1Database, now: number, limit: number, only?: "pr
   const { results } = await db
     .prepare(
       `SELECT t.target, c.status, c.http_status, c.problem, c.final_url, c.hops, c.ms, c.fails, c.checked_at, c.last_ok_at, c.since, c.next_at, c.notified
-       FROM (SELECT DISTINCT target FROM links WHERE ${MONITORED("?1")}) t
+       FROM (SELECT DISTINCT url AS target FROM link_destinations WHERE ${MONITORED("?1")}) t
        LEFT JOIN target_checks c ON c.target = t.target
        WHERE 1 = 1 ${filter}
        ORDER BY c.next_at IS NOT NULL, c.next_at
@@ -266,7 +270,7 @@ export async function runLinkChecks(env: Env, opts: { budget?: Budget; fetcher?:
   const budget = opts.budget ?? { left: RUN_BUDGET };
   const due = await dueTargets(env.DB, nowSec(), RUN_LIMIT);
   const result = await checkAndStore(env, due, budget, opts.fetcher ?? fetch);
-  await env.DB.prepare("DELETE FROM target_checks WHERE target NOT IN (SELECT target FROM links)").run();
+  await env.DB.prepare("DELETE FROM target_checks WHERE target NOT IN (SELECT url FROM link_destinations)").run();
   if (settings.notify) await notifyChanges(env);
   return result;
 }
@@ -277,14 +281,6 @@ export async function recheckProblems(env: Env, fetcher: typeof fetch = fetch): 
   const result = await checkAndStore(env, items, { left: RUN_BUDGET }, fetcher);
   if ((await getCheckSettings(env.DB)).notify) await notifyChanges(env);
   return result;
-}
-
-/** Checks one target now. The caller has already confirmed a link uses it. */
-export async function checkTargetNow(env: Env, target: string, fetcher: typeof fetch = fetch): Promise<boolean> {
-  const row = await env.DB.prepare("SELECT * FROM target_checks WHERE target = ?").bind(target).first<CheckRow>();
-  const result = await checkAndStore(env, [{ target, row }], { left: RUN_BUDGET }, fetcher);
-  if (result.checked && (await getCheckSettings(env.DB)).notify) await notifyChanges(env);
-  return result.checked === 1;
 }
 
 interface LinkRef {
@@ -318,7 +314,7 @@ export async function notifyChanges(baseEnv: Env): Promise<{ sent: boolean; reas
 
     const targets = [...down.map((d) => d.target), ...back];
     const { results: links } = await db
-      .prepare(`SELECT domain, slug, title, target FROM links WHERE target IN (SELECT value FROM json_each(?1)) ORDER BY domain, slug`)
+      .prepare(`SELECT DISTINCT domain, slug, title, url AS target FROM link_destinations WHERE url IN (SELECT value FROM json_each(?1)) ORDER BY domain, slug`)
       .bind(JSON.stringify(targets))
       .all<LinkRef>();
     const { subject, text, html } = renderCheckEmail(env, down, back, links);
@@ -404,7 +400,7 @@ export async function listChecks(env: Env): Promise<Omit<LinkChecksDTO, "lastRun
   const now = nowSec();
   const db = env.DB;
   const [monitored, rows, excluded, settings] = await Promise.all([
-    db.prepare(`SELECT domain, slug, title, target FROM links WHERE ${MONITORED("?1")} ORDER BY domain, slug`).bind(now).all<LinkRef>(),
+    db.prepare(`SELECT DISTINCT domain, slug, title, url AS target FROM link_destinations WHERE ${MONITORED("?1")} ORDER BY domain, slug`).bind(now).all<LinkRef>(),
     db.prepare("SELECT * FROM target_checks").all<CheckRow>(),
     db
       .prepare("SELECT COUNT(*) AS n FROM links WHERE monitor = 0 AND active = 1 AND broken = 0 AND (expires_at IS NULL OR expires_at > ?1)")
@@ -424,8 +420,12 @@ export async function listChecks(env: Env): Promise<Omit<LinkChecksDTO, "lastRun
   return { settings, items, excluded: excluded?.n ?? 0, overdue, capacityPerDay: RUNS_PER_DAY * RUN_LIMIT };
 }
 
-/** One link's check, or why it isn't checked. */
-export async function linkCheck(env: Env, domain: string, slug: string): Promise<{ check: TargetCheckDTO | null; monitored: boolean; reason: string | null } | null> {
+/** One link's checks (its target, and any smart-routing destinations), or why it isn't checked. */
+export async function linkCheck(
+  env: Env,
+  domain: string,
+  slug: string,
+): Promise<{ check: TargetCheckDTO | null; routed: TargetCheckDTO[]; monitored: boolean; reason: string | null } | null> {
   const now = nowSec();
   const link = await env.DB.prepare("SELECT target, active, broken, monitor, expires_at FROM links WHERE domain = ? AND slug = ?")
     .bind(domain, slug)
@@ -440,9 +440,36 @@ export async function linkCheck(env: Env, domain: string, slug: string): Promise
         : link.broken
           ? "Links marked as no longer working aren't checked."
           : null;
-  const row = await env.DB.prepare("SELECT * FROM target_checks WHERE target = ?").bind(link.target).first<CheckRow>();
-  const { results: others } = await env.DB.prepare(`SELECT domain, slug, title FROM links WHERE target = ?1 AND ${MONITORED("?2")} ORDER BY domain, slug`)
-    .bind(link.target, now)
-    .all<{ domain: string; slug: string; title: string | null }>();
-  return { check: row || !reason ? toDTO(link.target, row ?? undefined, others) : null, monitored: reason === null, reason };
+  const { results: urls } = await env.DB.prepare("SELECT DISTINCT url FROM link_destinations WHERE domain = ? AND slug = ? AND url != target")
+    .bind(domain, slug)
+    .all<{ url: string }>();
+  const all = [link.target, ...urls.map((u) => u.url)];
+  const [rows, users] = await Promise.all([
+    env.DB.prepare("SELECT * FROM target_checks WHERE target IN (SELECT value FROM json_each(?1))").bind(JSON.stringify(all)).all<CheckRow>(),
+    env.DB.prepare(`SELECT DISTINCT domain, slug, title, url AS target FROM link_destinations WHERE url IN (SELECT value FROM json_each(?1)) AND ${MONITORED("?2")} ORDER BY domain, slug`)
+      .bind(JSON.stringify(all), now)
+      .all<LinkRef>(),
+  ]);
+  const rowOf = new Map(rows.results.map((r) => [r.target, r]));
+  const dto = (url: string) => toDTO(url, rowOf.get(url), users.results.filter((u) => u.target === url).map(({ domain, slug, title }) => ({ domain, slug, title })));
+  const row = rowOf.get(link.target);
+  return {
+    check: row || !reason ? dto(link.target) : null,
+    routed: reason ? [] : urls.map((u) => dto(u.url)),
+    monitored: reason === null,
+    reason,
+  };
+}
+
+/** Checks every destination of one link now. False when none could be checked. */
+export async function checkLinkNow(env: Env, domain: string, slug: string, fetcher: typeof fetch = fetch): Promise<boolean> {
+  const { results } = await env.DB.prepare(
+    `SELECT d.url AS target, c.status, c.http_status, c.problem, c.final_url, c.hops, c.ms, c.fails, c.checked_at, c.last_ok_at, c.since, c.next_at, c.notified
+     FROM (SELECT DISTINCT url FROM link_destinations WHERE domain = ? AND slug = ?) d LEFT JOIN target_checks c ON c.target = d.url`,
+  )
+    .bind(domain, slug)
+    .all<CheckRow & { status: CheckStatus | null }>();
+  const result = await checkAndStore(env, results.map((r) => ({ target: r.target, row: r.status === null ? null : r })), { left: RUN_BUDGET }, fetcher);
+  if (result.checked && (await getCheckSettings(env.DB)).notify) await notifyChanges(env);
+  return result.checked > 0;
 }

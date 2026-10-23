@@ -3,12 +3,14 @@ import { ArrowLeft, Copy, ExternalLink, History, Pencil, QrCode, Trash2 } from "
 import { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router";
 import { toast } from "sonner";
+import { describeRouting } from "../../shared/routing";
 import type { Period } from "../../shared/types";
 import { api, call, keys } from "../api";
 import { Breakdown, ClicksChart, StatTiles } from "../components/Charts";
 import { useRestoreDeleted } from "../components/DeletedLinks";
 import { DestinationCheck } from "../components/DestinationCheck";
 import { LinkHistory } from "../components/LinkHistory";
+import { RoutingResults } from "../components/RoutingResults";
 import { LinkForm } from "../components/LinkForm";
 import { PeriodPicker, periodQuery } from "../components/PeriodPicker";
 import { QrDialog } from "../components/QrDialog";
@@ -177,6 +179,7 @@ export function LinkDetail() {
         <span>Updated {date(link.updatedAt)}</span>
         {link.expiresAt ? <span>Expires {when(link.expiresAt)}</span> : null}
         <span>UTM {link.utm ? (link.utmTemplate ? "custom template" : "default template") : "off"}</span>
+        {link.routing ? <span>Smart routing: {describeRouting(link.routing)}</span> : null}
         {link.passQuery ? <span>Passes query params</span> : null}
         {link.tags.map((t) => (
           <Badge key={t} tone="accent">
@@ -217,6 +220,7 @@ export function LinkDetail() {
             extra={link.importedClicks !== null ? { label: "Clicks before import", value: num(link.importedClicks), note: "As reported by the previous shortener" } : undefined}
           />
           <ClicksChart series={s.series} liveAvailable={s.aeAvailable} />
+          {link.routing ? <RoutingResults routing={link.routing} rows={s.dims.route} period={period} from={s.from} onPeriod={setPeriod} /> : null}
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
             <Breakdown title="Countries" rows={s.dims.country} kind="country" />
             <Breakdown title="Cities" rows={s.dims.city} />

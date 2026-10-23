@@ -1,6 +1,7 @@
 // D1 link records and their KV read copies.
 
 import { linkKey, splitKey } from "../shared/domains";
+import { parseRouting, type RouteDevice } from "../shared/routing";
 import type { LinkDTO, LinkSource } from "../shared/types";
 
 export interface LinkRow {
@@ -23,6 +24,8 @@ export interface LinkRow {
   replacement: string | null;
   /** 0 when its destination is never checked. */
   monitor: number;
+  /** Smart routing JSON (src/shared/routing.ts), or null. */
+  routing: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -45,6 +48,20 @@ export interface KvLink {
   b?: 1;
   /** replacement link, "domain/slug", present when b is 1 */
   r?: string;
+  /** enabled routing rules, in order; absent without routing */
+  ro?: KvRule[];
+}
+
+/** A routing rule as the redirect needs it: no names, enabled rules only. */
+export interface KvRule {
+  id: string;
+  devices: RouteDevice[];
+  countries: string[];
+  countryMode: "in" | "not_in";
+  /** l: label, for the {variant} UTM placeholder. */
+  variants: { id: string; url: string; weight: number; l: string }[];
+  /** The rule's name, for {variant} when it has one destination. */
+  n?: string;
 }
 
 const DEFAULT_UTM_FALLBACK = "utm_source={domain}&utm_medium=shortlink&utm_campaign={slug}";
@@ -60,7 +77,8 @@ export function isKvLink(v: unknown): v is KvLink {
     (r.qp === 0 || r.qp === 1) &&
     (r.t === undefined || typeof r.t === "string") &&
     (r.b === undefined || r.b === 1) &&
-    (r.r === undefined || typeof r.r === "string")
+    (r.r === undefined || typeof r.r === "string") &&
+    (r.ro === undefined || Array.isArray(r.ro))
   );
 }
 
@@ -76,6 +94,17 @@ function toKv(row: LinkRow, defaultUtm: string): KvLink {
   if (row.broken) {
     kv.b = 1;
     if (row.replacement) kv.r = row.replacement;
+  }
+  const rules = parseRouting(row.routing)?.rules.filter((r) => r.enabled) ?? [];
+  if (rules.length) {
+    kv.ro = rules.map((r) => ({
+      id: r.id,
+      devices: r.devices,
+      countries: r.countries,
+      countryMode: r.countryMode,
+      variants: r.variants.map((v) => ({ id: v.id, url: v.url, weight: v.weight, l: v.label })),
+      ...(r.name ? { n: r.name } : {}),
+    }));
   }
   return kv;
 }
@@ -105,6 +134,7 @@ export function toDTO(row: LinkRow, origin: string): LinkDTO {
     broken: row.broken === 1,
     replacement: splitKey(row.replacement),
     monitor: row.monitor !== 0,
+    routing: parseRouting(row.routing),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
