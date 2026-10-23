@@ -582,6 +582,14 @@ describe("API token", () => {
       }
     });
 
+    it("needs the full scope for webhook deliveries, which hold link destinations", async () => {
+      expect((await send("GET", "/webhooks")).status).toBe(200);
+      const res = await send("GET", "/webhooks/abc123/deliveries");
+      expect(res.status).toBe(403);
+      expect((await res.json<{ error: string }>()).error).toMatch(/API_TOKEN_SCOPE/);
+      expect((await send("GET", "/webhooks/abc123/deliveries", undefined, { API_TOKEN_SCOPE: "full" })).status).not.toBe(403);
+    });
+
     it("doesn't limit personal API keys, which carry their own permissions", async () => {
       await send("POST", "/links", { url: "https://example.com/a", slug: "a" });
       const { auth: key } = await addKey("owner@example.com", ["links.edit"]);

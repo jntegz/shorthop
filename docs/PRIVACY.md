@@ -44,7 +44,9 @@ This is about the people who use the admin, not visitors.
 
 - **Login log:** the time, the result, the email of who signed in, the country and a keyed hash of the network (never the IP address), kept for 30 days.
 - **Cookies:** the admin uses a session cookie, and Cloudflare Access sets its own when it's on; both are needed to sign in.
-- **People** added in Settings → Access & security: their email, name, role, permissions, who added them, and when they last signed in. This stays until they are removed. Their password is stored only as a PBKDF2 hash, and an invite link only as a SHA-256 hash.
+- **People** added in Settings → Access & security: their email, name, role, permissions, who added them, when they last signed in, and whether, until when and by whom their access is paused. This stays until they are removed. Their password is stored only as a PBKDF2 hash, and invite and reset links only as SHA-256 hashes.
+- **Emails to people:** invite and password-reset emails go to their Access address through your email provider.
+- **Bot check:** with Turnstile on, the password pages load Cloudflare's challenge script, and the result is checked with Cloudflare along with the person's IP address. Cloudflare's Turnstile privacy terms apply.
 - **Personal API keys:** the name, owner, permissions, expiry and when the key was last used (at most hourly). The key itself is stored only as a SHA-256 hash.
 - **Link history:** each version records who made the change, as an email or `api-token`, or as an email and an API key's name. Versions are kept for a year; the latest one of each link for as long as the link exists.
 

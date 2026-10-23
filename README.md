@@ -24,7 +24,7 @@ A personal URL shortener that runs on one Cloudflare Worker. Short links on your
 - **Password-protected links and click limits:** visitors enter a password first, or a link stops after a set number of clicks, counted exactly by a Durable Object. Bots and previews don't count.
 - **Link health:** destination checks for the links you pick (**Check that the destination works**, off by default), once you turn automatic checking on and choose how often. A destination that fails 3 times in a row sends one email and gets a Fix dialog.
 - **Webhooks:** signed events for links created, changed or deleted, destinations down or back, and click milestones, with retries and a delivery log.
-- **People and roles:** with Cloudflare Access, add people as admins, managers or users, each with their own password and the permissions you tick.
+- **People and roles:** with Cloudflare Access, add people as admins, managers or users, each with their own password and the permissions you tick. Pause someone until a date, sign them out everywhere, and let them reset a forgotten password by email. An optional Cloudflare Turnstile check guards the password pages.
 - **API at `/api`:** personal API keys for scripts, Zapier or Make and an [iOS Shortcut](docs/ios-shortcut.md). A key does only what it was given, can expire, and stops working when it's revoked.
 - **Several domains:** each short domain has its own slugs and stats. The admin can live on the primary domain or on a separate host.
 - **Weekly digest and alerts:** by Cloudflare Email Service, Resend, Postmark, SendGrid, Mailgun or a signed webhook.
@@ -85,7 +85,7 @@ On Free, the daily requests are a hard cap for the whole account: once they're u
 ## Security model
 
 - **Admin:** Cloudflare Access (verified in the Worker, not only at the edge) plus a password, by default. Password-only sign-in is possible, but only with the exact setting `ADMIN_AUTH="password"`; any other gap in the configuration keeps the admin closed. See [SECURITY.md](SECURITY.md).
-- **People:** owners (`ADMIN_EMAIL`) use the admin password; everyone else has their own, chosen from a one-time invite link. Every API route has a permission rule, checked in the Worker, and a route without one is refused. Without Access there's only the owner.
+- **People:** owners (`ADMIN_EMAIL`) use the admin password; everyone else has their own, chosen from a one-time invite link (24 hours) or a reset link (1 hour, rate-limited, emailed only to their Access address). Every API route has a permission rule, checked in the Worker, and a route without one is refused. Without Access there's only the owner.
 - **Password login:** at least 9 characters (the setup generates a 32-character one by default), PBKDF2-SHA256, a signed `__Host-` session cookie bound to the signed-in identity, lockouts per network that double with each lockout, and a global brake. IP addresses are never stored, only a keyed hash.
 - **API:** personal API keys, stored only as a SHA-256 hash and limited to what their owner may do; failed attempts lock the network. The older `API_TOKEN` secret still works, and by default it can read and create links but not change or delete them (`API_TOKEN_SCOPE`).
 - **Secrets:** stored as Wrangler secrets. The setup sends them to Cloudflare through stdin and never writes them to disk. The admin never displays them. A Deploy to Cloudflare install keeps its generated session secret and visitor salt in D1 until you set your own.
@@ -153,6 +153,7 @@ npm run types            # then regenerate worker-configuration.d.ts
 | `ADMIN_PASSWORD` | secret | The owners' password in plain text, at least 9 characters: what the Deploy to Cloudflare button sets. Used only without `ADMIN_PASSWORD_HASH` |
 | `SESSION_SECRET` | secret | Signs admin sessions, link-password cookies and webhook secrets; rotating it logs everyone out and makes webhook secrets unreadable. Without it, one is generated and kept in D1 |
 | `CF_ANALYTICS_TOKEN` | secret | Optional: API token with Account Analytics Read, for stats |
+| `TURNSTILE_SECRET` | secret | Optional: the Turnstile widget's secret key, for the bot check on the password pages |
 | `RESEND_API_KEY`, `EMAILIT_API_KEY`, `POSTMARK_API_KEY`, `SENDGRID_API_KEY`, `MAILGUN_API_KEY` | secret | Each provider's own API key. An older `DIGEST_API_KEY` still works, for the provider named in `DIGEST_PROVIDER` only |
 | `DIGEST_CUSTOM_URL`, `DIGEST_CUSTOM_API_KEY` | secret | Custom email API only: HTTPS endpoint and key |
 | `DIGEST_WEBHOOK_URL`, `DIGEST_WEBHOOK_SECRET` | secret | Webhook endpoint and its HMAC key |
@@ -166,7 +167,9 @@ npm run types            # then regenerate worker-configuration.d.ts
 | `/` | 302 to `FALLBACK_URL` (or to `/_admin/` on a separate admin host) |
 | `/_admin` | 301 to `/_admin/` |
 | `/_admin/login`, `/_admin/logout` | The password step: a server-rendered form, lockouts, signed session cookie |
-| `/_admin/invite/<token>` | A one-time invite link: the invited person chooses their password |
+| `/_admin/invite/<token>`, `/_admin/reset/<token>` | One-time links: an invited person chooses their password, or someone resets a forgotten one |
+| `/_admin/forgot` | "Forgot your password?": emails a reset link to the Access address (not shown without Access) |
+| `/_admin/bot-check` | Turning on the optional Turnstile check, after a test passes |
 | `/_admin`, `/_admin/**` | Access JWT (unless password-only) and the password session, then the admin app with a strict CSP |
 | `/_admin/assets/*`, `/robots.txt`, `/favicon.ico` | Static assets, served without running the Worker |
 | `/_admin/api/*` | The API for the admin app: CSRF check, identity and session |

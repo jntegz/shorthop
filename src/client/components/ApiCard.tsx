@@ -42,6 +42,7 @@ const ENDPOINTS: { group: string; rows: [method: string, path: string, what: str
       ["GET", "/utm-presets", "UTM presets"],
       ["GET", "/qr/default", "The default QR design"],
       ["GET", "/webhooks", "Webhooks and their status"],
+      ["GET", "/webhooks/{id}/deliveries", "A webhook's delivery log, with each payload", true],
     ],
   },
 ];

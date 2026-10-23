@@ -37,6 +37,8 @@ export const api = new Hono<AppEnv>()
 
 /** The writes the API token may make by default (import also refuses overwrite mode). */
 const TOKEN_WRITES = new Set(["POST /api/links", "POST /api/import", "POST /api/settings/digest/test"]);
+/** Reads the API token needs "full" for: webhook deliveries hold whole payloads, with every link's destination. */
+const TOKEN_FULL_READS = /^\/api\/webhooks\/[^/]+\/deliveries$/;
 
 /**
  * Keeps the API_TOKEN secret to reading and creating unless API_TOKEN_SCOPE is
@@ -44,9 +46,10 @@ const TOKEN_WRITES = new Set(["POST /api/links", "POST /api/import", "POST /api/
  * people already have. Personal API keys carry their own permissions instead.
  */
 const tokenScope: MiddlewareHandler<AppEnv> = async (c, next) => {
-  const read = c.req.method === "GET" || c.req.method === "HEAD";
-  if (c.get("actor").via === "token" && !read && !fullTokenScope(c.env) && !TOKEN_WRITES.has(`${c.req.method} ${c.req.path}`)) {
-    return c.json({ error: TOKEN_SCOPE_ERROR }, 403);
+  if (c.get("actor").via === "token" && !fullTokenScope(c.env)) {
+    const read = c.req.method === "GET" || c.req.method === "HEAD";
+    const allowed = read ? !TOKEN_FULL_READS.test(c.req.path) : TOKEN_WRITES.has(`${c.req.method} ${c.req.path}`);
+    if (!allowed) return c.json({ error: TOKEN_SCOPE_ERROR }, 403);
   }
   await next();
 };

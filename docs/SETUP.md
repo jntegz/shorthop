@@ -241,10 +241,22 @@ The owners are the emails in `ADMIN_EMAIL`. They can do everything, sign in with
 - **Manager:** adds, changes and removes users, and can give only the permissions they have themselves.
 - **User:** views and copies links, plus what you tick: create, edit or delete links; statistics; Link health and missed visits; workspace settings; personal API keys.
 
-**Adding someone** creates a one-time invite link (`/_admin/invite/…`). It works for 7 days and only for their Access email, and they choose their own password with it (at least 12 characters). Also add their email to the Access policy ([Cloudflare Access](#access), step 4): Access lets them reach the admin, and their role decides what they can do there. Changes apply on their next click.
+**Adding someone** creates a one-time invite link (`/_admin/invite/…`). It works for 24 hours and only for their Access email, and they choose their own password with it (at least 12 characters). Shorthop can email it to them, or you send it yourself. Also add their email to the Access policy ([Cloudflare Access](#access), step 4): Access lets them reach the admin, and their role decides what they can do there. Changes apply on their next click.
 
-- **Forgot their password:** the key icon next to them makes a new invite link. Their old password and sessions stop working.
+- **Forgot their password:** they press **Forgot your password?** on the login page. A reset link goes to their Access address, works once for 1 hour, and their current password keeps working until they use it. Asking is limited: one link per 15 minutes, 3 a day per person, 5 an hour per network, and 20 an hour in all. If email can't reach them, an admin is told instead. An admin or manager can also reset it from the person's ⋯ menu, which signs them out.
+- **Pausing someone:** stops their sign-in, sessions and API keys until a date, or until someone presses Resume, and keeps everything else. **Sign out everywhere** ends their sessions without pausing them.
 - **Removing someone:** ends their sessions and API keys at once. Take them out of the Access policy too.
+
+**Emailing people** (invites and reset links) uses the email setup from Settings → Statistics & email. Resend, Emailit, Postmark, SendGrid, Mailgun and a custom API can send to anyone. Cloudflare Email Service sends the digest only to `DIGEST_TO`; to email people with it, add a `PEOPLE_MAIL` binding (Email Sending, Workers Paid; it's commented out in `wrangler.example.jsonc`). Without email, you copy the links yourself.
+
+**Bot check (optional).** Cloudflare Turnstile can ask everyone on the login, forgot-password, invite and reset pages to pass a quick, usually invisible check:
+
+1. In the Cloudflare dashboard, open **Turnstile → Add widget** and add your admin host.
+2. Paste the site key in Settings → Access & security → **Bot check**.
+3. Store the secret key with `npx wrangler secret put TURNSTILE_SECRET`.
+4. Press **Test and turn on**. It only turns on once a check passes.
+
+With Access in front it's rarely needed. With password-only sign-in, where anyone can reach the login page, it's worth turning on. If it locks you out: `npx wrangler d1 execute DB --remote --command "DELETE FROM settings WHERE key = 'turnstile'"`.
 
 People need Cloudflare Access: it's how they are told apart. With [password-only sign-in](#password-only), everyone who knows the admin password is the owner, and People stays empty.
 
@@ -392,6 +404,7 @@ Test it from the admin (Settings → Statistics & email → Weekly digest → **
 | `ADMIN_PASSWORD_HASH` | the setup | `npm run setup -- password` |
 | `ADMIN_PASSWORD` | the Deploy to Cloudflare button | the Worker's Settings → Variables and Secrets. Used only without `ADMIN_PASSWORD_HASH` |
 | `CF_ANALYTICS_TOKEN` | you, in the dashboard | `npm run setup -- analytics` |
+| `TURNSTILE_SECRET` | you, optional ([bot check](#people)) | `npx wrangler secret put TURNSTILE_SECRET`, then test it again in Settings |
 | `RESEND_API_KEY` (and the other providers' keys), `DIGEST_CUSTOM_URL`, `DIGEST_CUSTOM_API_KEY`, `DIGEST_WEBHOOK_URL`, `DIGEST_WEBHOOK_SECRET` | you / the setup | `npm run setup -- email` |
 
 The setup uploads secrets with one `wrangler secret bulk` call, passing them through stdin, so they never touch the disk or your shell history. Secret changes take effect immediately. To set one by hand: `npx wrangler secret put <NAME>`.
@@ -412,7 +425,7 @@ npm run deploy              # refuses wrangler.jsonc if ids are missing or domai
 
 On the first deploy, Cloudflare attaches each hostname and issues its certificate; this can take a few minutes. Wrangler shows its own prompts in your terminal, for example before replacing a DNS record.
 
-Afterwards, open `https://<admin host>/_admin/`. Dashboard → **System status** lists anything still missing, each with the command that fixes it. Destination checks are off until you press **Activate automatic checking** on Link health and choose how often they run.
+Afterwards, open `https://<admin host>/_admin/`. Dashboard → **System status** lists anything still missing, each with the command that fixes it. Destination checks are off until you press **Activate automatic checking** on Link health and choose how often they run, and each link is checked only once its **Check that the destination works** switch is on.
 
 <a id="troubleshooting"></a>
 ## Troubleshooting

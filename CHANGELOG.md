@@ -15,10 +15,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Date ranges: Today · 7 days · 30 days · 90 days · **Custom…**, which offers 6, 9 and 12 months, All time, or any from–to dates (UTC). Used on Overview, Full statistics, link stats and Misses. The API takes `range=custom&from=YYYY-MM-DD&to=YYYY-MM-DD`.
 - **Comparison with the previous period** on all stats pages, and a previous-period line on the charts.
 - Stats pages say when new clicks appear, have a Refresh button, and refresh every minute while in use.
-- **Link health → Destinations:** once you press **Activate automatic checking** and choose how often (once a day, every 3 days, once a week, or 1 hour to 30 days), destinations are checked as they come due, with redirects followed safely.
+- **Link health → Destinations:** once you press **Activate automatic checking** and choose how often (once a day, every 3 days, once a week, or 1 hour to 30 days), the destinations of the links you picked are checked as they come due, with redirects followed safely.
   - After 3 failures in a row a destination counts as not working: one email, a badge on the link, and a Fix dialog.
   - Sites that refuse automated checks show as "can't check" and never alert.
-  - Each link has a switch to leave it out. **Check now** works while automatic checking is off. Link health has a Refresh button.
+  - Each link has its own **Check that the destination works** switch, off for new and imported links. **Check now** works while automatic checking is off. Link health has a Refresh button.
 - **History** on every link: each change is a version with who made it, and you can restore any earlier version. Deleted links can be restored for 90 days (Links → Recently deleted, or Undo after deleting).
 - **Smart routing:** rules by device (iPhone & iPad, Android, desktop, other) and country, first match wins, with A/B splits across up to 10 weighted destinations.
   - A simulator in the editor, results per rule and variant on the link page, and `{variant}` in UTM templates.
@@ -29,6 +29,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - **Password-protected links** and **click limits**, counted exactly by a Durable Object. Bots and previews don't count.
 - **Webhooks:** signed events for link created, updated, deleted, destination down or back, and click milestones, with retries and a delivery log.
 - **People and roles:** add people in Settings → Access & security as admins, managers or users, and tick what each user may do (create, edit or delete links, statistics, Link health, workspace settings, API keys). Each person chooses their own password from a one-time invite link. Requires Cloudflare Access; without it, there's only the owner.
+- People: **pause** someone's access until a date or until resumed, and **sign them out everywhere**.
+- **Forgot your password?** on the login page for people added in Settings: a reset link, rate-limited, emailed to their Access address (or an admin is told when email can't reach them). Invite links can be emailed too. Without Access there's only the owner, so no link is shown.
+- An optional **bot check** with Cloudflare Turnstile on the password pages (Settings → Access & security), with the `TURNSTILE_SECRET` secret. With Cloudflare Email Service, an optional `PEOPLE_MAIL` binding emails invites and resets (Workers Paid).
+- Link form: the custom slug field shows the domain beside it and a preview of the short link.
 - **Personal API keys** in Settings → API & webhooks. Each is limited to what you allow and never more than its owner can do, with optional expiry and "last used".
 - Settings are split into tabs, with an **API** card (base URL, every endpoint, and what the older API token may do) and **My account**.
 - The status banner can be closed. It comes back when the set of problems changes.
@@ -41,7 +45,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - A past custom period no longer includes today's live data.
 - Recent logins shows the last 10, with who signed in. "Log out everywhere" is now **Log out everyone**.
 - `API_TOKEN` is optional, and `npm run setup` no longer creates one: personal API keys are the recommended way to use the API. An existing token keeps working, with its scope.
-- With the API token, domain removal and the email setup's secrets stay off limits; they're for people signed in to the admin.
+- With the API token, domain removal and the email setup's secrets stay off limits; they're for people signed in to the admin. Reading a webhook's delivery log (whose payloads hold link destinations) needs `API_TOKEN_SCOPE` set to `"full"`.
 - Until `SHORT_DOMAINS` has a domain, links can't be created or imported, and Settings → Short domains explains how to add one.
 
 ### Fixed
@@ -50,14 +54,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Upgrading
 
-- Run `npm run setup -- upgrade` **before** deploying. It applies migrations 0002–0012 and adds what the new version needs to `wrangler.jsonc` (your values are kept, and you see the diff first):
+- Run `npm run setup -- upgrade` **before** deploying. It applies migrations 0002–0014 and adds what the new version needs to `wrangler.jsonc` (your values are kept, and you see the diff first):
   - the cron `"*/30 * * * *"`;
   - the `LINK_PASSWORD_LIMITER` rate limiter;
   - the `CLICK_CAPS` Durable Object with its `migrations` entry.
 
   A plain `npm run deploy` refuses an older `wrangler.jsonc` and names what's missing. The first deploy creates the Durable Object.
 - Everyone signs in once more after deploying (new session cookie). People other than the owners are added in Settings → Access & security, and their emails must also be in the Access policy.
-- Automatic destination checks start off. Turn them on under Link health → **Activate automatic checking** and choose how often.
+- Automatic destination checks start off, and so does every link's **Check that the destination works** switch, existing links included. Turn checking on under Link health → **Activate automatic checking**, choose how often, and switch it on for the links you want checked.
 - "Keep misses for: 6 months" is no longer offered. It reads as 3 months, and misses older than that are removed after the next nightly rollup. To keep them, export them first: Link health → Missed visits → Export CSV.
 - Saved miss-tracking settings are converted when they're read: "scanner probes and bot-only misses" becomes the two new switches, and human misses stay on.
 - The visitor privacy notice ([docs/PRIVACY.md](docs/PRIVACY.md)) now mentions the cookie that password-protected links set. Update yours if you use password-protected links.
