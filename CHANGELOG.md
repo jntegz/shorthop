@@ -20,6 +20,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- **Link no longer working** asks what visitors see: **Error page** (the "This link no longer works" page, then the site set in Settings) or **Another of my links** (the same page with a button to the link you pick). Before, the error page was the replacement list's "None" option. With **Another of my links**, the form doesn't save until a link is picked. Existing links open on the option they already use; the API is unchanged.
 - The menu bar on phones centers its labels, so the ones that wrap onto two lines stay under their icons.
 - **API lockouts** double up to an hour instead of a day (login lockouts still go up to a day), and a request with no `Authorization` header at all isn't counted as a wrong key. A network is often shared by several people and devices, and one script with a stale key mustn't lock the others out of the API for a day ([SECURITY.md](SECURITY.md)).
 - "Admin password is not configured" now says what to do, for both ways of installing: set the `ADMIN_PASSWORD` secret under the Worker's Settings → Variables and Secrets, or run `npm run setup -- password`.

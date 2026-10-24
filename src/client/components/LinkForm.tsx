@@ -19,7 +19,7 @@ import { LinkProtection, type PasswordMode } from "./LinkProtection";
 import { LinkUtm } from "./LinkUtm";
 import { PreviewEditor } from "./PreviewEditor";
 import { RoutingEditor } from "./RoutingEditor";
-import { Button, Dialog, Field, InfoTip, Input, Select, Switch, Textarea } from "./ui";
+import { Button, Dialog, Field, InfoTip, Input, Segmented, Select, Switch, Textarea } from "./ui";
 
 interface Props {
   open: boolean;
@@ -52,6 +52,8 @@ interface FormState {
   /** Never checked, even when Link health checks every link. Switching it on switches monitor off, and the other way round. */
   neverCheck: boolean;
   broken: boolean;
+  /** While broken: the "no longer working" page alone, or pointing to another of your links. */
+  deadEnd: "page" | "link";
   /** "domain/slug" of the replacement, or "" for none. */
   replacement: string;
   /** Smart routing rules; none means one destination for everyone. */
@@ -84,6 +86,7 @@ function initial(link?: LinkDTO, slug = "", domain = ""): FormState {
     monitor: link?.monitor ?? false,
     neverCheck: link?.neverCheck ?? false,
     broken: link?.broken ?? false,
+    deadEnd: link?.replacement ? "link" : "page",
     replacement: link?.replacement ? linkKey(link.replacement.domain, link.replacement.slug) : "",
     rules: link?.routing?.rules ?? [],
     preview: link?.preview ?? null,
@@ -127,7 +130,7 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
   const candidates = useQuery({
     queryKey: keys.links({ picker: true }),
     queryFn: () => call(api.links.$get({ query: { sort: "slug", period: "7d" } })),
-    enabled: open && editing && f.broken,
+    enabled: open && editing && f.broken && f.deadEnd === "link",
   });
   const replacementOptions = (candidates.data?.links ?? []).filter(
     (l) => !(link && l.domain === link.domain && l.slug === link.slug) && (linkState(l) === "active" || linkKey(l.domain, l.slug) === f.replacement),
@@ -140,6 +143,7 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
     target: !f.target ? "Enter the destination URL." : targetCheck && !targetCheck.ok ? targetCheck.error : null,
     slug: !editing && f.slug ? validateSlug(f.slug, "native") : null,
     utmTemplate: f.utm && f.utmCustom ? (f.utmProblem ?? (f.utmTemplate ? validateUtmTemplate(f.utmTemplate) : "Fill in at least one parameter.")) : null,
+    replacement: editing && f.broken && f.deadEnd === "link" && !f.replacement ? "Pick the link to send visitors to, or choose Error page." : null,
   };
   const routingCheck = f.rules.length ? validateRouting({ rules: f.rules }, { selfHosts: domains }) : null;
   const routingErrors = routingCheck && !routingCheck.ok ? routingCheck.errors : [];
@@ -149,7 +153,7 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
   const capNumber = Number(f.maxClicks);
   const capError = f.capOn && (!Number.isInteger(capNumber) || capNumber < 1 || capNumber > MAX_CLICK_LIMIT) ? `Enter a whole number from 1 to ${MAX_CLICK_LIMIT.toLocaleString("en")}.` : null;
   const valid =
-    !errors.target && !errors.slug && !errors.utmTemplate && routingErrors.length === 0 && previewProblems.length === 0 && !passwordError && !capError;
+    !errors.target && !errors.slug && !errors.utmTemplate && !errors.replacement && routingErrors.length === 0 && previewProblems.length === 0 && !passwordError && !capError;
 
   const save = useMutation({
     mutationFn: async () => {
@@ -172,7 +176,7 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
       };
       if (link) {
         const cut = f.replacement.indexOf("/");
-        const replacement = f.broken && cut > 0 ? { domain: f.replacement.slice(0, cut), slug: f.replacement.slice(cut + 1) } : null;
+        const replacement = f.broken && f.deadEnd === "link" && cut > 0 ? { domain: f.replacement.slice(0, cut), slug: f.replacement.slice(cut + 1) } : null;
         const json = { ...body, broken: f.broken, replacement };
         return (await call(api.links[":domain"][":slug"].$patch({ param: { domain: link.domain, slug: link.slug }, json }))).link;
       }
@@ -402,17 +406,24 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
               checked={f.broken}
               onCheckedChange={(v) => set("broken", v)}
               label="Link no longer working"
-              description="Visitors see a notice instead of the destination, pointing them to a replacement link if you choose one."
+              description="Visitors see a notice instead of the destination."
               info={LINK_HELP.broken}
             />
           ) : null}
           {editing && f.broken ? (
-            <Field
-              label="Replacement link"
-              htmlFor="replacement"
-              hint={
-                <>
-                  Without one, visitors are sent to the site set in{" "}
+            <div className="space-y-3">
+              <Segmented
+                label="What visitors see"
+                value={f.deadEnd}
+                onChange={(v) => set("deadEnd", v)}
+                options={[
+                  { value: "page", label: "Error page" },
+                  { value: "link", label: "Another of my links" },
+                ]}
+              />
+              {f.deadEnd === "page" ? (
+                <p className="text-xs leading-relaxed text-muted">
+                  The “This link no longer works” page, then the site set in{" "}
                   {manageSettings ? (
                     <Link to="/settings#dead-link" className="font-medium text-accent hover:underline" onClick={() => onOpenChange(false)}>
                       Settings
@@ -421,28 +432,35 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
                     "Settings"
                   )}{" "}
                   after a few seconds.
-                </>
-              }
-              info={LINK_HELP.replacement}
-            >
-              <Select id="replacement" value={f.replacement} onChange={(e) => set("replacement", e.target.value)} disabled={candidates.isPending}>
-                <option value="">{candidates.isPending ? "Loading links…" : "None: redirect to the site in Settings"}</option>
-                {f.replacement && !replacementOptions.some((l) => linkKey(l.domain, l.slug) === f.replacement) && !candidates.isPending ? (
-                  <option value={f.replacement}>{f.replacement} (deleted)</option>
-                ) : null}
-                {replacementOptions.map((l) => {
-                  const key = linkKey(l.domain, l.slug);
-                  const state = linkState(l);
-                  return (
-                    <option key={key} value={key}>
-                      {label(l)}
-                      {l.title ? ` · ${l.title}` : ""}
-                      {state === "active" ? "" : ` (${state === "broken" ? (l.replacement ? "replaced" : "retired") : state})`}
-                    </option>
-                  );
-                })}
-              </Select>
-            </Field>
+                </p>
+              ) : (
+                <Field
+                  label="Replacement link"
+                  htmlFor="replacement"
+                  hint="The page says this link no longer works, with a button to the one you pick."
+                  info={LINK_HELP.replacement}
+                  error={touched ? errors.replacement : null}
+                >
+                  <Select id="replacement" value={f.replacement} onChange={(e) => set("replacement", e.target.value)} disabled={candidates.isPending}>
+                    <option value="">{candidates.isPending ? "Loading links…" : "Pick a link…"}</option>
+                    {f.replacement && !replacementOptions.some((l) => linkKey(l.domain, l.slug) === f.replacement) && !candidates.isPending ? (
+                      <option value={f.replacement}>{f.replacement} (deleted)</option>
+                    ) : null}
+                    {replacementOptions.map((l) => {
+                      const key = linkKey(l.domain, l.slug);
+                      const state = linkState(l);
+                      return (
+                        <option key={key} value={key}>
+                          {label(l)}
+                          {l.title ? ` · ${l.title}` : ""}
+                          {state === "active" ? "" : ` (${state === "broken" ? (l.replacement ? "replaced" : "retired") : state})`}
+                        </option>
+                      );
+                    })}
+                  </Select>
+                </Field>
+              )}
+            </div>
           ) : null}
           <Switch
             id="utm"

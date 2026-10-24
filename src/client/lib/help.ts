@@ -52,7 +52,7 @@ export const LINK_HELP = {
   ),
   broken: h(
     "Link no longer working",
-    "For a link whose destination is gone or no longer works. The slug stays live, but instead of redirecting, visitors see a page saying the original link no longer works. If you pick a replacement link, the page points to it as the next best thing. Without one (or if the replacement is later deleted, disabled, expired or also marked as not working), the page sends visitors to the site set in Settings after a few seconds. The wording, the site and the delay are set under Settings → “Link no longer working” page. Visits still count for this link.",
+    "For a link whose destination is gone or no longer works. The slug stays live, but instead of redirecting, visitors see a page saying the original link no longer works. Choose what that page does: “Error page” sends visitors on to the site set in Settings after a few seconds; “Another of my links” points them to a replacement as the next best thing. If that replacement is later deleted, disabled, expired or also marked as not working, the page falls back to the error page. The wording, the site and the delay are set under Settings → “Link no longer working” page. Visits still count for this link.",
   ),
   replacement: h(
     "Replacement link",
