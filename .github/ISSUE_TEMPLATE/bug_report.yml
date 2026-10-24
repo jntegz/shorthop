@@ -1,0 +1,63 @@
+name: Bug report
+description: Something in Shorthop doesn't work as described.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. **Don't paste secrets**: passwords, API keys, tokens, `.dev.vars` or Access AUD tags. Replace your own domains and emails with `example.com` if you'd rather keep them private.
+
+        Found a security problem? Don't open an issue: report it privately under **Security → Report a vulnerability**.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+      placeholder: |
+        1. Open Settings → Short domains
+        2. Press Check on go.example.com
+        3. It says "…", but the domain works
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: From package.json or the CHANGELOG, or the commit you deployed.
+      placeholder: "1.1.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How you installed it
+      options:
+        - Deploy to Cloudflare button
+        - npm run setup
+        - Local development (npm run dev)
+    validations:
+      required: true
+  - type: dropdown
+    id: plan
+    attributes:
+      label: Workers plan
+      options:
+        - Free
+        - Paid
+        - Not sure
+    validations:
+      required: true
+  - type: dropdown
+    id: sign-in
+    attributes:
+      label: Sign-in
+      options:
+        - Password only
+        - Cloudflare Access and password
+        - Not sure
+  - type: textarea
+    id: logs
+    attributes:
+      label: Errors or logs
+      description: Browser console errors, the Worker's logs (Workers & Pages → your Worker → Logs), or what System status shows. Check them for secrets first.
+      render: text

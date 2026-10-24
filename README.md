@@ -115,6 +115,7 @@ The full manual, including every Cloudflare dashboard step, is in **[docs/SETUP.
 - **[iOS Shortcut](docs/ios-shortcut.md):** shorten a link from the share sheet
 - **[Visitor privacy](docs/PRIVACY.md):** what Shorthop records about visitors, for your privacy notice
 - **[Security](SECURITY.md):** reporting a vulnerability, protections and a hardening checklist
+- **[Contributing](CONTRIBUTING.md):** reporting bugs, running it locally and opening a pull request, under the [Code of Conduct](CODE_OF_CONDUCT.md)
 
 ## Costs
 

@@ -1,0 +1,28 @@
+name: Feature request
+description: An idea for something Shorthop could do.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What you're trying to do
+      description: The situation or problem, before any solution. "I share links on printed flyers and want to know which city scanned them" helps more than "add a map".
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What you'd like
+      description: How you imagine it working, in the admin, the API or for visitors.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you do today
+      description: Workarounds, or other shorteners that handle this well.
+  - type: checkboxes
+    id: free-tier
+    attributes:
+      label: Cloudflare free tier
+      description: Shorthop aims to fit Workers Free for personal use.
+      options:
+        - label: This would still matter to me if it needed Workers Paid.

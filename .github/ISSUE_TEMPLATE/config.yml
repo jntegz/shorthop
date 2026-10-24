@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security problem
+    url: https://github.com/jntegz/shorthop/security/advisories/new
+    about: Report it privately, not in a public issue.
+  - name: Setup manual
+    url: https://github.com/jntegz/shorthop/blob/main/docs/SETUP.md
+    about: Installing, domains, Cloudflare Access, email and troubleshooting.
