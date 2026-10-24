@@ -247,15 +247,15 @@ export function Links() {
           <table className="w-full table-fixed text-sm">
             <thead className="hidden border-b border-line bg-bg text-left text-[11px] text-muted md:table-header-group">
               <tr>
-                <SortHeader label="Link" className="w-[25%] py-3.5" active={sort === "slug"} dir={dir} onSort={() => sortBy("slug")} />
-                <SortHeader label="Destination" className="w-[25%] py-3.5" active={sort === "target"} dir={dir} onSort={() => sortBy("target")} />
-                <SortHeader label="Total clicks" className="text-right" active={sort === "total"} dir={dir} onSort={() => sortBy("total")} />
+                <SortHeader label="Link" className="py-3.5" active={sort === "slug"} dir={dir} onSort={() => sortBy("slug")} />
+                <SortHeader label="Destination" className="py-3.5" active={sort === "target"} dir={dir} onSort={() => sortBy("target")} />
+                <SortHeader label="Total clicks" className="w-20 text-right" active={sort === "total"} dir={dir} onSort={() => sortBy("total")} />
                 {period.value === "all" ? null : (
-                  <SortHeader label={period.label} className="hidden text-right lg:table-cell" active={sort === "clicks"} dir={dir} onSort={() => sortBy("clicks")} />
+                  <SortHeader label={period.label} className="hidden w-20 text-right xl:table-cell" active={sort === "clicks"} dir={dir} onSort={() => sortBy("clicks")} />
                 )}
-                <SortHeader label="Status" active={sort === "status"} dir={dir} onSort={() => sortBy("status")} />
-                <SortHeader label="Created" className="hidden py-3.5 xl:table-cell" active={sort === "created"} dir={dir} onSort={() => sortBy("created")} />
-                <th className="w-52 px-2 py-2.5 xl:w-72">
+                <SortHeader label="Status" className="w-32 px-3" active={sort === "status"} dir={dir} onSort={() => sortBy("status")} />
+                <SortHeader label="Created" className="hidden w-24 py-3.5 2xl:table-cell" active={sort === "created"} dir={dir} onSort={() => sortBy("created")} />
+                <th className="w-36 px-2 py-2.5 xl:w-72">
                   <span className="sr-only">Actions</span>
                 </th>
               </tr>
@@ -309,9 +309,10 @@ export function Links() {
                   <td className="tabular md:px-4 md:py-5 md:text-right">
                     <span className="font-medium text-fg">{num(l.clicksTotal)}</span>
                     <span className="text-xs text-muted md:hidden"> clicks{period.value === "all" ? "" : ` · ${num(l.clicksPeriod)} in ${period.short}`}</span>
+                    {period.value === "all" ? null : <span className="hidden text-xs whitespace-nowrap text-muted md:block xl:hidden">{num(l.clicksPeriod)} in {period.short}</span>}
                   </td>
-                  {period.value === "all" ? null : <td className="tabular hidden text-muted md:px-4 md:py-5 md:text-right lg:table-cell">{num(l.clicksPeriod)}</td>}
-                  <td className="md:px-4 md:py-5">
+                  {period.value === "all" ? null : <td className="tabular hidden text-muted md:px-4 md:py-5 md:text-right xl:table-cell">{num(l.clicksPeriod)}</td>}
+                  <td className="md:px-3 md:py-5">
                     <div className="flex flex-wrap items-start gap-1 md:flex-col">
                       <StateBadge link={l} />
                       {l.check && (l.check.state === "down" || l.check.state === "warning") && linkState(l) === "active" ? (
@@ -321,12 +322,12 @@ export function Links() {
                           title={problemText(l.check.problem, l.check.httpStatus)}
                           className="rounded-full focus-visible:outline-offset-1"
                         >
-                          <CheckBadge state={l.check.state} label={l.check.state === "down" ? "Destination down" : "Destination issue"} />
+                          <CheckBadge state={l.check.state} label={l.check.state === "down" ? "Destination down" : "Destination issue"} className="rounded-lg leading-tight whitespace-normal" />
                         </Link>
                       ) : null}
                     </div>
                   </td>
-                  <td className="hidden text-xs text-muted md:px-4 md:py-5 xl:table-cell">{ago(l.createdAt)}</td>
+                  <td className="hidden text-xs text-muted md:px-4 md:py-5 2xl:table-cell">{ago(l.createdAt)}</td>
                   <td className="ml-auto md:px-2 md:py-5" onClick={(e) => e.stopPropagation()}>
                     <div className="flex items-center justify-end gap-1">
                       {can("stats.view") ? (
@@ -336,7 +337,7 @@ export function Links() {
                           aria-label={`Statistics for ${label(l)}`}
                           title="Clicks, countries, sources and devices"
                         >
-                          <BarChart3 /> <span className="hidden sm:inline">Statistics</span>
+                          <BarChart3 /> <span className="hidden max-md:sm:inline xl:inline">Statistics</span>
                         </Link>
                       ) : null}
                       <Button variant="ghost" size="icon-sm" aria-label={`Copy ${l.shortUrl}`} title="Copy short URL" onClick={() => void copy(l.shortUrl)}>

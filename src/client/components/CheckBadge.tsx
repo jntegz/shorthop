@@ -16,11 +16,11 @@ export const CHECK_STYLE: Record<CheckState, { tone: Tone; icon: LucideIcon; tex
 export const STATE_ORDER: readonly CheckState[] = ["down", "warning", "unchecked", "blocked", "ok"];
 
 /** A destination check's state. `label` overrides the default wording. */
-export function CheckBadge({ state, label }: { state: CheckState; label?: string }) {
+export function CheckBadge({ state, label, className }: { state: CheckState; label?: string; className?: string }) {
   const { tone, icon: Icon } = CHECK_STYLE[state];
   return (
-    <Badge tone={tone}>
-      <Icon className="size-3" aria-hidden />
+    <Badge tone={tone} className={className}>
+      <Icon className="size-3 shrink-0" aria-hidden />
       {label ?? STATE_LABEL[state]}
     </Badge>
   );
