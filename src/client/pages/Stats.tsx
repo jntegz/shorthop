@@ -118,7 +118,15 @@ export function Stats() {
       ) : null}
 
       <Card className="mt-4">
-        <CardHeader title="Recent hits" description="All links, last 7 days, newest first" />
+        <CardHeader
+          title="Recent hits"
+          description="All links, last 7 days, newest first"
+          action={
+            <Link to="/hits" className="inline-flex items-center gap-1 text-xs font-medium text-accent">
+              Filter and see more <ArrowUpRight className="size-3" />
+            </Link>
+          }
+        />
         {recent.isPending ? (
           <div className="flex justify-center pb-6">
             <Spinner />

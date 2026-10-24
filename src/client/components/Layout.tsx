@@ -1,4 +1,4 @@
-import { ArrowUpRight, BarChart3, ChartNoAxesCombined, ChevronRight, Cloud, Globe2, Link2, LogOut, Plus, Search, Settings, Unlink, Upload } from "lucide-react";
+import { Activity, ArrowUpRight, BarChart3, ChartNoAxesCombined, ChevronRight, Cloud, Globe2, Link2, LogOut, Plus, Search, Settings, Unlink, Upload } from "lucide-react";
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, Outlet, useLocation, useNavigate } from "react-router";
 import { APP_NAME, AUTHOR_NAME, AUTHOR_URL, REPO_URL } from "../../shared/brand";
@@ -26,6 +26,7 @@ const NAV: NavItem[] = [
   { to: "/", label: "Overview", icon: ChartNoAxesCombined, end: true, need: "stats.view" },
   { to: "/stats", label: "Full statistics", icon: BarChart3, end: false, need: "stats.view" },
   { to: "/links", label: "All links", icon: Link2, end: false },
+  { to: "/hits", label: "Recent hits", icon: Activity, end: false, need: "stats.view" },
   // Destinations (/health) and missed visits (/misses) are its two tabs.
   { to: "/health", label: "Link health", icon: Unlink, end: false, also: "/misses", need: "health.manage", group: 2 },
   { to: "/import", label: "Import links", icon: Upload, end: false, need: "links.create", group: 2 },
@@ -135,7 +136,7 @@ export function Layout() {
       </main>
     </div>
     <nav className="mobile-nav fixed inset-x-0 bottom-0 z-30 grid border-t border-line bg-surface/95 backdrop-blur md:hidden" style={{ gridTemplateColumns: `repeat(${nav.length}, minmax(0, 1fr))` }} aria-label="Main">
-      {nav.map((n) => { const { to, label, icon: Icon } = n; return <Link key={to} to={to} aria-current={isCurrent(n, pathname) ? "page" : undefined} className={cn("flex min-h-16 flex-col items-center justify-center gap-1 text-[10px] font-medium", isCurrent(n, pathname) ? "text-accent" : "text-muted")}><Icon className="size-5" />{label}</Link>; })}
+      {nav.map((n) => { const { to, label, icon: Icon } = n; return <Link key={to} to={to} aria-current={isCurrent(n, pathname) ? "page" : undefined} className={cn("flex min-h-16 flex-col items-center justify-center gap-1 text-center text-[10px] leading-tight font-medium", isCurrent(n, pathname) ? "text-accent" : "text-muted")}><Icon className="size-5" />{label}</Link>; })}
     </nav>
     {creates ? <LinkForm open={creating} onOpenChange={setCreating} onSaved={(l) => navigate(linkPath(l))} /> : null}
   </div>;

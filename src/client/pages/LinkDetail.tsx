@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Copy, ExternalLink, Gauge, History, Lock, Pencil, QrCode, Trash2 } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, Copy, ExternalLink, Gauge, History, Lock, Pencil, QrCode, Trash2 } from "lucide-react";
 import { lazy, Suspense, useEffect, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router";
 import { toast } from "sonner";
@@ -286,7 +286,15 @@ export function LinkDetail() {
       ) : null}
 
       <Card className="mt-4">
-        <CardHeader title="Recent hits" description="Last 7 days, newest first" />
+        <CardHeader
+          title="Recent hits"
+          description="Last 7 days, newest first"
+          action={
+            <Link to={`/hits?${new URLSearchParams({ domain, slug })}`} className="inline-flex items-center gap-1 text-xs font-medium text-accent">
+              Filter and see more <ArrowUpRight className="size-3" />
+            </Link>
+          }
+        />
         {recent.isPending ? (
           <div className="flex justify-center py-8">
             <Spinner />

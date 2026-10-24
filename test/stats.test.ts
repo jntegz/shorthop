@@ -283,6 +283,19 @@ describe("stats API", () => {
     expect(r.hits[0]).toMatchObject({ slug: "guide", event: "click" });
   });
 
+  it("filters recent hits by type, country, device and time window", async () => {
+    mockAeSql(store);
+    const recent = async (q: string) =>
+      ((await (await call(`${API}/stats/recent?limit=200&${q}`, { headers: bearer }, AE_ENV)).json()) as { hits: RecentHit[] }).hits;
+    expect((await recent("event=bot")).map((h) => h.botName)).toEqual(["LinkedIn"]);
+    expect((await recent("country=US")).map((h) => [h.slug, h.city])).toEqual([["guide", "Austin"]]);
+    expect((await recent("device=mobile&event=click")).map((h) => h.slug)).toEqual(["cv", "guide"]);
+    expect((await recent("hours=1")).map((h) => h.slug)).toEqual(["guide", "cv"]); // today's two hits only
+    for (const bad of ["country=cz", "country=CZE", "device=watch", "event=all", "hours=0", "hours=721"]) {
+      expect((await call(`${API}/stats/recent?${bad}`, { headers: bearer }, AE_ENV)).status, bad).toBe(400);
+    }
+  });
+
   it("tells a failing recent-hits query apart from Analytics Engine not being set up", async () => {
     const recent = async (extra?: Partial<Env>) =>
       (await (await call(`${API}/stats/recent`, { headers: bearer }, extra)).json()) as { aeAvailable: boolean; error?: string };

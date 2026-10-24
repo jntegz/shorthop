@@ -1,7 +1,8 @@
 // Analytics Engine SQL client and the queries behind rollups and live stats.
 // The SQL API has no bound parameters: the only values ever interpolated are
 // a slug that passed the slug regex, a domain that passed the hostname regex,
-// integer timestamps and the AE_DATASET name, which must be an identifier.
+// a hit type, device or country code from a fixed list or pattern, integer
+// timestamps and the AE_DATASET name, which must be an identifier.
 // blob17 holds the short domain of each hit.
 
 import { HOSTNAME_RE } from "../shared/domains";
@@ -309,12 +310,41 @@ export interface AeRecentRow {
   visitor: string;
 }
 
-export async function queryRecent(env: Env, sinceSec: number, filter?: LinkFilter, limit = 50, missesOnly = false): Promise<AeRecentRow[]> {
+/** Narrows recent hits beyond the link: hit type, country and device. */
+export interface RecentFilter extends LinkFilter {
+  event?: (typeof HIT_EVENTS)[number];
+  /** ISO 3166 code, as Cloudflare reports it ("CZ", "T1" for Tor). */
+  country?: string;
+  device?: (typeof HIT_DEVICES)[number];
+}
+
+export const HIT_EVENTS = ["click", "bot", "miss"] as const;
+export const HIT_DEVICES = ["desktop", "mobile", "tablet"] as const;
+
+function recentConditions(f: RecentFilter): string {
+  const parts: string[] = [];
+  if (f.event !== undefined) {
+    if (!HIT_EVENTS.includes(f.event)) throw new Error("Refusing to query an invalid hit type");
+    parts.push(`blob1 = '${f.event}'`);
+  }
+  if (f.country !== undefined) {
+    if (!/^[A-Z0-9]{2}$/.test(f.country)) throw new Error("Refusing to query an invalid country");
+    parts.push(`blob2 = '${f.country}'`);
+  }
+  if (f.device !== undefined) {
+    if (!HIT_DEVICES.includes(f.device)) throw new Error("Refusing to query an invalid device");
+    parts.push(`blob8 = '${f.device}'`);
+  }
+  return parts.join(" AND ");
+}
+
+export async function queryRecent(env: Env, sinceSec: number, filter: RecentFilter = {}, limit = 50): Promise<AeRecentRow[]> {
+  const { event, country, device, ...link } = filter;
   const rows = await aeQuery<Raw>(
     env,
     `SELECT toUnixTimestamp(timestamp) AS ts, blob17 AS domain, index1 AS slug, blob1 AS event, blob2 AS country, blob4 AS city,
 blob8 AS device, blob9 AS os, blob10 AS browser, blob11 AS referrer, blob12 AS source, blob14 AS bot, blob15 AS visitor
-FROM ${dataset(env)} WHERE ${where(sinceSec, Date.now() / 1000 + 60, filter, missesOnly ? "blob1 = 'miss'" : "")}
+FROM ${dataset(env)} WHERE ${where(sinceSec, Date.now() / 1000 + 60, link, recentConditions({ event, country, device }))}
 ORDER BY ts DESC LIMIT ${Math.min(Math.max(1, Math.floor(limit)), 200)} FORMAT JSON`,
   );
   return rows.map((r) => ({

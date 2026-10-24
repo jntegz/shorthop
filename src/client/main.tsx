@@ -53,6 +53,7 @@ const router = createBrowserRouter(
         { index: true, lazy: async () => gated((await import("./pages/Dashboard")).Dashboard, "stats.view", "/links") },
         { path: "links", element: <Links /> },
         { path: "links/:domain/:slug", lazy: async () => ({ Component: (await import("./pages/LinkDetail")).LinkDetail }) },
+        { path: "hits", lazy: async () => gated((await import("./pages/RecentHits")).RecentHits, "stats.view") },
         { path: "stats", lazy: async () => gated((await import("./pages/Stats")).Stats, "stats.view") },
         { path: "health", lazy: async () => gated((await import("./pages/Health")).Health, "health.manage") },
         { path: "misses", lazy: async () => gated((await import("./pages/Misses")).Misses, "health.manage") },

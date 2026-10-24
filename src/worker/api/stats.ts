@@ -5,7 +5,7 @@ import { HOSTNAME_RE, linkLabel } from "../../shared/domains";
 import { clearMissesSchema, linkParamSchema, missExportQuerySchema, missPolicySchema, rangeQuerySchema } from "../../shared/schemas";
 import { IMPORT_SLUG_RE } from "../../shared/slug";
 import type { RecentHit } from "../../shared/types";
-import { aeAvailable, queryRecent, queryScanners } from "../ae";
+import { aeAvailable, HIT_DEVICES, HIT_EVENTS, queryRecent, queryScanners } from "../ae";
 import { domainsOf } from "../domains";
 import { csv, validate, type AppEnv } from "../hono";
 import { clearMisses, saveMissPolicy } from "../misses";
@@ -16,8 +16,12 @@ const recentQuerySchema = z.object({
   domain: z.string().regex(HOSTNAME_RE).optional(),
   slug: z.string().regex(IMPORT_SLUG_RE).optional(),
   limit: z.coerce.number().int().min(1).max(200).default(50),
-  /** Misses only, each marked with whether the scanner rule counts it as a bot. */
-  event: z.literal("miss").optional(),
+  /** Only one hit type. "miss" also marks each miss with whether the scanner rule counts it as a bot. */
+  event: z.enum(HIT_EVENTS).optional(),
+  country: z.string().regex(/^[A-Z0-9]{2}$/).optional(),
+  device: z.enum(HIT_DEVICES).optional(),
+  /** How far back to look. Analytics Engine keeps 90 days. */
+  hours: z.coerce.number().int().min(1).max(30 * 24).default(7 * 24),
 });
 
 export const statsApi = new Hono<AppEnv>()
@@ -84,15 +88,15 @@ export const statsApi = new Hono<AppEnv>()
   })
 
   .get("/recent", validate("query", recentQuerySchema), async (c) => {
-    const { slug, limit, event } = c.req.valid("query");
+    const { slug, limit, event, country, device, hours } = c.req.valid("query");
     const domain = c.req.valid("query").domain ?? (slug ? domainsOf(c.env).primary : undefined);
     if (!aeAvailable(c.env)) return c.json({ aeAvailable: false, hits: [] as RecentHit[], error: undefined as string | undefined });
     try {
       const nowSec = Date.now() / 1000;
-      const since = nowSec - 7 * 86400;
+      const since = nowSec - hours * 3600;
       const misses = event === "miss";
       const [rows, scanners] = await Promise.all([
-        queryRecent(c.env, since, { domain, slug }, limit, misses),
+        queryRecent(c.env, since, { domain, slug, event, country, device }, limit),
         misses ? queryScanners(c.env, since, nowSec + 60) : Promise.resolve([]),
       ]);
       const flagged = new Set(scanners);

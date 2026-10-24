@@ -7,6 +7,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- **Recent hits** page (`/_admin/hits`, in the menu under All links, for people who can view statistics): the latest hits one row each, with time, link, type, location, device, source and referrer. Filter by slug, domain, type (clicks, bots, misses), country, device, time window (last hour to 30 days) and number of rows (50, 100 or 200); the filters stay in the URL, and clicking a country sets that filter. Hits are read live from Analytics Engine, so nothing is stored, and each load is one query. **Filter and see more** on the Recent hits cards opens it. API: `GET /stats/recent` accepts `event=click|bot|miss`, `country`, `device` and `hours` (1–720, 168 by default).
 - **Link health → Check settings → Which links:** check only the links whose **Check that the destination works** switch is on (as before, the default) or all links, without switching each one on. The link form has a new **Never check this link** switch that keeps a link out of checks in both modes; **Stop checking** in the Fix dialog now sets it. API: links have a `neverCheck` field (create and update accept it), and `PUT /checks/settings` accepts `scope: "selected" | "all"`. No migration, and nothing changes until someone picks **All links**.
 
 ### Fixed
@@ -19,6 +20,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- The menu bar on phones centers its labels, so the ones that wrap onto two lines stay under their icons.
 - **API lockouts** double up to an hour instead of a day (login lockouts still go up to a day), and a request with no `Authorization` header at all isn't counted as a wrong key. A network is often shared by several people and devices, and one script with a stale key mustn't lock the others out of the API for a day ([SECURITY.md](SECURITY.md)).
 - "Admin password is not configured" now says what to do, for both ways of installing: set the `ADMIN_PASSWORD` secret under the Worker's Settings → Variables and Secrets, or run `npm run setup -- password`.
 - `WORKERS_PLAN` is documented as sizing bulk work, not only the password hash cost; say `free` unless you pay for Workers.
