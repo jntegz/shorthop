@@ -40,7 +40,7 @@ A personal URL shortener that runs on one Cloudflare Worker. Short links on your
 
 ### Keeping links working
 
-- **Link health:** destination checks for the links you pick (**Check that the destination works**, off by default), once you turn automatic checking on and choose how often. A destination that fails 3 times in a row sends one email and gets a Fix dialog. Sites that refuse automated checks show as "can't check" and never alert.
+- **Link health:** destination checks for the links you pick (**Check that the destination works**, off by default) or for all links, once you turn automatic checking on and choose how often. **Never check this link** keeps a link out either way. A destination that fails 3 times in a row sends one email and gets a Fix dialog. Sites that refuse automated checks show as "can't check" and never alert.
 - **Missed visits:** a report of slugs people tried that don't exist, with scanners and bots kept apart, so you can create the link someone mistyped.
 - **System status:** setup checks for storage, analytics, email, domains and sign-in, with an alert email when something breaks.
 - **Weekly digest and alerts:** by Cloudflare Email Service, Resend, Emailit, Postmark, SendGrid, Mailgun, any other JSON email API, or a signed webhook.

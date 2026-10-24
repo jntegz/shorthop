@@ -128,7 +128,7 @@ export function DestinationCheck({ link, onMarkBroken }: { link: LinkDTO; onMark
           )}
         </div>
         <div className="flex flex-wrap gap-2">
-          {data && !link.monitor && can("links.edit") ? (
+          {data && (link.neverCheck || (data.scope === "selected" && !link.monitor)) && can("links.edit") ? (
             <Button variant="outline" size="sm" onClick={() => turnOn.mutate()} loading={turnOn.isPending}>
               <BellRing /> Turn checks on
             </Button>

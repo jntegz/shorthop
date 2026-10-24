@@ -13,6 +13,7 @@ import {
   okIntervalFor,
   problemText,
   STATE_LABEL,
+  type CheckScope,
   type CheckState,
 } from "../../shared/link-check";
 import type { CheckSettings, TargetCheckDTO } from "../../shared/types";
@@ -91,6 +92,11 @@ function LinkChips({ links }: { links: TargetCheckDTO["links"] }) {
   );
 }
 
+const SCOPE_OPTIONS: { value: CheckScope; label: string }[] = [
+  { value: "selected", label: "Only links switched on" },
+  { value: "all", label: "All links" },
+];
+
 type EveryMode = "24" | "72" | "168" | "custom";
 const EVERY_OPTIONS: { value: EveryMode; label: string }[] = [...CHECK_EVERY_PRESETS.map((p) => ({ value: String(p.hours) as EveryMode, label: p.label })), { value: "custom", label: "Custom" }];
 
@@ -145,12 +151,16 @@ function SettingsDialog({
       onOpenChange(false);
       void qc.invalidateQueries({ queryKey: keys.checks });
       void qc.invalidateQueries({ queryKey: keys.health });
+      // The links list badges and the link form follow the scope.
+      void qc.invalidateQueries({ queryKey: keys.allLinks });
+      void qc.invalidateQueries({ queryKey: keys.me });
     },
     onError: (e) => toast.error(e.message),
   });
-  const changed = draft.enabled !== settings.enabled || draft.notify !== settings.notify || (draft.enabled && everyHours !== settings.everyHours);
+  const changed =
+    draft.enabled !== settings.enabled || draft.notify !== settings.notify || draft.scope !== settings.scope || (draft.enabled && everyHours !== settings.everyHours);
   return (
-    <Dialog open={open} onOpenChange={onOpenChange} title="Destination checks" description="Choose whether destinations are checked on a schedule, how often, and whether you hear about problems.">
+    <Dialog open={open} onOpenChange={onOpenChange} title="Destination checks" description="Choose which links are checked, whether on a schedule and how often, and whether you hear about problems.">
       <div className="space-y-5">
         <div className="space-y-4 rounded-xl border border-line p-4">
           <Switch
@@ -161,6 +171,18 @@ function SettingsDialog({
             onCheckedChange={(v) => setDraft((d) => ({ ...d, enabled: v }))}
             info={CHECKS_HELP.overview}
           />
+          <div className="space-y-2 border-t border-line pt-4">
+            <div className="flex items-center gap-1">
+              <p className="text-sm font-medium text-fg">Which links</p>
+              <InfoTip help={CHECKS_HELP.scope} />
+            </div>
+            <Segmented label="Which links" value={draft.scope} onChange={(v) => setDraft((d) => ({ ...d, scope: v }))} options={SCOPE_OPTIONS} />
+            <p className="text-xs text-muted">
+              {draft.scope === "all"
+                ? "Every link is checked, whether its “Check that the destination works” switch is on or not. Links set to “Never check this link” are skipped."
+                : "Only links whose “Check that the destination works” switch is on are checked. It's off for new links."}
+            </p>
+          </div>
           {draft.enabled ? (
             <div className="space-y-2 border-t border-line pt-4">
               <p className="text-sm font-medium text-fg">How often</p>
@@ -176,7 +198,7 @@ function SettingsDialog({
                   </div>
                 </Field>
               ) : null}
-              {!everyError && destinations ? (
+              {!everyError && destinations && draft.scope === settings.scope ? (
                 <p className="text-xs text-muted">
                   With {num(destinations)} {destinations === 1 ? "destination" : "destinations"}, each is checked {everyText(effective)}.
                   {effective > everyHours ? " That's less often than chosen: the schedule can't check them all more often." : ""} A failed check is repeated after 1 and 4 hours either way.
@@ -221,7 +243,7 @@ function FixDialog({ item, onClose }: { item: TargetCheckDTO; onClose: () => voi
   const label = useLinkLabel();
   const many = item.links.length > 1;
   const patchAll = useMutation({
-    mutationFn: async (json: { broken: true } | { monitor: false }) => {
+    mutationFn: async (json: { broken: true } | { neverCheck: true }) => {
       for (const l of item.links) await call(api.links[":domain"][":slug"].$patch({ param: { domain: l.domain, slug: l.slug }, json }));
       return json;
     },
@@ -235,7 +257,7 @@ function FixDialog({ item, onClose }: { item: TargetCheckDTO; onClose: () => voi
           description: "Visitors now see the notice page. Choose a replacement link on the link's page to point them somewhere useful.",
         });
       } else {
-        toast.success(`Stopped checking ${who}`, { description: "Turn checks back on from the link's settings." });
+        toast.success(`Stopped checking ${who}`, { description: "Set to never be checked, even when all links are. Turn checks back on from the link's settings." });
       }
       onClose();
     },
@@ -293,7 +315,7 @@ function FixDialog({ item, onClose }: { item: TargetCheckDTO; onClose: () => voi
               <p className="text-sm font-medium text-fg">It works for people</p>
               <p className="mt-0.5 text-xs leading-relaxed text-muted">Some pages need a login or block automated visitors. Stop checking {many ? "these links" : "this link"} so they don't alert again.</p>
             </div>
-            <Button size="sm" variant="outline" onClick={() => patchAll.mutate({ monitor: false })} loading={patchAll.isPending && "monitor" in (patchAll.variables ?? {})} disabled={patchAll.isPending}>
+            <Button size="sm" variant="outline" onClick={() => patchAll.mutate({ neverCheck: true })} loading={patchAll.isPending && "neverCheck" in (patchAll.variables ?? {})} disabled={patchAll.isPending}>
               <BellOff /> Stop checking
             </Button>
           </li>
@@ -494,7 +516,10 @@ export function Health() {
               {data.settings.enabled && data.intervalHours > data.settings.everyHours
                 ? ` Spaced out because you have more destinations than the schedule could check ${everyText(data.settings.everyHours)}.`
                 : ""}
-              {data.excluded ? ` ${num(data.excluded)} ${data.excluded === 1 ? "link has" : "links have"} checks turned off.` : ""}
+              {data.settings.scope === "all" ? " All links are checked." : " Only links switched on are checked."}
+              {data.excluded
+                ? ` ${num(data.excluded)} ${data.excluded === 1 ? "link isn't" : "links aren't"} checked${data.settings.scope === "all" ? ": set to never be checked" : ""}.`
+                : ""}
               <InfoTip help={CHECKS_HELP.limits} />
             </p>
           </div>
@@ -537,8 +562,10 @@ export function Health() {
             {data.items.length === 0 ? (
               <Empty icon={<Globe2 />} title="No destinations to check">
                 <p>
-                  Links show up here once “Check that the destination works” is switched on in their settings (it's off for new links). Disabled, expired and “no longer
-                  working” links aren't checked.
+                  {data.settings.scope === "all"
+                    ? "Every link shows up here unless it's set to “Never check this link”."
+                    : "Links show up here once “Check that the destination works” is switched on in their settings (it's off for new links), or when Check settings is set to check all links."}{" "}
+                  Disabled, expired and “no longer working” links aren't checked.
                 </p>
               </Empty>
             ) : rows.length === 0 ? (

@@ -11,11 +11,12 @@ import { validate, type AppEnv } from "../hono";
 import { planLimits } from "../plan";
 import { chargeAttempt, clearFailuresStmt, getEpoch, issueSessionCookie, lock, loginConfig, verifyPasswordHash } from "../session";
 import { getUser } from "../users";
+import { getCheckSettings } from "../link-check";
 
 export const meApi = new Hono<AppEnv>()
   .get("/", async (c) => {
     const actor = c.get("actor");
-    const [defaultUtm, since, demo] = await Promise.all([getDefaultUtm(c.env.DB), statsSince(c.env.DB), demoStatus(c.env.DB)]);
+    const [defaultUtm, since, demo, checks] = await Promise.all([getDefaultUtm(c.env.DB), statsSince(c.env.DB), demoStatus(c.env.DB), getCheckSettings(c.env.DB)]);
     const { primary } = domainsOf(c.env);
     const list = configuredDomains(c.env);
     const me: MeDTO = {
@@ -39,6 +40,7 @@ export const meApi = new Hono<AppEnv>()
         adminHost: configuredAdminHost(c.env),
         demo,
         importRows: planLimits(c.env).importRows,
+        checkScope: checks.scope,
       },
     };
     return c.json(me);

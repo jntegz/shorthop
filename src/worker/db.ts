@@ -1,6 +1,7 @@
 // D1 link records and their KV read copies.
 
 import { linkKey, splitKey } from "../shared/domains";
+import { MONITOR_NEVER, MONITOR_ON } from "../shared/link-check";
 import { parsePreview, PREVIEW_IMAGE_PATH } from "../shared/preview";
 import { parseQrStyle } from "../shared/qr";
 import { parseRouting, type RouteDevice } from "../shared/routing";
@@ -25,7 +26,7 @@ export interface LinkRow {
   broken: number;
   /** "domain/slug" of the link shown instead, when broken. */
   replacement: string | null;
-  /** 0 when its destination is never checked. */
+  /** MONITOR_DEFAULT (0): checked only when Link health checks all links; MONITOR_ON (1): checked; MONITOR_NEVER (2): never checked. */
   monitor: number;
   /** Smart routing JSON (src/shared/routing.ts), or null. */
   routing: string | null;
@@ -165,7 +166,8 @@ export function toDTO(row: LinkRow, origin: string): LinkDTO {
     importedClicks: row.imported_clicks,
     broken: row.broken === 1,
     replacement: splitKey(row.replacement),
-    monitor: row.monitor !== 0,
+    monitor: row.monitor === MONITOR_ON,
+    neverCheck: row.monitor === MONITOR_NEVER,
     routing: parseRouting(row.routing),
     preview: parsePreview(row.preview),
     qr: parseQrStyle(row.qr),

@@ -3,7 +3,7 @@ import { ArrowRight, Flag, History, Pencil, Plus, RotateCcw, Trash2, Upload, typ
 import { useState } from "react";
 import { toast } from "sonner";
 import { splitKey } from "../../shared/domains";
-import { BOOLEAN_FIELDS, diffSnapshots, FIELD_LABEL, type FieldChange, type HistoryAction, type HistoryField, type Snapshot } from "../../shared/history";
+import { BOOLEAN_FIELDS, diffSnapshots, FIELD_LABEL, MONITOR_LABEL, type FieldChange, type HistoryAction, type HistoryField, type Snapshot } from "../../shared/history";
 import { parsePreview } from "../../shared/preview";
 import { describeRouting, parseRouting } from "../../shared/routing";
 import type { LinkDTO, VersionDTO } from "../../shared/types";
@@ -40,7 +40,7 @@ export function snapshotOfLink(l: LinkDTO): Snapshot {
     notes: l.notes,
     broken: l.broken ? 1 : 0,
     replacement: l.replacement ? `${l.replacement.domain}/${l.replacement.slug}` : null,
-    monitor: l.monitor ? 1 : 0,
+    monitor: l.neverCheck ? 2 : l.monitor ? 1 : 0,
     routing: l.routing ? JSON.stringify(l.routing) : null,
     preview: l.preview ? JSON.stringify(l.preview) : null,
     // Only the history's fingerprints are comparable; "set" vs null is enough here.
@@ -59,6 +59,7 @@ function Value({ field, value, old }: { field: HistoryField; value: Snapshot[His
   const label = useLinkLabel();
   const cls = cn("min-w-0 rounded px-1.5 py-0.5 text-xs break-words", old ? "bg-danger-soft/70 text-muted line-through decoration-danger/40" : "bg-good-soft text-fg");
   if (BOOLEAN_FIELDS.has(field)) return <span className={cls}>{value ? "On" : "Off"}</span>;
+  if (field === "monitor") return <span className={cls}>{MONITOR_LABEL[Number(value ?? 1)] ?? "On"}</span>;
   if (value === null || value === "") {
     const none = field === "expires_at" ? "Never" : field === "routing" || field === "preview" ? "Off" : field === "password_hash" ? "None" : field === "max_clicks" ? "No limit" : field === "replacement" ? "None" : field === "utm_template" ? "Default" : "Empty";
     return <span className={cn(cls, "italic")}>{none}</span>;

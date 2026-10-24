@@ -79,7 +79,11 @@ export const LINK_HELP = {
   ),
   monitor: h(
     "Check the destination",
-    `Off for new links until you switch it on. Once it's on and automatic checking is turned on under Link health, Shorthop visits the destination as often as chosen there and lists it under Link health. After ${DOWN_AFTER_FAILS} failed checks in a row it counts as not working and you get an email. Leave it off for pages that only work when signed in, or that you know block automated visitors.`,
+    `Off for new links until you switch it on. Once it's on and automatic checking is turned on under Link health, Shorthop visits the destination as often as chosen there and lists it under Link health. After ${DOWN_AFTER_FAILS} failed checks in a row it counts as not working and you get an email. When an admin sets Link health to check all links, every link is checked whether this is on or not, except links set to never be checked.`,
+  ),
+  neverCheck: h(
+    "Never check this link",
+    "Keeps this link out of destination checks for good: it isn't checked when Link health checks only the links switched on, nor when it checks all links. Use it for pages that only work when signed in, or that you know block automated visitors, so they never alert. Check now on the link's page still works. Switching on “Check that the destination works” turns this off.",
   ),
   passQuery: h(
     "Pass query parameters through",
@@ -174,7 +178,7 @@ export const STATS_HELP = {
 export const CHECKS_HELP = {
   overview: h(
     "Destination checks",
-    `Automatic checking is off until someone turns it on here (Activate automatic checking). Then every 30 minutes Shorthop checks the destinations that are due: a working one as often as chosen (once a day, every 3 days, once a week, or anything from 1 hour to 30 days), one with a problem again after 1 and then 4 hours. Check now works either way. It sends a HEAD request (then a GET if the server doesn't answer HEAD properly), follows up to ${MAX_HOPS} redirects, and waits up to ${CHECK_TIMEOUT_MS / 1000} seconds. Page contents are never downloaded or stored. Links that are disabled, expired, marked as no longer working, or have checks turned off are skipped. A destination shared by several links is checked once.`,
+    `Automatic checking is off until someone turns it on here (Activate automatic checking). Then every 30 minutes Shorthop checks the destinations that are due: a working one as often as chosen (once a day, every 3 days, once a week, or anything from 1 hour to 30 days), one with a problem again after 1 and then 4 hours. Check now works either way. It sends a HEAD request (then a GET if the server doesn't answer HEAD properly), follows up to ${MAX_HOPS} redirects, and waits up to ${CHECK_TIMEOUT_MS / 1000} seconds. Page contents are never downloaded or stored. Which links are checked is chosen here too: only the links whose “Check that the destination works” switch is on (the default), or all links. Links set to “Never check this link” are skipped either way, as are links that are disabled, expired or marked as no longer working. A destination shared by several links is checked once.`,
   ),
   states: h(
     "What each state means",
@@ -183,6 +187,10 @@ export const CHECKS_HELP = {
   limits: h(
     "Limits that keep checks cheap and polite",
     `Checks run on a schedule, never on a visitor's click, so they can't slow down or block your links or the API. Each half-hourly run checks at most 25 destinations and makes at most 40 outbound requests (the Free plan allows 50 per run), about 900 routine checks a day with room left for rechecks. Links sharing a destination are checked once. At most 2 pages of one site are checked per run, so a site with hundreds of your links (LinkedIn, Amazon) isn't hammered and doesn't block the checker. With more destinations than the schedule can check as often as you chose, working ones are checked less often instead of falling behind: about daily at 900, about every 5 days at 4,500. Checks are free: outbound visits aren't billed, and the half-hourly cron runs anyway (for webhooks). They never count as clicks.`,
+  ),
+  scope: h(
+    "Which links are checked",
+    "Only links switched on: a link is checked when its “Check that the destination works” switch is on, which it isn't for new links. All links: every link is checked without switching each one on, including links added later and imported ones. Either way, links set to “Never check this link” are never checked, nor are disabled, expired and “no longer working” ones. Checking all links means more destinations sharing the schedule, so with many links each is checked less often.",
   ),
   email: h(
     "Email alerts",

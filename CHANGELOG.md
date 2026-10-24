@@ -5,6 +5,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+
+- **Link health → Check settings → Which links:** check only the links whose **Check that the destination works** switch is on (as before, the default) or all links, without switching each one on. The link form has a new **Never check this link** switch that keeps a link out of checks in both modes; **Stop checking** in the Fix dialog now sets it. API: links have a `neverCheck` field (create and update accept it), and `PUT /checks/settings` accepts `scope: "selected" | "all"`. No migration, and nothing changes until someone picks **All links**.
+
 ### Fixed
 
 - **Workers Free:** one invocation may make 50 calls (fetches, KV, D1 and Durable Object calls alike), and several bulk jobs made more: Republish all links and Remove domain worked in pages of 200 KV writes, an import published up to 100 at once, the daily cron pruned up to 400 upload records, and a busy destination-check run could pass 50 with webhooks due. On Free these failed partway with "Too many subrequests"; after a default-UTM change, links on the default template kept the old tags. Every bulk job is now sized from `WORKERS_PLAN` (`src/worker/plan.ts`): Free gets pages of 40 links, imports of 20 rows per request, 10 destination checks and 2 webhook deliveries per run, and a rollup that continues over several runs when it has many days to catch up; Paid keeps the previous sizes. The import page splits files to the plan's size; the API answers `413` with the limit when a script sends more. The daily cleanup (login events, salts, expired keys, history, unused uploads) moved to the half-hourly cron's 02:00 UTC run, so it has an invocation to itself; no cron trigger changed.

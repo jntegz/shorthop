@@ -1,7 +1,7 @@
 // Response shapes of the admin API, shared by the Worker and the SPA.
 
 import type { HistoryAction, StoredSnapshot } from "./history";
-import type { CheckProblem, CheckState } from "./link-check";
+import type { CheckProblem, CheckScope, CheckState } from "./link-check";
 import type { Actor, Permission, Role } from "./permissions";
 import type { LinkPreview } from "./preview";
 import type { QrStyle } from "./qr";
@@ -31,8 +31,10 @@ export interface LinkDTO {
   broken: boolean;
   /** The link that notice points to; null sends visitors to the site set in Settings. */
   replacement: { domain: string; slug: string } | null;
-  /** Whether the destination is checked on a schedule (Link health). */
+  /** "Check that the destination works" is switched on (Link health). */
   monitor: boolean;
+  /** Never checked, even when Link health checks every link. */
+  neverCheck: boolean;
   /** Smart routing; null sends everyone to the target. */
   routing: Routing | null;
   /** What link-preview crawlers see; null lets them follow the redirect. */
@@ -68,6 +70,8 @@ export interface CheckSettings {
   notify: boolean;
   /** How often a working destination is checked, in hours (1 to 720). */
   everyHours: number;
+  /** "selected": only links switched on; "all": every link not set to never be checked. */
+  scope: CheckScope;
 }
 
 /** One destination and the live links that point to it. */
@@ -94,7 +98,7 @@ export interface TargetCheckDTO {
 export interface LinkChecksDTO {
   settings: CheckSettings;
   items: TargetCheckDTO[];
-  /** Live links with checks turned off. */
+  /** Live links that aren't checked: switched off (scope "selected") or set to never be checked. */
   excluded: number;
   /** Destinations waiting more than an hour past due, or never checked. */
   overdue: number;
@@ -446,6 +450,8 @@ export interface MeDTO {
     demo: DemoDTO | null;
     /** Rows one import request may carry: sized to the Workers plan's subrequest limit. */
     importRows: number;
+    /** Which links Link health checks (the link form explains its switches by it). */
+    checkScope: CheckScope;
   };
 }
 

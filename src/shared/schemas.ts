@@ -2,7 +2,7 @@ import { z } from "zod";
 import { isDay } from "./dates";
 import { DEAD_LINK_MAX_DELAY, DEAD_LINK_MIN_DELAY } from "./dead-link";
 import { HOSTNAME_RE } from "./domains";
-import { MAX_EVERY_HOURS, MIN_EVERY_HOURS } from "./link-check";
+import { CHECK_SCOPES, MAX_EVERY_HOURS, MIN_EVERY_HOURS } from "./link-check";
 import { HEX_COLOR_RE } from "./not-found";
 import { PERMISSIONS, ROLES } from "./permissions";
 import { LINK_PASSWORD_MAX, LINK_PASSWORD_MIN, MAX_CLICK_LIMIT } from "./protection";
@@ -82,6 +82,8 @@ export const createLinkSchema = z
     passQuery: z.boolean().optional(),
     /** Check the destination on a schedule (default false: off until switched on). */
     monitor: z.boolean().optional(),
+    /** Never check it, even when Link health checks every link (default false). Wins over monitor. */
+    neverCheck: z.boolean().optional(),
     routing: routingSchema.optional(),
     preview: previewSchema.optional(),
     /** Visitors must enter it first. */
@@ -101,7 +103,10 @@ export const updateLinkSchema = z.object({
   utm: z.boolean().optional(),
   utmTemplate: z.string().trim().max(512).nullish(),
   passQuery: z.boolean().optional(),
+  /** true also clears neverCheck. */
   monitor: z.boolean().optional(),
+  /** true also switches monitor off. */
+  neverCheck: z.boolean().optional(),
   routing: routingSchema.optional(),
   preview: previewSchema.optional(),
   /** A new password; null removes protection. */
@@ -205,6 +210,7 @@ export const checkSettingsSchema = z.object({
   enabled: z.boolean().optional(),
   notify: z.boolean().optional(),
   everyHours: z.number().int().min(MIN_EVERY_HOURS, "Check at most every hour").max(MAX_EVERY_HOURS, "Check at least every 30 days").optional(),
+  scope: z.enum(CHECK_SCOPES).optional(),
 });
 
 export const utmPresetSchema = z.object({

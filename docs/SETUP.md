@@ -449,7 +449,7 @@ npm run deploy              # refuses wrangler.jsonc if ids are missing or domai
 
 On the first deploy, Cloudflare attaches each hostname and issues its certificate; this can take a few minutes. Wrangler shows its own prompts in your terminal, for example before replacing a DNS record.
 
-Afterwards, open `https://<admin host>/_admin/`. Dashboard → **System status** lists anything still missing, each with the command that fixes it. Destination checks are off until you press **Activate automatic checking** on Link health and choose how often they run, and each link is checked only once its **Check that the destination works** switch is on.
+Afterwards, open `https://<admin host>/_admin/`. Dashboard → **System status** lists anything still missing, each with the command that fixes it. Destination checks are off until you press **Activate automatic checking** on Link health and choose how often they run, and each link is checked only once its **Check that the destination works** switch is on, unless you set Check settings to check **All links**.
 
 <a id="troubleshooting"></a>
 ## Troubleshooting

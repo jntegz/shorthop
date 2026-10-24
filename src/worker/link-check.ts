@@ -17,16 +17,22 @@ import { linkLabel } from "../shared/domains";
 import { escapeHtml } from "../shared/html";
 import {
   BLOCKED_INTERVAL,
+  CHECK_SCOPES,
   CHECK_TIMEOUT_MS,
+  DEFAULT_CHECK_SCOPE,
   DEFAULT_EVERY_HOURS,
   DOWN_AFTER_FAILS,
   MAX_EVERY_HOURS,
   MIN_EVERY_HOURS,
   classifyStatus,
   isCheckProblem,
+  isChecked,
   isFetchableUrl,
   MAX_HOPS,
   MAX_PER_HOST_PER_RUN,
+  MONITOR_DEFAULT,
+  MONITOR_NEVER,
+  MONITOR_ON,
   nextRecord,
   okIntervalFor,
   spreadByHost,
@@ -35,6 +41,7 @@ import {
   type CheckOutcome,
   type CheckProblem,
   type CheckRecord,
+  type CheckScope,
   type CheckStatus,
 } from "../shared/link-check";
 import type { CheckSettings, LinkChecksDTO, TargetCheckDTO } from "../shared/types";
@@ -58,8 +65,8 @@ export const CHECK_USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36 ShorthopLinkCheck/1.0";
 
 const SETTINGS_KEY = "link_checks";
-/** Off until someone presses "Activate automatic checking" on Link health. */
-export const DEFAULT_CHECK_SETTINGS: CheckSettings = { enabled: false, notify: true, everyHours: DEFAULT_EVERY_HOURS };
+/** Off until someone presses "Activate automatic checking" on Link health, and then only for links switched on. */
+export const DEFAULT_CHECK_SETTINGS: CheckSettings = { enabled: false, notify: true, everyHours: DEFAULT_EVERY_HOURS, scope: DEFAULT_CHECK_SCOPE };
 
 const validEvery = (h: unknown): h is number => Number.isInteger(h) && (h as number) >= MIN_EVERY_HOURS && (h as number) <= MAX_EVERY_HOURS;
 
@@ -70,6 +77,7 @@ export async function getCheckSettings(db: D1Database): Promise<CheckSettings> {
       enabled: typeof saved.enabled === "boolean" ? saved.enabled : DEFAULT_CHECK_SETTINGS.enabled,
       notify: typeof saved.notify === "boolean" ? saved.notify : DEFAULT_CHECK_SETTINGS.notify,
       everyHours: validEvery(saved.everyHours) ? saved.everyHours : DEFAULT_CHECK_SETTINGS.everyHours,
+      scope: CHECK_SCOPES.includes(saved.scope as CheckScope) ? (saved.scope as CheckScope) : DEFAULT_CHECK_SETTINGS.scope,
     };
   } catch {
     return { ...DEFAULT_CHECK_SETTINGS };
@@ -77,9 +85,10 @@ export async function getCheckSettings(db: D1Database): Promise<CheckSettings> {
 }
 
 /**
- * Saves what's given over the saved settings. A new frequency applies now:
- * working (and refusing) destinations are rescheduled from their last check in
- * the same batch, while failing ones keep their retry times.
+ * Saves what's given over the saved settings. A new frequency or scope applies
+ * now: working (and refusing) destinations are rescheduled from their last check
+ * in the same batch, while failing ones keep their retry times. Destinations a
+ * wider scope adds have never been checked, so they're due at once.
  */
 export async function saveCheckSettings(env: Env, input: Partial<CheckSettings>): Promise<CheckSettings> {
   const db = env.DB;
@@ -88,10 +97,12 @@ export async function saveCheckSettings(env: Env, input: Partial<CheckSettings>)
     enabled: input.enabled ?? prev.enabled,
     notify: input.notify ?? prev.notify,
     everyHours: input.everyHours ?? prev.everyHours,
+    scope: input.scope ?? prev.scope,
   };
   const writes = [setSettingStmt(db, SETTINGS_KEY, JSON.stringify(next))];
-  if (next.everyHours !== prev.everyHours) {
-    const { okInterval } = await schedule(env, nowSec(), next.everyHours);
+  // A new scope changes how many destinations share the schedule.
+  if (next.everyHours !== prev.everyHours || next.scope !== prev.scope) {
+    const { okInterval } = await schedule(env, nowSec(), next);
     writes.push(
       db
         .prepare(
@@ -212,20 +223,24 @@ interface CheckRow {
 
 const toRecord = (r: CheckRow): CheckRecord => ({ status: r.status, fails: r.fails, since: r.since, lastOkAt: r.last_ok_at, notified: r.notified === 1 });
 
+/** SQL for "this link's destination is checked" by its own choice and the scope (keep in step with isChecked). */
+export const checkedSql = (scope: CheckScope, column = "monitor") =>
+  scope === "all" ? `${column} IN (${MONITOR_DEFAULT}, ${MONITOR_ON})` : `${column} = ${MONITOR_ON}`;
+
 /**
  * Links whose destinations are checked: live (active, not expired, not marked
- * as not working) and not excluded. Used on link_destinations, which lists a
- * link's target and every destination of its enabled routing rules.
+ * as not working) and chosen by checkedSql. Used on link_destinations, which
+ * lists a link's target and every destination of its enabled routing rules.
  */
-const MONITORED = (now: string) => `active = 1 AND broken = 0 AND monitor = 1 AND (expires_at IS NULL OR expires_at > ${now})`;
+const MONITORED = (now: string, scope: CheckScope) => `active = 1 AND broken = 0 AND ${checkedSql(scope)} AND (expires_at IS NULL OR expires_at > ${now})`;
 
 /** Targets due now, the longest-waiting first (never-checked ones before all). */
-async function dueTargets(db: D1Database, now: number, limit: number, only?: "problems"): Promise<{ target: string; row: CheckRow | null }[]> {
+async function dueTargets(db: D1Database, scope: CheckScope, now: number, limit: number, only?: "problems"): Promise<{ target: string; row: CheckRow | null }[]> {
   const filter = only === "problems" ? "AND (c.target IS NULL OR c.status IN ('warning', 'down'))" : "AND (c.next_at IS NULL OR c.next_at <= ?1)";
   const { results } = await db
     .prepare(
       `SELECT t.target, c.status, c.http_status, c.problem, c.final_url, c.hops, c.ms, c.fails, c.checked_at, c.last_ok_at, c.since, c.next_at, c.notified
-       FROM (SELECT DISTINCT url AS target FROM link_destinations WHERE ${MONITORED("?1")}) t
+       FROM (SELECT DISTINCT url AS target FROM link_destinations WHERE ${MONITORED("?1", scope)}) t
        LEFT JOIN target_checks c ON c.target = t.target
        WHERE 1 = 1 ${filter}
        ORDER BY c.next_at IS NOT NULL, c.next_at
@@ -247,8 +262,8 @@ export interface CheckRunResult {
 }
 
 /** Distinct destinations that are checked, and how often a working one is: the chosen frequency, stretched for large collections. */
-async function schedule(env: Env, now: number, everyHours: number): Promise<{ destinations: number; okInterval: number }> {
-  const row = await env.DB.prepare(`SELECT COUNT(DISTINCT url) AS n FROM link_destinations WHERE ${MONITORED("?1")}`).bind(now).first<{ n: number }>();
+async function schedule(env: Env, now: number, { everyHours, scope }: Pick<CheckSettings, "everyHours" | "scope">): Promise<{ destinations: number; okInterval: number }> {
+  const row = await env.DB.prepare(`SELECT COUNT(DISTINCT url) AS n FROM link_destinations WHERE ${MONITORED("?1", scope)}`).bind(now).first<{ n: number }>();
   const destinations = row?.n ?? 0;
   return { destinations, okInterval: okIntervalFor(destinations, RUNS_PER_DAY * planLimits(env).checkLimit, everyHours * 3600) };
 }
@@ -262,7 +277,7 @@ async function checkAndStore(
   settings: CheckSettings,
 ): Promise<CheckRunResult> {
   const now = nowSec();
-  const { okInterval } = await schedule(env, now, settings.everyHours);
+  const { okInterval } = await schedule(env, now, settings);
   const queue = [...items];
   const results: { target: string; prev: CheckRow | null; outcome: CheckOutcome }[] = [];
   const worker = async () => {
@@ -342,7 +357,7 @@ export async function runLinkChecks(env: Env, opts: { budget?: Budget; fetcher?:
   const { checkBudget, checkLimit } = planLimits(env);
   const budget = opts.budget ?? { left: checkBudget };
   // Look further ahead than one run's worth, so a site with many links can't fill the run.
-  const due = spreadByHost(await dueTargets(env.DB, nowSec(), checkLimit * 4), checkLimit, MAX_PER_HOST_PER_RUN);
+  const due = spreadByHost(await dueTargets(env.DB, settings.scope, nowSec(), checkLimit * 4), checkLimit, MAX_PER_HOST_PER_RUN);
   const result = await checkAndStore(env, due, budget, opts.fetcher ?? fetch, settings);
   await env.DB.prepare("DELETE FROM target_checks WHERE target NOT IN (SELECT url FROM link_destinations)").run();
   if (settings.notify) await notifyChanges(env);
@@ -352,7 +367,7 @@ export async function runLinkChecks(env: Env, opts: { budget?: Budget; fetcher?:
 /** "Check problems now": warnings, failures and never-checked targets, as far as one request's budget goes. */
 export async function recheckProblems(env: Env, fetcher: typeof fetch = fetch): Promise<CheckRunResult> {
   const settings = await getCheckSettings(env.DB);
-  const items = spreadByHost(await dueTargets(env.DB, nowSec(), 200, "problems"), 200, MAX_PER_HOST_PER_RUN * 2);
+  const items = spreadByHost(await dueTargets(env.DB, settings.scope, nowSec(), 200, "problems"), 200, MAX_PER_HOST_PER_RUN * 2);
   const result = await checkAndStore(env, items, { left: planLimits(env).checkBudget }, fetcher, settings);
   if (settings.notify) await notifyChanges(env);
   return result;
@@ -474,14 +489,17 @@ function toDTO(target: string, row: CheckRow | undefined, links: TargetCheckDTO[
 export async function listChecks(env: Env): Promise<Omit<LinkChecksDTO, "lastRun">> {
   const now = nowSec();
   const db = env.DB;
-  const [monitored, rows, excluded, settings] = await Promise.all([
-    db.prepare(`SELECT DISTINCT domain, slug, title, url AS target FROM link_destinations WHERE ${MONITORED("?1")} ORDER BY domain, slug`).bind(now).all<LinkRef>(),
+  const settings = await getCheckSettings(db);
+  const [monitored, rows, excluded] = await Promise.all([
+    db
+      .prepare(`SELECT DISTINCT domain, slug, title, url AS target FROM link_destinations WHERE ${MONITORED("?1", settings.scope)} ORDER BY domain, slug`)
+      .bind(now)
+      .all<LinkRef>(),
     db.prepare("SELECT * FROM target_checks").all<CheckRow>(),
     db
-      .prepare("SELECT COUNT(*) AS n FROM links WHERE monitor = 0 AND active = 1 AND broken = 0 AND (expires_at IS NULL OR expires_at > ?1)")
+      .prepare(`SELECT COUNT(*) AS n FROM links WHERE NOT (${checkedSql(settings.scope)}) AND active = 1 AND broken = 0 AND (expires_at IS NULL OR expires_at > ?1)`)
       .bind(now)
       .first<{ n: number }>(),
-    getCheckSettings(db),
   ]);
   const byTarget = new Map(rows.results.map((r) => [r.target, r]));
   const grouped = new Map<string, TargetCheckDTO["links"]>();
@@ -492,7 +510,7 @@ export async function listChecks(env: Env): Promise<Omit<LinkChecksDTO, "lastRun
   }
   const items = [...grouped.entries()].map(([target, links]) => toDTO(target, byTarget.get(target), links));
   const overdue = items.filter((i) => i.nextAt !== null && i.nextAt < now - 3600).length + items.filter((i) => i.state === "unchecked").length;
-  const { okInterval } = await schedule(env, now, settings.everyHours);
+  const { okInterval } = await schedule(env, now, settings);
   return { settings, items, excluded: excluded?.n ?? 0, overdue, capacityPerDay: RUNS_PER_DAY * planLimits(env).checkLimit, intervalHours: okInterval / 3600, perHostPerRun: MAX_PER_HOST_PER_RUN };
 }
 
@@ -501,29 +519,32 @@ export async function linkCheck(
   env: Env,
   domain: string,
   slug: string,
-): Promise<{ check: TargetCheckDTO | null; routed: TargetCheckDTO[]; monitored: boolean; reason: string | null; automatic: boolean } | null> {
+): Promise<{ check: TargetCheckDTO | null; routed: TargetCheckDTO[]; monitored: boolean; reason: string | null; automatic: boolean; scope: CheckScope } | null> {
   const now = nowSec();
-  const automatic = (await getCheckSettings(env.DB)).enabled;
+  const { enabled: automatic, scope } = await getCheckSettings(env.DB);
   const link = await env.DB.prepare("SELECT target, active, broken, monitor, expires_at FROM links WHERE domain = ? AND slug = ?")
     .bind(domain, slug)
     .first<{ target: string; active: number; broken: number; monitor: number; expires_at: number | null }>();
   if (!link) return null;
-  const reason = !link.monitor
-    ? "Checks are turned off for this link."
-    : !link.active
-      ? "Disabled links aren't checked."
-      : link.expires_at !== null && link.expires_at <= now
-        ? "Expired links aren't checked."
-        : link.broken
-          ? "Links marked as no longer working aren't checked."
-          : null;
+  const reason =
+    link.monitor === MONITOR_NEVER
+      ? "This link is set to never be checked."
+      : !isChecked(link.monitor, scope)
+        ? "Checks are turned off for this link."
+        : !link.active
+          ? "Disabled links aren't checked."
+          : link.expires_at !== null && link.expires_at <= now
+            ? "Expired links aren't checked."
+            : link.broken
+              ? "Links marked as no longer working aren't checked."
+              : null;
   const { results: urls } = await env.DB.prepare("SELECT DISTINCT url FROM link_destinations WHERE domain = ? AND slug = ? AND url != target")
     .bind(domain, slug)
     .all<{ url: string }>();
   const all = [link.target, ...urls.map((u) => u.url)];
   const [rows, users] = await Promise.all([
     env.DB.prepare("SELECT * FROM target_checks WHERE target IN (SELECT value FROM json_each(?1))").bind(JSON.stringify(all)).all<CheckRow>(),
-    env.DB.prepare(`SELECT DISTINCT domain, slug, title, url AS target FROM link_destinations WHERE url IN (SELECT value FROM json_each(?1)) AND ${MONITORED("?2")} ORDER BY domain, slug`)
+    env.DB.prepare(`SELECT DISTINCT domain, slug, title, url AS target FROM link_destinations WHERE url IN (SELECT value FROM json_each(?1)) AND ${MONITORED("?2", scope)} ORDER BY domain, slug`)
       .bind(JSON.stringify(all), now)
       .all<LinkRef>(),
   ]);
@@ -536,6 +557,7 @@ export async function linkCheck(
     monitored: reason === null,
     reason,
     automatic,
+    scope,
   };
 }
 

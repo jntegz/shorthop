@@ -7,7 +7,7 @@ import { capCount, capReset } from "../click-cap";
 import { hashLinkPassword } from "../link-password";
 import { parseRouting, splitChanged, validateRouting, type RouteRule, type Routing, type RoutingError } from "../../shared/routing";
 import { createLinkSchema, importSchema, linkParamSchema, versionParamSchema, listQuerySchema, resyncQuerySchema, updateLinkSchema } from "../../shared/schemas";
-import { isCheckProblem, type CheckStatus } from "../../shared/link-check";
+import { isCheckProblem, isChecked, MONITOR_DEFAULT, MONITOR_NEVER, MONITOR_ON, type CheckStatus } from "../../shared/link-check";
 import { can } from "../../shared/permissions";
 import { generateSlug, validateSlug } from "../../shared/slug";
 import { normalizeTarget, validateUtmTemplate } from "../../shared/target";
@@ -20,6 +20,7 @@ import { planLimits } from "../plan";
 import { changedFields, emit, emitAll, linkPayload } from "../webhooks";
 import { deletedLinks, getVersion, listVersions, SNAPSHOT_SQL, versionStmt } from "../history";
 import { clicksByLink } from "../stats-data";
+import { checkedSql, getCheckSettings } from "../link-check";
 
 function isUniqueViolation(err: unknown): boolean {
   return /UNIQUE constraint failed|SQLITE_CONSTRAINT/i.test(String(err));
@@ -212,12 +213,13 @@ export const linksApi = new Hono<AppEnv>()
       where.push(`(',' || tags || ',') LIKE ?${params.length} ESCAPE '\\'`);
     }
     const now = nowSec();
+    const { scope } = await getCheckSettings(c.env.DB);
     if (status === "active") where.push(`active = 1 AND (expires_at IS NULL OR expires_at > ${now}) AND broken = 0`);
     if (status === "broken") where.push(`active = 1 AND (expires_at IS NULL OR expires_at > ${now}) AND broken = 1`);
     if (status === "disabled") where.push("active = 0");
     if (status === "expired") where.push(`expires_at IS NOT NULL AND expires_at <= ${now}`);
     if (status === "failing") {
-      where.push(`active = 1 AND (expires_at IS NULL OR expires_at > ${now}) AND broken = 0 AND monitor = 1`);
+      where.push(`active = 1 AND (expires_at IS NULL OR expires_at > ${now}) AND broken = 0 AND ${checkedSql(scope)}`);
       where.push(
         "(domain, slug) IN (SELECT domain, slug FROM link_destinations WHERE url IN (SELECT target FROM target_checks WHERE status IN ('warning', 'down')))",
       );
@@ -259,7 +261,7 @@ export const linksApi = new Hono<AppEnv>()
       const key = linkKey(r.domain, r.slug);
       // The worst state across the target and every routed destination.
       const urls = [r.target, ...(parseRouting(r.routing)?.rules.filter((x) => x.enabled).flatMap((x) => x.variants.map((v) => v.url)) ?? [])];
-      const ch = r.monitor ? worstCheck(urls.map((u) => checkOf.get(u))) : undefined;
+      const ch = isChecked(r.monitor, scope) ? worstCheck(urls.map((u) => checkOf.get(u))) : undefined;
       return {
         ...dto(c, r),
         clicksPeriod: clicks.get(key) ?? 0,
@@ -304,7 +306,7 @@ export const linksApi = new Hono<AppEnv>()
       imported_clicks: null,
       broken: 0,
       replacement: null,
-      monitor: body.monitor ? 1 : 0,
+      monitor: body.neverCheck ? MONITOR_NEVER : body.monitor ? MONITOR_ON : MONITOR_DEFAULT,
       routing: routing.json,
       preview: preview.json,
       qr: null,
@@ -384,7 +386,12 @@ export const linksApi = new Hono<AppEnv>()
     if (body.active !== undefined) next.active = body.active ? 1 : 0;
     if (body.utm !== undefined) next.utm = body.utm ? 1 : 0;
     if (body.passQuery !== undefined) next.pass_query = body.passQuery ? 1 : 0;
-    if (body.monitor !== undefined) next.monitor = body.monitor ? 1 : 0;
+    if (body.monitor !== undefined || body.neverCheck !== undefined) {
+      // Switching one on switches the other off; "never" wins when both come on.
+      const never = body.neverCheck ?? (body.monitor ? false : row.monitor === MONITOR_NEVER);
+      const on = !never && (body.monitor ?? row.monitor === MONITOR_ON);
+      next.monitor = never ? MONITOR_NEVER : on ? MONITOR_ON : MONITOR_DEFAULT;
+    }
     const routing = routingFor(c, body.routing, row.routing);
     if (!routing.ok) return c.json({ error: routing.error, details: routing.details }, 400);
     next.routing = routing.json;
@@ -612,7 +619,7 @@ export const linksApi = new Hono<AppEnv>()
         imported_clicks: r.clicks ?? null,
         broken: 0,
         replacement: null,
-        monitor: 0,
+        monitor: MONITOR_DEFAULT,
         routing: null,
         preview: null,
         qr: null,

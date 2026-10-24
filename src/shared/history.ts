@@ -144,4 +144,6 @@ export const FIELD_LABEL: Record<HistoryField, string> = {
   notes: "Notes",
 };
 
-export const BOOLEAN_FIELDS: ReadonlySet<HistoryField> = new Set(["active", "broken", "utm", "pass_query", "monitor"]);
+export const BOOLEAN_FIELDS: ReadonlySet<HistoryField> = new Set(["active", "broken", "utm", "pass_query"]);
+/** links.monitor as the history shows it (MONITOR_DEFAULT, MONITOR_ON, MONITOR_NEVER in src/shared/link-check.ts). */
+export const MONITOR_LABEL: Record<number, string> = { 0: "Off", 1: "On", 2: "Never" };

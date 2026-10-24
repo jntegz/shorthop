@@ -12,6 +12,7 @@ import { domainsOf } from "./domains";
 import { MailerError, mailerStatus, sendMail, withMailSettings } from "./mailer";
 import { runRollup } from "./rollup";
 import { missesCleared } from "./misses";
+import { checkedSql, getCheckSettings } from "./link-check";
 
 export interface DigestData {
   week: string;
@@ -37,7 +38,7 @@ export async function digestData(env: Env, now: Date = new Date()): Promise<Dige
   const prevTo = addDays(from, -1);
   const prevFrom = addDays(prevTo, -6);
   const db = env.DB;
-  const cleared = await missesCleared(db);
+  const [cleared, checks] = await Promise.all([missesCleared(db), getCheckSettings(db)]);
   const missFrom = cleared.all !== null && cleared.all >= from ? addDays(cleared.all, 1) : from;
   const sumTotals = `SELECT SUM(clicks) AS clicks, SUM(uniques) AS uniques, SUM(bots) AS bots FROM daily_dims
                      WHERE dim = 'total' AND date BETWEEN ?1 AND ?2`;
@@ -78,7 +79,7 @@ export async function digestData(env: Env, now: Date = new Date()): Promise<Dige
       .bind(missFrom, to, JSON.stringify(cleared.links)),
     db.prepare(
       `SELECT DISTINCT l.domain, l.slug, l.url AS target, c.problem, c.http_status, c.since FROM target_checks c JOIN link_destinations l ON l.url = c.target
-       WHERE c.status = 'down' AND l.active = 1 AND l.broken = 0 AND l.monitor = 1 ORDER BY c.since, l.domain, l.slug LIMIT 10`,
+       WHERE c.status = 'down' AND l.active = 1 AND l.broken = 0 AND ${checkedSql(checks.scope, "l.monitor")} ORDER BY c.since, l.domain, l.slug LIMIT 10`,
     ),
   ]);
   const t = (r: Record<string, string | Num> | undefined) => ({

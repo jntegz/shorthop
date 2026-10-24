@@ -208,7 +208,7 @@ describe("automatic checking", () => {
     routes["https://a.example/"] = status(200);
     await createLink("one", "https://a.example/");
     const list = (await (await call(`${API}/checks`, { headers: bearer })).json()) as LinkChecksDTO;
-    expect(list.settings).toEqual({ enabled: false, notify: true, everyHours: 24 });
+    expect(list.settings).toEqual({ enabled: false, notify: true, everyHours: 24, scope: "selected" });
     expect(await runLinkChecks(env)).toMatchObject({ checked: 0, skipped: expect.any(String) });
 
     const ctx = createExecutionContext();
@@ -253,7 +253,9 @@ describe("automatic checking", () => {
     expect((await put({ everyHours: 0 })).status).toBe(400);
     expect((await put({ everyHours: 721 })).status).toBe(400);
     const res = await put({ enabled: true, notify: false });
-    expect(await res.json()).toEqual({ settings: { enabled: true, notify: false, everyHours: 72 } });
+    expect(await res.json()).toEqual({ settings: { enabled: true, notify: false, everyHours: 72, scope: "selected" } });
+    expect((await put({ scope: "some" })).status).toBe(400);
+    expect(await (await put({ scope: "all" })).json()).toEqual({ settings: { enabled: true, notify: false, everyHours: 72, scope: "all" } });
   });
 });
 
@@ -346,6 +348,30 @@ describe("scheduled runs", () => {
     const check = (await systemHealth(env)).checks.find((c) => c.id === "links");
     expect(check).toMatchObject({ status: "ok", detail: expect.stringContaining("Last run") });
   });
+
+  it("checks every link but those set to never be checked when the scope is all links", async () => {
+    routes["https://a.example/"] = status(200);
+    routes["https://b.example/"] = status(200);
+    await createLink("chosen", "https://a.example/");
+    await createLink("plain", "https://b.example/", { monitor: false });
+    await createLink("never", "https://c.example/", { monitor: false, neverCheck: true });
+
+    expect(await runLinkChecks(env)).toMatchObject({ checked: 1 });
+    expect(visited()).toEqual(["HEAD https://a.example/"]);
+
+    fetchMock.mockClear();
+    await call(`${API}/checks/settings`, { ...json({ scope: "all" }), method: "PUT" });
+    expect(await runLinkChecks(env)).toMatchObject({ checked: 1 });
+    expect(visited()).toEqual(["HEAD https://b.example/"]);
+
+    const list = (await (await call(`${API}/checks`, { headers: bearer })).json()) as LinkChecksDTO;
+    expect(list.items.map((i) => i.target).sort()).toEqual(["https://a.example/", "https://b.example/"]);
+    expect(list.excluded).toBe(1);
+    const never = await (await call(`${API}/checks/links/sh.example/never`, { headers: bearer })).json();
+    expect(never).toMatchObject({ monitored: false, reason: "This link is set to never be checked.", scope: "all" });
+    const plain = await (await call(`${API}/checks/links/sh.example/plain`, { headers: bearer })).json();
+    expect(plain).toMatchObject({ monitored: true, scope: "all" });
+  });
 });
 
 describe("checks API", () => {
@@ -361,7 +387,7 @@ describe("checks API", () => {
     await runLinkChecks(env);
 
     const list = (await (await call(`${API}/checks`, { headers: bearer })).json()) as LinkChecksDTO;
-    expect(list.settings).toEqual({ enabled: true, notify: true, everyHours: 24 });
+    expect(list.settings).toEqual({ enabled: true, notify: true, everyHours: 24, scope: "selected" });
     expect(list.excluded).toBe(1);
     expect(list.lastRun).toBeNull(); // only the cron records a run
     const a = list.items.find((i) => i.target === "https://a.example/")!;
@@ -396,6 +422,22 @@ describe("checks API", () => {
     expect(link.monitor).toBe(false);
     const state = await (await call(`${API}/checks/links/sh.example/plain`, { headers: bearer })).json();
     expect(state).toMatchObject({ monitored: false, reason: "Checks are turned off for this link." });
+  });
+
+  it("keeps the check switch and never-check apart", async () => {
+    const link = async () =>
+      ((await (await call(`${API}/links/sh.example/x`, { headers: bearer })).json()) as { link: { monitor: boolean; neverCheck: boolean } }).link;
+    const patch = (body: unknown) => call(`${API}/links/sh.example/x`, { ...json(body), method: "PATCH" });
+    await createLink("x", "https://a.example/", { neverCheck: true });
+    expect(await link()).toEqual(expect.objectContaining({ monitor: false, neverCheck: true }));
+    await patch({ monitor: false });
+    expect(await link()).toEqual(expect.objectContaining({ monitor: false, neverCheck: true }));
+    await patch({ monitor: true });
+    expect(await link()).toEqual(expect.objectContaining({ monitor: true, neverCheck: false }));
+    await patch({ neverCheck: true });
+    expect(await link()).toEqual(expect.objectContaining({ monitor: false, neverCheck: true }));
+    await patch({ neverCheck: false });
+    expect(await link()).toEqual(expect.objectContaining({ monitor: false, neverCheck: false }));
   });
 
   it("rechecks problems on request", async () => {

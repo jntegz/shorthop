@@ -13,7 +13,7 @@ import { api, call, keys, linkFromError } from "../api";
 import { fromLocalInput, toLocalInput } from "../lib/format";
 import { LINK_HELP } from "../lib/help";
 import { linkKey, linkState, useDomains, useLinkLabel } from "../lib/links";
-import { useCan } from "../lib/me";
+import { useCan, useMe } from "../lib/me";
 import { cn, copy } from "../lib/utils";
 import { LinkProtection, type PasswordMode } from "./LinkProtection";
 import { LinkUtm } from "./LinkUtm";
@@ -49,6 +49,8 @@ interface FormState {
   utmTemplate: string;
   passQuery: boolean;
   monitor: boolean;
+  /** Never checked, even when Link health checks every link. Switching it on switches monitor off, and the other way round. */
+  neverCheck: boolean;
   broken: boolean;
   /** "domain/slug" of the replacement, or "" for none. */
   replacement: string;
@@ -80,6 +82,7 @@ function initial(link?: LinkDTO, slug = "", domain = ""): FormState {
     utmTemplate: link?.utmTemplate ?? "",
     passQuery: link?.passQuery ?? false,
     monitor: link?.monitor ?? false,
+    neverCheck: link?.neverCheck ?? false,
     broken: link?.broken ?? false,
     replacement: link?.replacement ? linkKey(link.replacement.domain, link.replacement.slug) : "",
     rules: link?.routing?.rules ?? [],
@@ -99,6 +102,7 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
   const { domains, primary, multiple } = useDomains();
   const label = useLinkLabel();
   const manageSettings = useCan()("settings.manage");
+  const checkAll = useMe().data?.workspace.checkScope === "all";
   const [f, setF] = useState<FormState>(() => initial(link, initialSlug, initialDomain));
   const [touched, setTouched] = useState(false);
   const [advanced, setAdvanced] = useState(false);
@@ -160,6 +164,7 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
         utmTemplate: f.utm && f.utmCustom && f.utmTemplate.trim() ? f.utmTemplate.trim() : null,
         passQuery: f.passQuery,
         monitor: f.monitor,
+        neverCheck: f.neverCheck,
         routing: f.rules.length ? { rules: f.rules } : null,
         preview: f.preview,
         maxClicks: f.capOn ? capNumber : null,
@@ -474,10 +479,22 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
           <Switch
             id="monitor"
             checked={f.monitor}
-            onCheckedChange={(v) => set("monitor", v)}
+            onCheckedChange={(v) => setF((s) => ({ ...s, monitor: v, neverCheck: v ? false : s.neverCheck }))}
             label="Check that the destination works"
-            description="Off unless you switch it on. Adds this link to the checks under Link health, which run once automatic checking is turned on there, and alerts you if it stops loading. Leave off for pages behind a login."
+            description={
+              checkAll
+                ? "Link health checks every link right now, so this one is checked unless it's set to never be checked. Switch this on to keep it checked if that changes to only the links switched on."
+                : "Off unless you switch it on. Adds this link to the checks under Link health, which run once automatic checking is turned on there, and alerts you if it stops loading."
+            }
             info={LINK_HELP.monitor}
+          />
+          <Switch
+            id="neverCheck"
+            checked={f.neverCheck}
+            onCheckedChange={(v) => setF((s) => ({ ...s, neverCheck: v, monitor: v ? false : s.monitor }))}
+            label="Never check this link"
+            description="Keeps it out of destination checks, even when Link health checks every link. For pages behind a login, or that block automated visitors."
+            info={LINK_HELP.neverCheck}
           />
         </div>
 

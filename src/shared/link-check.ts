@@ -40,6 +40,20 @@ export interface CheckRecord {
   notified: boolean;
 }
 
+/** Which links are checked: only those switched on, or every link not set to "never check". */
+export const CHECK_SCOPES = ["selected", "all"] as const;
+export type CheckScope = (typeof CHECK_SCOPES)[number];
+export const DEFAULT_CHECK_SCOPE: CheckScope = "selected";
+
+/** A link's own choice, as stored in links.monitor. */
+export const MONITOR_DEFAULT = 0;
+export const MONITOR_ON = 1;
+/** Never checked, even when every link is. */
+export const MONITOR_NEVER = 2;
+
+/** Whether a link's destination is checked, from its own choice and the Link health scope. */
+export const isChecked = (monitor: number, scope: CheckScope): boolean => monitor === MONITOR_ON || (scope === "all" && monitor === MONITOR_DEFAULT);
+
 /** Failed checks in a row before a destination counts as not working. */
 export const DOWN_AFTER_FAILS = 3;
 const HOUR = 3600;
