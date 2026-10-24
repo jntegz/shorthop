@@ -24,7 +24,7 @@ body:
     attributes:
       label: Version
       description: From package.json or the CHANGELOG, or the commit you deployed.
-      placeholder: "1.1.0"
+      placeholder: "1.1.1"
     validations:
       required: true
   - type: dropdown
