@@ -17,6 +17,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - **API lockouts** double up to an hour instead of a day (login lockouts still go up to a day), and a request with no `Authorization` header at all isn't counted as a wrong key. A network is often shared by several people and devices, and one script with a stale key mustn't lock the others out of the API for a day ([SECURITY.md](SECURITY.md)).
 - "Admin password is not configured" now says what to do, for both ways of installing: set the `ADMIN_PASSWORD` secret under the Worker's Settings → Variables and Secrets, or run `npm run setup -- password`.
 - `WORKERS_PLAN` is documented as sizing bulk work, not only the password hash cost; say `free` unless you pay for Workers.
+- Deploy to Cloudflare: every field on the setup page has a note saying what to enter (most say to leave it as it is), and [docs/SETUP.md](docs/SETUP.md#deploy-form) has a table of all of them. Only the admin password needs filling in.
 
 ## [1.1.0] - 2026-10-24
 

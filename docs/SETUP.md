@@ -71,6 +71,28 @@ The steps below add the rest.
 
 The session secret and the visitor salt are generated on the first request and kept in D1.
 
+<a id="deploy-form"></a>
+**Filling in the setup page**
+
+Cloudflare's setup page lists about 20 fields. **Only the admin password needs you.** Every other field already holds a working value, and each has a short note on the page. You can change any of them later in `wrangler.toml`.
+
+| On the page | What to enter | Why |
+|---|---|---|
+| Git account | Your GitHub or GitLab account | Where your copy of Shorthop is created |
+| Repository name | `shorthop`, or any name | Your copy. Making it private is fine |
+| Project / Worker name | Leave `shorthop` | It becomes the address: `shorthop.<your-subdomain>.workers.dev` |
+| KV namespace, D1 database | Leave the suggested names | They're created for you, empty |
+| **`ADMIN_PASSWORD`** | **A long random password**, at least 9 characters | It's the only lock on the admin until you add Cloudflare Access. A password manager can make one |
+| `FALLBACK_URL` | Your website, such as `https://www.example.com` (optional) | Where people go who open the short domain itself, without a link |
+| `WORKERS_PLAN` | Leave `free`, unless you pay for Workers | Big jobs (imports, checks) are sized to fit your plan |
+| `CF_ACCOUNT_ID` | Leave empty, or paste your account ID | Needed later to read click statistics |
+| `ADMIN_AUTH` | **Leave `password`** | Anything else locks the admin until Cloudflare Access is set up |
+| `SHORT_DOMAINS` | Leave empty | You add your domain after the deploy, together with a route (below) |
+| Everything else (`ACCESS_…`, `ADMIN_EMAIL`, `ADMIN_HOST`, `KV_CACHE_TTL`, `AE_DATASET`, `API_TOKEN_SCOPE`, `DIGEST_…`, `DEV_AUTH_…`) | Leave as it is | For features you turn on later (Access, email) or for local development |
+| Build and deploy commands | Leave as they are | They come from Shorthop's `package.json` |
+
+So for a typical first install you type one thing, the password, and press the deploy button at the bottom of the page.
+
 **After the deploy**
 
 Open `https://shorthop.<your-subdomain>.workers.dev/_admin/` and sign in with the password. Dashboard → **System status** lists what's left. Links can't be created until you add a short domain: a link saved under a placeholder would be stranded when you did.

@@ -29,6 +29,57 @@
       },
       "CLICK_CAPS": {
         "description": "Durable Object counting clicks exactly, used only by links with a click limit."
+      },
+      "ADMIN_AUTH": {
+        "description": "Leave it as `password`. Any other value locks the admin until Cloudflare Access is set up ([docs/SETUP.md](https://github.com/jntegz/shorthop/blob/main/docs/SETUP.md#access))."
+      },
+      "ACCESS_TEAM_DOMAIN": {
+        "description": "Leave it empty. Only for Cloudflare Access, which you can add later."
+      },
+      "ACCESS_AUD": {
+        "description": "Leave it empty. Only for Cloudflare Access, which you can add later."
+      },
+      "ADMIN_EMAIL": {
+        "description": "Leave it empty. Only for Cloudflare Access, which you can add later."
+      },
+      "CF_ACCOUNT_ID": {
+        "description": "Optional: your Cloudflare account ID, to read click statistics once you also add a `CF_ANALYTICS_TOKEN` secret. Leave it empty if unsure; you can add it later."
+      },
+      "SHORT_DOMAINS": {
+        "description": "Leave it empty for now. After the deploy you add your domain here, together with a route ([how](https://github.com/jntegz/shorthop/blob/main/docs/SETUP.md#deploy-button))."
+      },
+      "ADMIN_HOST": {
+        "description": "Leave it empty: the admin then lives on your short domain."
+      },
+      "FALLBACK_URL": {
+        "description": "Your own website, such as `https://www.example.com`. People who open the short domain itself go there. You can change it later."
+      },
+      "KV_CACHE_TTL": {
+        "description": "Leave it at `60` (seconds): how long a link stays cached at the edge, so edits reach everyone within a minute."
+      },
+      "AE_DATASET": {
+        "description": "Leave it as it is: the name of the click dataset above."
+      },
+      "WORKERS_PLAN": {
+        "description": "`free`, unless you pay for Workers ($5/month): then `paid`. It sizes bulk jobs to your plan's limits."
+      },
+      "API_TOKEN_SCOPE": {
+        "description": "Leave it as `create`. Only for the older API token; new installs use API keys from the admin."
+      },
+      "DIGEST_PROVIDER": {
+        "description": "Leave it as `off`. You can turn email on later in the admin: Settings → Statistics & email → Set up email."
+      },
+      "DIGEST_FROM": {
+        "description": "Leave it empty. Email is set up later in the admin."
+      },
+      "DIGEST_TO": {
+        "description": "Leave it empty. Email is set up later in the admin."
+      },
+      "DEV_AUTH_BYPASS": {
+        "description": "Leave it empty. Only for local development."
+      },
+      "DEV_AUTH_EMAIL": {
+        "description": "Leave it empty. Only for local development."
       }
     }
   },

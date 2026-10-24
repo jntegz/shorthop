@@ -5,6 +5,7 @@
 [![Runs on Cloudflare Workers](https://img.shields.io/badge/runs%20on-Cloudflare%20Workers-f38020.svg)](https://workers.cloudflare.com/)
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/jntegz/shorthop)
+<br><sub>On Cloudflare's setup page, only the admin password needs filling in. [What each field means](docs/SETUP.md#deploy-form)</sub>
 
 A personal URL shortener that runs on one Cloudflare Worker. Short links on your own domains, click analytics without cookies or a paid geo service, smart routing, QR codes, destination checks, and a private admin for you and the people you invite. For most personal use it fits inside Cloudflare's free allowances.
 
@@ -80,7 +81,11 @@ There are two ways to install Shorthop.
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/jntegz/shorthop)
 
-The button copies Shorthop into a new repository on your GitHub or GitLab account, creates the KV namespace and the D1 database, asks for an admin password, and deploys with Workers Builds. Both are free. You get:
+The button copies Shorthop into a new repository on your GitHub or GitLab account, creates the KV namespace and the D1 database, asks for an admin password, and deploys with Workers Builds. Both are free.
+
+Cloudflare's setup page lists about 20 fields, but the admin password is the only one you need to fill in; the rest already hold working values. **[What to enter in each field, and why](docs/SETUP.md#deploy-form).**
+
+You get:
 
 - the admin at `https://shorthop.<your-subdomain>.workers.dev/_admin/`, with that password;
 - password-only sign-in, and no email.
