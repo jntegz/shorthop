@@ -86,7 +86,7 @@ export const statsApi = new Hono<AppEnv>()
   .get("/recent", validate("query", recentQuerySchema), async (c) => {
     const { slug, limit, event } = c.req.valid("query");
     const domain = c.req.valid("query").domain ?? (slug ? domainsOf(c.env).primary : undefined);
-    if (!aeAvailable(c.env)) return c.json({ aeAvailable: false, hits: [] as RecentHit[] });
+    if (!aeAvailable(c.env)) return c.json({ aeAvailable: false, hits: [] as RecentHit[], error: undefined as string | undefined });
     try {
       const nowSec = Date.now() / 1000;
       const since = nowSec - 7 * 86400;
@@ -102,10 +102,11 @@ export const statsApi = new Hono<AppEnv>()
         event: r.event === "bot" || r.event === "miss" ? r.event : "click",
         ...(misses ? { scanner: flagged.has(visitor) } : {}),
       }));
-      return c.json({ aeAvailable: true, hits });
+      return c.json({ aeAvailable: true, hits, error: undefined as string | undefined });
     } catch (err) {
+      // Configured but failing: say so, rather than "not configured".
       console.error(JSON.stringify({ message: "recent hits query failed", error: String(err) }));
-      return c.json({ aeAvailable: false, hits: [] as RecentHit[] });
+      return c.json({ aeAvailable: true, hits: [] as RecentHit[], error: err instanceof Error ? err.message : String(err) });
     }
   })
 

@@ -315,7 +315,7 @@ export async function queryRecent(env: Env, sinceSec: number, filter?: LinkFilte
     `SELECT toUnixTimestamp(timestamp) AS ts, blob17 AS domain, index1 AS slug, blob1 AS event, blob2 AS country, blob4 AS city,
 blob8 AS device, blob9 AS os, blob10 AS browser, blob11 AS referrer, blob12 AS source, blob14 AS bot, blob15 AS visitor
 FROM ${dataset(env)} WHERE ${where(sinceSec, Date.now() / 1000 + 60, filter, missesOnly ? "blob1 = 'miss'" : "")}
-ORDER BY timestamp DESC LIMIT ${Math.min(Math.max(1, Math.floor(limit)), 200)} FORMAT JSON`,
+ORDER BY ts DESC LIMIT ${Math.min(Math.max(1, Math.floor(limit)), 200)} FORMAT JSON`,
   );
   return rows.map((r) => ({
     time: new Date(num(r.ts) * 1000).toISOString(),

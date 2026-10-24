@@ -123,7 +123,11 @@ export function Stats() {
           <div className="flex justify-center pb-6">
             <Spinner />
           </div>
-        ) : !recent.data?.aeAvailable ? (
+        ) : recent.isError || recent.data.error ? (
+          <div className="px-5 pb-5">
+            <Notice tone="danger">Couldn’t load recent hits: {recent.isError ? recent.error.message : recent.data.error}</Notice>
+          </div>
+        ) : !recent.data.aeAvailable ? (
           <Empty title="Not available">Recent hits come from Analytics Engine, which isn’t configured here.</Empty>
         ) : recent.data.hits.length === 0 ? (
           <Empty title="No hits in the last 7 days" />

@@ -291,9 +291,9 @@ export function LinkDetail() {
           <div className="flex justify-center py-8">
             <Spinner />
           </div>
-        ) : recent.isError ? (
+        ) : recent.isError || recent.data.error ? (
           <div className="px-5 pb-5">
-            <Notice tone="danger">{recent.error.message}</Notice>
+            <Notice tone="danger">Couldn’t load recent hits: {recent.isError ? recent.error.message : recent.data.error}</Notice>
           </div>
         ) : !recent.data.aeAvailable ? (
           <Empty title="Not available">Recent hits come from Analytics Engine, which isn’t configured here.</Empty>

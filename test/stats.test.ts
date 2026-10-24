@@ -283,6 +283,16 @@ describe("stats API", () => {
     expect(r.hits[0]).toMatchObject({ slug: "guide", event: "click" });
   });
 
+  it("tells a failing recent-hits query apart from Analytics Engine not being set up", async () => {
+    const recent = async (extra?: Partial<Env>) =>
+      (await (await call(`${API}/stats/recent`, { headers: bearer }, extra)).json()) as { aeAvailable: boolean; error?: string };
+    expect(await recent()).toEqual({ aeAvailable: false, hits: [] });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("Invalid query", { status: 422 }));
+    const failed = await recent(AE_ENV);
+    expect(failed.aeAvailable).toBe(true);
+    expect(failed.error).toContain("422");
+  });
+
   it("lists 7-day and all-time clicks per link", async () => {
     mockAeSql(store);
     await runRollup({ ...env, ...AE_ENV }, NOW);

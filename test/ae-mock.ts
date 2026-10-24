@@ -98,6 +98,9 @@ function runSql(points: StoredPoint[], sql: string): Record<string, unknown>[] {
     if (!m) throw new Error(`mock AE: select item without alias: ${item}`);
     return { expr: m[1]!.trim(), alias: m[2]! };
   });
+  // Like the real SQL API, which rejects ORDER BY on a column it didn't select.
+  const orderBy = /ORDER BY (\w+)/.exec(s)?.[1];
+  if (orderBy && !items.some((i) => i.alias === orderBy)) throw new Error(`mock AE: ORDER BY ${orderBy} is not a select alias`);
 
   if (!groupBy) {
     const sorted = [...filtered].sort((a, b) => b.ts - a.ts).slice(0, limit);

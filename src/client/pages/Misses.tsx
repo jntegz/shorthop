@@ -184,6 +184,10 @@ function LiveMisses() {
         <div className="px-5 pb-5">
           <Notice tone="danger">{q.error.message}</Notice>
         </div>
+      ) : q.data.error ? (
+        <div className="px-5 pb-5">
+          <Notice tone="danger">Couldn’t load recent misses: {q.data.error}</Notice>
+        </div>
       ) : !q.data.aeAvailable ? (
         <Empty title="Not available">Recorded misses come from Analytics Engine, which isn’t configured here.</Empty>
       ) : q.data.hits.length === 0 ? (
