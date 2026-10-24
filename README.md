@@ -6,36 +6,71 @@
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/jntegz/shorthop)
 
-A personal URL shortener that runs on one Cloudflare Worker. Short links on your own domains, click analytics without a paid geo service, a private admin, and a weekly email digest. For most personal use it fits inside Cloudflare's free allowances.
+A personal URL shortener that runs on one Cloudflare Worker. Short links on your own domains, click analytics without cookies or a paid geo service, smart routing, QR codes, destination checks, and a private admin for you and the people you invite. For most personal use it fits inside Cloudflare's free allowances.
 
-**Shorthop is built primarily for Cloudflare.** It uses Workers, Workers KV, D1, Analytics Engine, Cloudflare Access and Cloudflare Email Service directly; it isn't a portable app with a Cloudflare adapter. You need a Cloudflare account and at least one domain on it.
+**Shorthop is built primarily for Cloudflare.** It uses Workers, Workers KV, D1, Analytics Engine, Durable Objects, Cloudflare Access and Cloudflare Email Service directly; it isn't a portable app with a Cloudflare adapter. You need a Cloudflare account and at least one domain on it.
 
-![The Shorthop dashboard: clicks, unique visitors and bots over the last 30 days](docs/images/dashboard.png)
+![The Shorthop overview: human clicks, daily unique visitors and bots over 30 days, compared with the previous period](docs/images/dashboard.png)
+
+[Features](#features) · [Screenshots](#screenshots) · [Quick start](#quick-start) · [Documentation](#documentation) · [Costs](#costs) · [Security model](#security-model) · [FAQ](#faq)
+
+## Features
+
+### Links
 
 - **Fast redirects:** one KV read, then a `302`. Analytics is written after the response, so it never slows down or breaks a click.
-- **Analytics:** country, region, city, device, OS, browser, referrer, source tag and language per click. Humans, bots and misses are counted separately. No IP addresses or cookies are stored. Unique visitors are counted with a daily hash whose random salt is deleted once the day is over. See [visitor privacy](docs/PRIVACY.md).
-- **History:** a daily job saves each day into D1, so stats outlive Analytics Engine's 90-day retention.
-- **Admin at `/_admin`:** create, edit, disable, expire, tag and search links; per-link stats and a full statistics page, for any date range, compared with the previous period; CSV import and export; a report of missed slugs; a custom 404 page; a page for links that no longer work, pointing visitors to a replacement; a System status page with setup checks.
-- **Link history:** every change is saved as a version with who made it, and any earlier version can be restored. Deleted links can be brought back for 90 days.
+- **Several domains:** each short domain has its own slugs and stats. The admin can live on the primary domain or on a separate host.
+- **Admin at `/_admin`:** create, edit, disable, expire, tag and search links, with custom slugs and a live preview of the short link.
 - **Smart routing:** rules by device (iPhone & iPad, Android, desktop, other) and country, first match wins, with A/B splits across up to 10 weighted destinations. A simulator in the editor, and results per rule and variant on the link page. Bots and previews get the default destination; no cookies.
 - **Social previews:** your own title, description and image for LinkedIn, Slack, X, iMessage and other link previews, with mockups while you edit.
 - **UTM builder:** one field per parameter, saved presets, and a preview of the URL visitors land on.
-- **QR studio:** colours with a contrast check, dot and corner shapes, a logo, frames with a caption, a live scan test, SVG or PNG up to 4096 px, print sheets, and a ZIP of every link's code.
+- **QR studio:** colours with a contrast check, dot and corner shapes, a logo, frames with a caption, a live scan test, SVG or PNG up to 4096 px, print sheets, and a ZIP of every link's code. Scans count as their own source.
 - **Password-protected links and click limits:** visitors enter a password first, or a link stops after a set number of clicks, counted exactly by a Durable Object. Bots and previews don't count.
-- **Link health:** destination checks for the links you pick (**Check that the destination works**, off by default), once you turn automatic checking on and choose how often. A destination that fails 3 times in a row sends one email and gets a Fix dialog.
-- **Webhooks:** signed events for links created, changed or deleted, destinations down or back, and click milestones, with retries and a delivery log.
+- **Links that no longer work:** mark one as retired and pick a replacement. Visitors get a page with a button to it, or are sent on to your site after a few seconds. Unknown slugs get your own 404 page.
+- **Link history:** every change is saved as a version with who made it, and any earlier version can be restored. Deleted links can be brought back for 90 days.
+- **Import and export:** CSV import with column mapping, for moving from another shortener (old click counts are kept), and CSV export of links and daily stats.
+
+### Analytics
+
+- **Per click:** country, region, city, device, OS, browser, referrer, source tag and language. Humans, bots and misses are counted separately.
+- **Private by design:** no IP addresses or cookies are stored. Unique visitors are counted with a daily hash whose random salt is deleted once the day is over. See [visitor privacy](docs/PRIVACY.md).
+- **Any period:** today, 7, 30 or 90 days, 6 to 12 months, all time or any dates, compared with the previous period. Per link, or every link together on the Full statistics page.
+- **Kept for good:** a daily job saves each day into D1, so stats outlive Analytics Engine's 90-day retention.
+
+### Keeping links working
+
+- **Link health:** destination checks for the links you pick (**Check that the destination works**, off by default), once you turn automatic checking on and choose how often. A destination that fails 3 times in a row sends one email and gets a Fix dialog. Sites that refuse automated checks show as "can't check" and never alert.
+- **Missed visits:** a report of slugs people tried that don't exist, with scanners and bots kept apart, so you can create the link someone mistyped.
+- **System status:** setup checks for storage, analytics, email, domains and sign-in, with an alert email when something breaks.
+- **Weekly digest and alerts:** by Cloudflare Email Service, Resend, Emailit, Postmark, SendGrid, Mailgun, any other JSON email API, or a signed webhook.
+
+### People and automation
+
 - **People and roles:** with Cloudflare Access, add people as admins, managers or users, each with their own password and the permissions you tick. Pause someone until a date, sign them out everywhere, and let them reset a forgotten password by email. An optional Cloudflare Turnstile check guards the password pages.
 - **API at `/api`:** personal API keys for scripts, Zapier or Make and an [iOS Shortcut](docs/ios-shortcut.md). A key does only what it was given, can expire, and stops working when it's revoked.
-- **Several domains:** each short domain has its own slugs and stats. The admin can live on the primary domain or on a separate host.
-- **Weekly digest and alerts:** by Cloudflare Email Service, Resend, Postmark, SendGrid, Mailgun or a signed webhook.
+- **Webhooks:** signed events for links created, changed or deleted, destinations down or back, and click milestones, with retries and a delivery log.
 
-| Links | Link statistics |
+## Screenshots
+
+| All links | One link |
 |---|---|
-| ![All links with tags, click counts and status](docs/images/links.png) | ![One link's statistics, QR code and edit actions](docs/images/link-detail.png) |
-| **Short domains** | **Custom 404 page** |
-| ![Settings → Short domains: the domain list, Remove, and a guided setup for a new domain](docs/images/settings-domains.png) | ![The not-found page visitors see for an unknown slug](docs/images/not-found.png) |
+| ![All links with tags, badges for smart, protected and limited links, click counts and status](docs/images/links.png) | ![A link page: actions, the destination check and its statistics](docs/images/link-detail.png) |
+| **Smart routing rules** | **Where routed visitors went** |
+| ![The smart routing editor: an A/B split for desktop visitors and the simulator](docs/images/routing.png) | ![Smart routing results: clicks per rule and per A/B variant](docs/images/routing-results.png) |
+| **Social preview** | **QR studio** |
+| ![The social preview editor with an uploaded image and a LinkedIn mockup](docs/images/social-preview.png) | ![The QR studio: purple dots, rounded corners and a caption, with a scan test](docs/images/qr.png) |
+| **Full statistics** | **Link health** |
+| ![Full statistics: countries, cities, sources, referrers, devices and operating systems](docs/images/stats.png) | ![Link health: destinations that work, one that doesn't with a Fix button, and one that can't be checked](docs/images/link-health.png) |
+| **People and roles** | **Short domains** |
+| ![Settings → People: an owner, an admin, a manager and users, one of them paused](docs/images/people.png) | ![Settings → Short domains: the domain list and a guided setup for a new domain](docs/images/settings-domains.png) |
 
-<sub>Screenshots from local development with `npm run seed:dev` sample data.</sub>
+What visitors see:
+
+| Password-protected link | Link no longer working | Unknown slug |
+|---|---|---|
+| ![The password page of a protected link](docs/images/link-password.png) | ![A retired link's page, pointing to its replacement](docs/images/link-retired.png) | ![The custom 404 page](docs/images/not-found.png) |
+
+<sub>Screenshots from local development with sample links and made-up stats.</sub>
 
 ## Quick start
 
@@ -138,7 +173,7 @@ npm run types            # then regenerate worker-configuration.d.ts
 | `ADMIN_EMAIL` | var | The Access identities allowed in (comma-separated) |
 | `CF_ACCOUNT_ID` | var | For Analytics Engine SQL queries |
 | `AE_DATASET` | var | The Analytics Engine dataset name (letters, digits, `_`) |
-| `WORKERS_PLAN` | var | `free` or `paid`; System status checks the password hash cost against it |
+| `WORKERS_PLAN` | var | `free` or `paid`. Sizes bulk work (republish pages, import batches, destination checks per run) to the plan's 50 or 10,000 calls per invocation, and System status checks the password hash cost against it |
 | `API_TOKEN_SCOPE` | var | `create` (default): the API token reads, creates links and imports new ones. `full`: it can also change and delete links and settings. Anything else means `create` |
 | `KV_CACHE_TTL` | var | Edge cache for slug lookups in seconds (default 60; values under 30 fall back to 60) |
 | `DIGEST_PROVIDER` | var | Default delivery: `cloudflare`, `resend`, `emailit`, `postmark`, `sendgrid`, `mailgun`, `custom`, `webhook` or `off`. Settings → Statistics & email → Weekly digest → **Set up email** can override it (and `DIGEST_FROM`) without a deploy |
