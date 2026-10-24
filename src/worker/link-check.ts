@@ -1,10 +1,12 @@
 // Destination checks: visits each link's target on a schedule and records
 // whether it still loads. A target shared by several links is checked once.
 //
-// Budget: a Free-plan invocation may make 50 outbound requests, and every
-// redirect hop is one. A run stops starting new checks when its budget is
-// nearly spent; whatever is left stays due and is picked up next time, the
-// longest-waiting first.
+// Budget: a Free-plan invocation may make 50 subrequests (fetches, KV and D1
+// calls alike), and every redirect hop is one. A run's fetch budget and the
+// number of destinations it looks at come from the Workers plan
+// (src/worker/plan.ts), leaving room for the run's own D1 work and an email.
+// A run stops starting new checks when its budget is nearly spent; whatever
+// is left stays due and is picked up next time, the longest-waiting first.
 //
 // Safety: only links' own targets are ever fetched (never a URL from a
 // request), redirects are followed by hand so every hop is checked against
@@ -39,12 +41,9 @@ import type { CheckSettings, LinkChecksDTO, TargetCheckDTO } from "../shared/typ
 import { getSetting, nowSec, setSettingStmt } from "./db";
 import { domainsOf } from "./domains";
 import { MailerError, mailerStatus, sendMail, withMailSettings } from "./mailer";
+import { planLimits } from "./plan";
 import { emit } from "./webhooks";
 
-/** Outbound requests one run may spend on checks (leaves room for an email). */
-export const RUN_BUDGET = 40;
-/** Most destinations one scheduled run looks at. */
-export const RUN_LIMIT = 25;
 /** Concurrent checks in a run. */
 const POOL = 4;
 /** A check is only started with at least this much budget left. */
@@ -82,7 +81,8 @@ export async function getCheckSettings(db: D1Database): Promise<CheckSettings> {
  * working (and refusing) destinations are rescheduled from their last check in
  * the same batch, while failing ones keep their retry times.
  */
-export async function saveCheckSettings(db: D1Database, input: Partial<CheckSettings>): Promise<CheckSettings> {
+export async function saveCheckSettings(env: Env, input: Partial<CheckSettings>): Promise<CheckSettings> {
+  const db = env.DB;
   const prev = await getCheckSettings(db);
   const next: CheckSettings = {
     enabled: input.enabled ?? prev.enabled,
@@ -91,7 +91,7 @@ export async function saveCheckSettings(db: D1Database, input: Partial<CheckSett
   };
   const writes = [setSettingStmt(db, SETTINGS_KEY, JSON.stringify(next))];
   if (next.everyHours !== prev.everyHours) {
-    const { okInterval } = await schedule(db, nowSec(), next.everyHours);
+    const { okInterval } = await schedule(env, nowSec(), next.everyHours);
     writes.push(
       db
         .prepare(
@@ -247,10 +247,10 @@ export interface CheckRunResult {
 }
 
 /** Distinct destinations that are checked, and how often a working one is: the chosen frequency, stretched for large collections. */
-async function schedule(db: D1Database, now: number, everyHours: number): Promise<{ destinations: number; okInterval: number }> {
-  const row = await db.prepare(`SELECT COUNT(DISTINCT url) AS n FROM link_destinations WHERE ${MONITORED("?1")}`).bind(now).first<{ n: number }>();
+async function schedule(env: Env, now: number, everyHours: number): Promise<{ destinations: number; okInterval: number }> {
+  const row = await env.DB.prepare(`SELECT COUNT(DISTINCT url) AS n FROM link_destinations WHERE ${MONITORED("?1")}`).bind(now).first<{ n: number }>();
   const destinations = row?.n ?? 0;
-  return { destinations, okInterval: okIntervalFor(destinations, RUNS_PER_DAY * RUN_LIMIT, everyHours * 3600) };
+  return { destinations, okInterval: okIntervalFor(destinations, RUNS_PER_DAY * planLimits(env).checkLimit, everyHours * 3600) };
 }
 
 /** Checks the given targets (in order, within the budget) and stores the results. */
@@ -262,7 +262,7 @@ async function checkAndStore(
   settings: CheckSettings,
 ): Promise<CheckRunResult> {
   const now = nowSec();
-  const { okInterval } = await schedule(env.DB, now, settings.everyHours);
+  const { okInterval } = await schedule(env, now, settings.everyHours);
   const queue = [...items];
   const results: { target: string; prev: CheckRow | null; outcome: CheckOutcome }[] = [];
   const worker = async () => {
@@ -339,9 +339,10 @@ async function emitHealthChanges(env: Env, results: { target: string; prev: Chec
 export async function runLinkChecks(env: Env, opts: { budget?: Budget; fetcher?: typeof fetch; force?: boolean } = {}): Promise<CheckRunResult & { skipped?: string }> {
   const settings = await getCheckSettings(env.DB);
   if (!settings.enabled && !opts.force) return { checked: 0, remaining: 0, newlyDown: [], recovered: [], skipped: "Destination checks are turned off" };
-  const budget = opts.budget ?? { left: RUN_BUDGET };
+  const { checkBudget, checkLimit } = planLimits(env);
+  const budget = opts.budget ?? { left: checkBudget };
   // Look further ahead than one run's worth, so a site with many links can't fill the run.
-  const due = spreadByHost(await dueTargets(env.DB, nowSec(), RUN_LIMIT * 4), RUN_LIMIT, MAX_PER_HOST_PER_RUN);
+  const due = spreadByHost(await dueTargets(env.DB, nowSec(), checkLimit * 4), checkLimit, MAX_PER_HOST_PER_RUN);
   const result = await checkAndStore(env, due, budget, opts.fetcher ?? fetch, settings);
   await env.DB.prepare("DELETE FROM target_checks WHERE target NOT IN (SELECT url FROM link_destinations)").run();
   if (settings.notify) await notifyChanges(env);
@@ -352,7 +353,7 @@ export async function runLinkChecks(env: Env, opts: { budget?: Budget; fetcher?:
 export async function recheckProblems(env: Env, fetcher: typeof fetch = fetch): Promise<CheckRunResult> {
   const settings = await getCheckSettings(env.DB);
   const items = spreadByHost(await dueTargets(env.DB, nowSec(), 200, "problems"), 200, MAX_PER_HOST_PER_RUN * 2);
-  const result = await checkAndStore(env, items, { left: RUN_BUDGET }, fetcher, settings);
+  const result = await checkAndStore(env, items, { left: planLimits(env).checkBudget }, fetcher, settings);
   if (settings.notify) await notifyChanges(env);
   return result;
 }
@@ -491,8 +492,8 @@ export async function listChecks(env: Env): Promise<Omit<LinkChecksDTO, "lastRun
   }
   const items = [...grouped.entries()].map(([target, links]) => toDTO(target, byTarget.get(target), links));
   const overdue = items.filter((i) => i.nextAt !== null && i.nextAt < now - 3600).length + items.filter((i) => i.state === "unchecked").length;
-  const { okInterval } = await schedule(db, now, settings.everyHours);
-  return { settings, items, excluded: excluded?.n ?? 0, overdue, capacityPerDay: RUNS_PER_DAY * RUN_LIMIT, intervalHours: okInterval / 3600, perHostPerRun: MAX_PER_HOST_PER_RUN };
+  const { okInterval } = await schedule(env, now, settings.everyHours);
+  return { settings, items, excluded: excluded?.n ?? 0, overdue, capacityPerDay: RUNS_PER_DAY * planLimits(env).checkLimit, intervalHours: okInterval / 3600, perHostPerRun: MAX_PER_HOST_PER_RUN };
 }
 
 /** One link's checks (its target, and any smart-routing destinations), or why it isn't checked. */
@@ -547,7 +548,7 @@ export async function checkLinkNow(env: Env, domain: string, slug: string, fetch
     .bind(domain, slug)
     .all<CheckRow & { status: CheckStatus | null }>();
   const settings = await getCheckSettings(env.DB);
-  const result = await checkAndStore(env, results.map((r) => ({ target: r.target, row: r.status === null ? null : r })), { left: RUN_BUDGET }, fetcher, settings);
+  const result = await checkAndStore(env, results.map((r) => ({ target: r.target, row: r.status === null ? null : r })), { left: planLimits(env).checkBudget }, fetcher, settings);
   if (result.checked && settings.notify) await notifyChanges(env);
   return result.checked > 0;
 }

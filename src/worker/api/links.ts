@@ -16,7 +16,8 @@ import { fullTokenScope, TOKEN_SCOPE_ERROR } from "../auth";
 import { getDefaultUtm, getLink, kvKey, nowSec, publish, toDTO, type LinkRow } from "../db";
 import { configuredDomains, domainsOf, isConfiguredDomain, NO_DOMAIN_ERROR, selfHosts, shortOrigin } from "../domains";
 import { csv, validate, type AppEnv } from "../hono";
-import { changedFields, emit, linkPayload } from "../webhooks";
+import { planLimits } from "../plan";
+import { changedFields, emit, emitAll, linkPayload } from "../webhooks";
 import { deletedLinks, getVersion, listVersions, SNAPSHOT_SQL, versionStmt } from "../history";
 import { clicksByLink } from "../stats-data";
 
@@ -172,9 +173,6 @@ function restoreProblem(c: Context<AppEnv>, r: LinkRow): string | null {
   }
   return null;
 }
-
-/** Import events sent straight away; the rest wait for the cron (outbound request limits). */
-const IMPORT_EVENTS_NOW = 5;
 
 const PUBLISH_FAILED = "Saved, but publishing to KV failed. Save it again in a minute, or use “Republish all links” in Settings → General.";
 
@@ -530,6 +528,11 @@ export const linksApi = new Hono<AppEnv>()
   .post("/import", validate("json", importSchema), async (c) => {
     if (!configuredDomains(c.env).length) return c.json({ error: NO_DOMAIN_ERROR, code: "no_domain" }, 409);
     const { rows, mode, dryRun, defaultDomain } = c.req.valid("json");
+    // Each row costs a KV write, and an invocation has 50 subrequests on Workers Free (src/worker/plan.ts).
+    const { importRows, deliveriesNow } = planLimits(c.env);
+    if (rows.length > importRows) {
+      return c.json({ error: `Import at most ${importRows} rows per request on this Workers plan; send the rest in further requests.`, code: "too_many_rows" }, 413);
+    }
     // Up front, even for a dry run, so a chunked import can't stop halfway.
     if (mode === "overwrite" && !can(c.get("actor"), "links.edit")) {
       return c.json({ error: "Overwriting existing links needs the Edit links permission." }, 403);
@@ -682,13 +685,13 @@ export const linksApi = new Hono<AppEnv>()
           }),
         ),
       );
-      // New links only. The first few are sent now; the cron sends the rest, a few each run.
+      // New links only, queued in one round trip. The first few deliveries go now; the cron sends the rest, a few each run.
       const created = new Set(results.filter((r) => r.status === "created").map((r) => linkKey(r.domain, r.slug)));
-      let sentNow = 0;
-      for (const r of saved) {
-        if (!created.has(linkKey(r.domain, r.slug))) continue;
-        await emit(c.env, "link.created", { link: linkPayload(r), imported: true }, sentNow++ < IMPORT_EVENTS_NOW ? { ctx: c.executionCtx } : {});
-      }
+      await emitAll(
+        c.env,
+        saved.filter((r) => created.has(linkKey(r.domain, r.slug))).map((r) => ({ type: "link.created" as const, data: { link: linkPayload(r), imported: true } })),
+        { ctx: c.executionCtx, now: deliveriesNow },
+      );
       for (const res of results) {
         if (failed.has(linkKey(res.domain, res.slug))) {
           res.status = "error";
@@ -710,21 +713,22 @@ export const linksApi = new Hono<AppEnv>()
   })
 
   .post("/resync", validate("query", resyncQuerySchema), async (c) => {
-    // Republishes links to KV in pages of 200 (keeps each call well inside
-    // per-invocation limits). Call again with `next` until it is null.
+    // Republishes links to KV in pages sized to the Workers plan (one KV write
+    // each; src/worker/plan.ts). Call again with `next` until it is null.
     const { after = "", scope } = c.req.valid("query");
+    const page = planLimits(c.env).bulkPage;
     const cut = after.indexOf("/");
     const [afterDomain, afterSlug] = cut === -1 ? [after, ""] : [after.slice(0, cut), after.slice(cut + 1)];
     const onlyDefaultUtm = scope === "default-utm" ? " AND utm = 1 AND utm_template IS NULL" : "";
     const { results } = await c.env.DB.prepare(
-      `SELECT * FROM links WHERE (domain > ?1 OR (domain = ?1 AND slug > ?2))${onlyDefaultUtm} ORDER BY domain, slug LIMIT 200`,
+      `SELECT * FROM links WHERE (domain > ?1 OR (domain = ?1 AND slug > ?2))${onlyDefaultUtm} ORDER BY domain, slug LIMIT ?3`,
     )
-      .bind(afterDomain, afterSlug)
+      .bind(afterDomain, afterSlug, page)
       .all<LinkRow>();
     const defaultUtm = await getDefaultUtm(c.env.DB);
     await Promise.all(results.map((r) => publish(c.env, r, defaultUtm)));
     const last = results.at(-1);
-    return c.json({ published: results.length, next: results.length === 200 && last ? linkKey(last.domain, last.slug) : null });
+    return c.json({ published: results.length, next: results.length === page && last ? linkKey(last.domain, last.slug) : null });
   })
 
   .get("/export/links.csv", async (c) => {

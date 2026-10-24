@@ -3,6 +3,21 @@
 What changed in each Shorthop release, and what to do when you upgrade.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- **Workers Free:** one invocation may make 50 calls (fetches, KV, D1 and Durable Object calls alike), and several bulk jobs made more: Republish all links and Remove domain worked in pages of 200 KV writes, an import published up to 100 at once, the daily cron pruned up to 400 upload records, and a busy destination-check run could pass 50 with webhooks due. On Free these failed partway with "Too many subrequests"; after a default-UTM change, links on the default template kept the old tags. Every bulk job is now sized from `WORKERS_PLAN` (`src/worker/plan.ts`): Free gets pages of 40 links, imports of 20 rows per request, 10 destination checks and 2 webhook deliveries per run, and a rollup that continues over several runs when it has many days to catch up; Paid keeps the previous sizes. The import page splits files to the plan's size; the API answers `413` with the limit when a script sends more. The daily cleanup (login events, salts, expired keys, history, unused uploads) moved to the half-hourly cron's 02:00 UTC run, so it has an invocation to itself; no cron trigger changed.
+- Protected links answer with the "try again" page while a Deploy to Cloudflare install can't read its generated `SESSION_SECRET` from D1, instead of an error.
+- A click limit no longer loses a click when the counter answers after the visitor was already turned away: the click is given back.
+- The daily cron's prune jobs log their failures as the other jobs do.
+
+### Changed
+
+- **API lockouts** double up to an hour instead of a day (login lockouts still go up to a day), and a request with no `Authorization` header at all isn't counted as a wrong key. A network is often shared by several people and devices, and one script with a stale key mustn't lock the others out of the API for a day ([SECURITY.md](SECURITY.md)).
+- "Admin password is not configured" now says what to do, for both ways of installing: set the `ADMIN_PASSWORD` secret under the Worker's Settings → Variables and Secrets, or run `npm run setup -- password`.
+- `WORKERS_PLAN` is documented as sizing bulk work, not only the password hash cost; say `free` unless you pay for Workers.
+
 ## [1.1.0] - 2026-10-24
 
 ### Added

@@ -19,7 +19,7 @@ import {
   RESET_TTL_SEC,
 } from "../shared/login-policy";
 import { hashPassword, MAX_PASSWORD_LENGTH, parsePasswordHash } from "../shared/password";
-import { adminAuthMode, NOT_ALLOWED, verifyAdmin, verifyIdentity, verifySession } from "./auth";
+import { adminAuthMode, NOT_ALLOWED, PASSWORD_UNCONFIGURED, verifyAdmin, verifyIdentity, verifySession } from "./auth";
 import { readCapped } from "./body";
 import { nowSec } from "./db";
 import { isLocalHost } from "./domains";
@@ -260,7 +260,7 @@ loginApp.post("/_admin/login", async (c) => {
   const access = await verifyIdentity(req, env);
   if (!access.ok) return forbiddenPage(access.reason);
   const cfg = loginConfig(env);
-  if (!cfg) return forbiddenPage("Admin password is not configured.");
+  if (!cfg) return forbiddenPage(PASSWORD_UNCONFIGURED);
   const user = access.owner ? null : await getUser(env.DB, access.email);
   if (!access.owner && !user) return forbiddenPage(NOT_ALLOWED.reason);
 
@@ -344,7 +344,7 @@ loginApp.get("/_admin/forgot", async (c) => {
   const env = c.env;
   const access = await verifyIdentity(c.req.raw, env);
   if (!access.ok) return forbiddenPage(access.reason);
-  if (!loginConfig(env)) return forbiddenPage("Admin password is not configured.");
+  if (!loginConfig(env)) return forbiddenPage(PASSWORD_UNCONFIGURED);
   if (access.owner) return ownerReset();
   const user = await getUser(env.DB, access.email);
   if (!user) return forbiddenPage(NOT_ALLOWED.reason);
@@ -358,7 +358,7 @@ loginApp.post("/_admin/forgot", async (c) => {
   const access = await verifyIdentity(c.req.raw, env);
   if (!access.ok) return forbiddenPage(access.reason);
   const cfg = loginConfig(env);
-  if (!cfg) return forbiddenPage("Admin password is not configured.");
+  if (!cfg) return forbiddenPage(PASSWORD_UNCONFIGURED);
   if (access.owner) return ownerReset();
   const user = await getUser(env.DB, access.email);
   if (!user) return forbiddenPage(NOT_ALLOWED.reason);
@@ -423,7 +423,7 @@ for (const kind of ["invite", "reset"] as const) {
     if (!access.ok) return forbiddenPage(access.reason);
     if (access.owner) return forbiddenPage(LINK_TEXT[kind].owners);
     const cfg = loginConfig(env);
-    if (!cfg) return forbiddenPage("Admin password is not configured.");
+    if (!cfg) return forbiddenPage(PASSWORD_UNCONFIGURED);
     const now = nowSec();
     const key = await ipHash(cfg, c.req.header("CF-Connecting-IP") ?? "unknown");
     const lockedUntil = await tokenLockedUntil(env.DB, key, now);
@@ -443,7 +443,7 @@ for (const kind of ["invite", "reset"] as const) {
     if (!access.ok) return forbiddenPage(access.reason);
     if (access.owner) return forbiddenPage(LINK_TEXT[kind].owners);
     const cfg = loginConfig(env);
-    if (!cfg) return forbiddenPage("Admin password is not configured.");
+    if (!cfg) return forbiddenPage(PASSWORD_UNCONFIGURED);
     const form = await readForm(c);
     if (form instanceof Response) return form;
 

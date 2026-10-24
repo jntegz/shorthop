@@ -444,6 +444,8 @@ export interface MeDTO {
     adminHost: string;
     /** Sample data from `npm run seed:dev`, or null. */
     demo: DemoDTO | null;
+    /** Rows one import request may carry: sized to the Workers plan's subrequest limit. */
+    importRows: number;
   };
 }
 

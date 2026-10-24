@@ -29,6 +29,12 @@ export class ClickCap extends DurableObject<Env> {
     return { ok: count < limit, count };
   }
 
+  /** Gives one click back (the visitor it was counted for never got through). */
+  release(): void {
+    const count = this.read();
+    if (count > 0) this.ctx.storage.kv.put("count", count - 1);
+  }
+
   reset(): void {
     this.ctx.storage.kv.put("count", 0);
   }
@@ -41,14 +47,33 @@ function stub(env: Env, domain: string, slug: string) {
   return env.CLICK_CAPS.get(env.CLICK_CAPS.idFromName(`${domain}/${slug}`));
 }
 
-export async function capAdmit(env: Env, domain: string, slug: string, limit: number, countIt: boolean): Promise<CapResult> {
+/**
+ * Admits (and counts) or peeks at one click. If the object doesn't answer in
+ * time, the visitor is turned away; should the object still have counted that
+ * click, it is given back in the background so the limit isn't spent on
+ * someone who never got through.
+ */
+export async function capAdmit(env: Env, domain: string, slug: string, limit: number, countIt: boolean, ctx?: { waitUntil(p: Promise<unknown>): void }): Promise<CapResult> {
   const s = stub(env, domain, slug);
   const work = countIt ? s.admit(limit) : s.peek(limit);
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let timedOut = false;
   try {
-    return await Promise.race([work, new Promise<never>((_, reject) => (timer = setTimeout(() => reject(new Error("click counter timed out")), CAP_TIMEOUT_MS)))]);
+    return await Promise.race([
+      work,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          timedOut = true;
+          reject(new Error("click counter timed out"));
+        }, CAP_TIMEOUT_MS);
+      }),
+    ]);
   } finally {
     if (timer !== undefined) clearTimeout(timer);
+    if (timedOut && countIt) {
+      const giveBack = work.then((r) => (r.ok ? s.release() : undefined)).catch(() => undefined);
+      if (ctx) ctx.waitUntil(giveBack);
+    }
   }
 }
 

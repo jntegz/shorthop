@@ -10,7 +10,7 @@ import { Badge, Button, Card, CardHeader, Field, Notice, PageHeader, Select } fr
 import { num } from "../lib/format";
 import { IMPORT_HELP } from "../lib/help";
 import { linkKey, useDomains, useLinkLabel } from "../lib/links";
-import { useCan } from "../lib/me";
+import { useCan, useMe } from "../lib/me";
 import { download } from "../lib/utils";
 
 type Raw = Record<string, unknown>;
@@ -79,7 +79,8 @@ function mapRows(rows: Raw[], m: Mapping): Mapped[] {
     .filter((r) => r.slug || r.target);
 }
 
-const CHUNK = 100;
+/** Rows per request until /me says what the Workers plan allows. */
+const DEFAULT_CHUNK = 20;
 
 /** Shown on the page and offered as a download. A Links → Export CSV file is accepted too. */
 const EXAMPLE_CSV = `slug,target,title,tags,created_at,imported_clicks
@@ -127,6 +128,7 @@ function FormatHelp() {
 
 export function Import() {
   const canEdit = useCan()("links.edit");
+  const chunkSize = useMe().data?.workspace.importRows ?? DEFAULT_CHUNK;
   const qc = useQueryClient();
   const [fileName, setFileName] = useState("");
   const [rows, setRows] = useState<Raw[]>([]);
@@ -207,15 +209,15 @@ export function Import() {
     setResult(null);
     const acc: ImportResult = { dryRun, created: 0, updated: 0, skipped: 0, errors: 0, rows: [] };
     try {
-      for (let i = 0; i < total; i += CHUNK) {
-        const chunk = selected.slice(i, i + CHUNK).map((r) => ({ ...r, domain: r.domain || undefined }));
+      for (let i = 0; i < total; i += chunkSize) {
+        const chunk = selected.slice(i, i + chunkSize).map((r) => ({ ...r, domain: r.domain || undefined }));
         const res = await call(api.import.$post({ json: { rows: chunk, mode, dryRun, defaultDomain: fallback || undefined } }));
         acc.created += res.created;
         acc.updated += res.updated;
         acc.skipped += res.skipped;
         acc.errors += res.errors;
         acc.rows.push(...res.rows);
-        setProgress({ done: Math.min(i + CHUNK, total), total });
+        setProgress({ done: Math.min(i + chunkSize, total), total });
       }
       setResult(acc);
       if (!dryRun) {

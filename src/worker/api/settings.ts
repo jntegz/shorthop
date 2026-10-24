@@ -182,7 +182,6 @@ export const settingsApi = new Hono<AppEnv>()
     // Failures recorded with the old setup don't say anything about the new one.
     await forgetJob(c.env.DB, "digest", "alert");
     console.log(JSON.stringify({ message: "mail settings changed", provider: settings.provider, by: c.get("identity") }));
-    await forgetJob(c.env.DB, "digest", "alert");
     return c.json({ settings, problem: mailerStatus(applyMailSettings(c.env, settings)).problem });
   })
 

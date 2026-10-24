@@ -199,7 +199,9 @@ ${sendEmail}
     "KV_CACHE_TTL": "60",
     // The Analytics Engine dataset above (letters, digits and _ only).
     "AE_DATASET": ${j(c.aeDataset)},
-    // "free" or "paid": System status checks the password hash cost against it.
+    // "free" or "paid". Sizes bulk work (republish pages, import batches, checks
+    // per run) to the plan's subrequest limit, and System status checks the
+    // password hash cost against it. Say "free" unless you pay for Workers.
     "WORKERS_PLAN": ${j(c.plan)},
     // What the API token may do: "create" reads, creates links and imports new
     // ones; "full" also changes and deletes links and settings.
@@ -371,6 +373,7 @@ const BUTTON_COMMENTS: Record<string, string[]> = {
   "vars.CF_ACCOUNT_ID": ["Your account ID: with the CF_ANALYTICS_TOKEN secret, it makes the stats readable (docs/SETUP.md#analytics)."],
   "vars.SHORT_DOMAINS": ["Short domains, comma-separated, primary first. Each needs a route above. Links can't be created until one is set."],
   "vars.FALLBACK_URL": ['Where "/" goes, and clicks when the link store can\'t be read. Your own site.'],
+  "vars.WORKERS_PLAN": ['"free" or "paid": sizes republish pages, import batches and checks per run to the plan\'s limit. Say "free" unless you pay for Workers.'],
   "vars.DIGEST_PROVIDER": ["Email is off. Turn it on in the admin: Settings → Statistics & email → Set up email."],
 };
 

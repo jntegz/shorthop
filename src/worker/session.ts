@@ -240,9 +240,9 @@ export async function chargeAttempt(db: D1Database, key: string, now: number, wi
   return { fails: row?.fails ?? 1, lockedUntil: row?.locked_until ?? 0, lockouts: row?.lockouts ?? 0, windowStart: row?.window_start ?? now };
 }
 
-/** Locks a key: 1 minute, doubling with every lockout in a row, at most a day. Returns the unlock time. */
-export async function lock(db: D1Database, key: string, now: number, lockouts: number): Promise<number> {
-  const until = now + Math.min(LOCK_BASE_SEC * 2 ** lockouts, LOCK_MAX_SEC);
+/** Locks a key: 1 minute, doubling with every lockout in a row, at most `maxSec` (a day). Returns the unlock time. */
+export async function lock(db: D1Database, key: string, now: number, lockouts: number, maxSec = LOCK_MAX_SEC): Promise<number> {
+  const until = now + Math.min(LOCK_BASE_SEC * 2 ** lockouts, maxSec);
   await db
     .prepare("UPDATE auth_failures SET locked_until = ?2, lockouts = lockouts + 1, fails = 0, window_start = ?3, updated_at = ?3 WHERE key = ?1")
     .bind(key, until, now)

@@ -17,6 +17,7 @@ import { nowSec } from "./db";
 import { CHECK_USER_AGENT } from "./link-check";
 import { sniffImageType } from "./not-found";
 import { HSTS } from "./pages";
+import { planLimits } from "./plan";
 
 /** The preview as the redirect needs it (in the link's KV record). */
 export interface KvPreview {
@@ -123,16 +124,16 @@ export async function servePreviewImage(env: Env, url: URL, ctx: ExecutionContex
   return res;
 }
 
-/** Daily: deletes uploads (preview images, QR logos) nothing uses, once they're a day old. */
+/** Daily: deletes uploads (preview images, QR logos) nothing uses, once they're a day old; a plan-sized batch per run (two calls each). */
 export async function prunePreviewImages(env: Env, now = nowSec()): Promise<number> {
   const { results } = await env.DB.prepare(
     `SELECT key FROM preview_images p WHERE created_at < ?1
      AND NOT EXISTS (SELECT 1 FROM links WHERE instr(preview, p.key) > 0 OR instr(qr, p.key) > 0)
      AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'qr_default' AND instr(value, p.key) > 0)
      AND NOT EXISTS (SELECT 1 FROM link_versions WHERE instr(snapshot, p.key) > 0)
-     LIMIT 200`,
+     LIMIT ?2`,
   )
-    .bind(now - ORPHAN_AFTER_SEC)
+    .bind(now - ORPHAN_AFTER_SEC, planLimits(env).prunedUploads)
     .all<{ key: string }>();
   for (const { key } of results) {
     await env.LINKS.delete(kvImageKey(key));

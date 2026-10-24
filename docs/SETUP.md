@@ -44,8 +44,10 @@ You don't need to create any DNS record for the short links: the deploy attaches
 | CPU per request | 10 ms | 30 s |
 | KV writes | 1,000 a day (one per link save or republish) | 1 million a month included |
 | Admin password hash | 25,000 PBKDF2 iterations | 100,000 iterations |
+| Calls per invocation | 50 (every fetch, KV, D1 and Durable Object call counts) | 10,000 |
+| Bulk work, sized to that | Republish and remove-domain pages of 40 links, imports of 20 rows per request, 10 destination checks per run | Pages of 200, imports of 100, 25 checks per run |
 
-A personal shortener usually fits Free. The setup asks which plan you're on and picks the password hash cost to match, because PBKDF2 at 100,000 iterations can exceed Free's 10 ms CPU limit and make logins fail. You can switch later: change the plan in Cloudflare, then run `npm run setup`, pick the new plan and choose a new password. [CLOUDFLARE-FREE-TIER.md](CLOUDFLARE-FREE-TIER.md) lists every service's allowance.
+A personal shortener usually fits Free. The setup asks which plan you're on and writes it to `WORKERS_PLAN`, which does two things: it picks the password hash cost (PBKDF2 at 100,000 iterations can exceed Free's 10 ms CPU limit and make logins fail), and it sizes every bulk job to the plan's calls-per-invocation limit, so a republish, an import, a domain removal or a cron run never fails halfway with "Too many subrequests". Say Free unless you pay for Workers: a Free account set to Paid gets pages too large for it. You can switch later: change the plan in Cloudflare, then run `npm run setup`, pick the new plan and choose a new password. [CLOUDFLARE-FREE-TIER.md](CLOUDFLARE-FREE-TIER.md) lists every service's allowance.
 
 On Free, the 100,000 requests are a hard daily cap: once they're used up, every short link fails until midnight UTC. Add the rate-limiting rule from [SECURITY.md](../SECURITY.md#daily-cap); choose Paid if your links must not go down.
 
@@ -287,7 +289,7 @@ The setup creates these for you:
 | Analytics Engine dataset | `AE_DATASET` (default `<worker>_clicks`) | One data point per click; created on the first write |
 | Durable Object `ClickCap` | (none) | Exact click counts for links with a click limit; created on the first deploy, used only by those links |
 
-Three cron triggers run the Worker's jobs: the daily rollup (01:15 UTC), the weekly digest (Mondays 07:00 UTC) and the destination checks (every 30 minutes). Workers Free allows 5 per account.
+Three cron triggers run the Worker's jobs: the daily rollup (01:15 UTC), the weekly digest (Mondays 07:00 UTC) and the destination checks with webhook retries (every 30 minutes; the 02:00 UTC run does the daily cleanup of old login events, salts, expired keys, history and unused uploads instead). Each run is one invocation, sized to the plan ([Free or Paid](#plan)). Workers Free allows 5 triggers per account.
 
 It reads the KV and D1 ids back from Wrangler's list commands and writes them into `wrangler.jsonc`. A config without them can't be deployed: `npm run deploy` refuses it, because Wrangler would otherwise create new, empty resources.
 
@@ -439,7 +441,9 @@ Afterwards, open `https://<admin host>/_admin/`. Dashboard → **System status**
 | Admin shows "This account is not allowed" | You signed in to Access with an email that isn't in `ADMIN_EMAIL` and isn't in Settings → People |
 | "Add a short domain first" when creating a link | `SHORT_DOMAINS` is empty, as after the [Deploy to Cloudflare button](#deploy-button): add your domain |
 | The API or the iOS Shortcut gets a sign-in page or `HTTP 302` | Cloudflare Access covers `/api`. Edit the Access application so it protects only the paths `_admin` and `_admin/*`, not the whole domain ([Cloudflare Access](#access)) |
-| Admin shows "Admin password is not configured" | `npm run setup -- password` |
+| Admin shows "Admin password is not configured" | `npm run setup -- password`, or on a Deploy to Cloudflare install set the `ADMIN_PASSWORD` secret (9 or more characters) under the Worker's Settings → Variables and Secrets |
+| "Too many subrequests" in the logs, or Republish all links, an import or Remove domain fails partway | `WORKERS_PLAN` says `paid` on a Free account: set it to `free` and deploy ([Free or Paid](#plan)) |
+| Import answers `413` "Import at most 20 rows per request" | A script sends more rows than the plan allows per request; the admin's import page already splits files to fit. Send smaller batches, or set `WORKERS_PLAN` to `paid` if you are on Paid |
 | `ADMIN_AUTH must be empty, "access+password" or "password"` | A typo in `ADMIN_AUTH` in `wrangler.jsonc`; fix it and deploy |
 | Logins fail or time out on Workers Free | The password hash is too expensive for 10 ms CPU: set the plan to Free in the setup, then `npm run setup -- password` |
 | Stats are empty | No analytics token (`npm run setup -- analytics`), or no clicks yet. "Today" is never shown in local dev |

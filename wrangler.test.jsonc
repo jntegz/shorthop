@@ -37,7 +37,8 @@
     "FALLBACK_URL": "https://example.com",
     "KV_CACHE_TTL": "60",
     "AE_DATASET": "shorthop_test_clicks",
-    "WORKERS_PLAN": "free",
+    // Paid: the large pages most tests expect. Free-plan sizing has its own tests (links-api.test.ts).
+    "WORKERS_PLAN": "paid",
     // Most API tests change links with the token; auth.test.ts covers the default scope.
     "API_TOKEN_SCOPE": "full",
     "DIGEST_PROVIDER": "cloudflare",

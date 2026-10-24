@@ -15,7 +15,7 @@ export const checksApi = new Hono<AppEnv>()
 
   // Partial: what's left out keeps its saved value.
   .put("/settings", validate("json", checkSettingsSchema), async (c) => {
-    return c.json({ settings: await saveCheckSettings(c.env.DB, c.req.valid("json")) });
+    return c.json({ settings: await saveCheckSettings(c.env, c.req.valid("json")) });
   })
 
   /** Warnings, failures and never-checked destinations, as many as one request can check. */

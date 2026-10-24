@@ -264,6 +264,30 @@ describe("resync, export and settings", () => {
     expect(await kv("r1")).not.toBeNull();
   });
 
+  it("sizes republish pages and import batches to the Workers plan", async () => {
+    const FREE = { WORKERS_PLAN: "free" };
+    const insert = env.DB.prepare("INSERT INTO links (domain, slug, target, created_at, updated_at) VALUES ('sh.example', ?, 'https://example.com/', 1, 1)");
+    await env.DB.batch(Array.from({ length: 45 }, (_, i) => insert.bind(`f${i}`)));
+    // Free: 40 KV writes a page, well inside the 50 subrequests an invocation gets.
+    const first = (await (await call(`${API}/resync`, { method: "POST", headers: bearer }, FREE)).json()) as { published: number; next: string | null };
+    expect(first.published).toBe(40);
+    expect(first.next).not.toBeNull();
+    const second = (await (await call(`${API}/resync?after=${encodeURIComponent(first.next!)}`, { method: "POST", headers: bearer }, FREE)).json()) as { published: number; next: string | null };
+    expect(second).toEqual({ published: 5, next: null });
+    // Paid takes the whole lot in one page.
+    const paid = (await (await call(`${API}/resync`, { method: "POST", headers: bearer })).json()) as { published: number; next: string | null };
+    expect(paid).toEqual({ published: 45, next: null });
+
+    const rows = Array.from({ length: 21 }, (_, i) => ({ slug: `imp${i}`, target: "https://example.com/" }));
+    const tooMany = await call(`${API}/import`, json({ rows }), FREE);
+    expect(tooMany.status).toBe(413);
+    expect(((await tooMany.json()) as { error: string }).error).toMatch(/20 rows/);
+    expect((await call(`${API}/import`, json({ rows: rows.slice(0, 20) }), FREE)).status).toBe(200);
+    expect((await call(`${API}/import`, json({ rows: rows.slice(20) }))).status).toBe(200);
+    const me = (await (await call(`${API}/me`, { headers: bearer }, FREE)).json()) as { workspace: { importRows: number } };
+    expect(me.workspace.importRows).toBe(20);
+  });
+
   it("exports links as CSV", async () => {
     await create({ slug: "csv1", target: "https://example.com/1", notes: "=cmd" });
     const res = await call(`${API}/export/links.csv`, { headers: bearer });

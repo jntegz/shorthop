@@ -1,11 +1,11 @@
 import { env } from "cloudflare:test";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { SESSION_TTL_SEC } from "../src/shared/login-policy";
+import { API_LOCK_MAX_SEC, SESSION_TTL_SEC } from "../src/shared/login-policy";
 import { hashPassword } from "../src/shared/password";
 import { nowSec } from "../src/worker/db";
 import { safeNext } from "../src/worker/login";
-import { getEpoch, globalLockedUntil, ipBucket, issueSessionCookie, loginConfig, loginEventStmt, recordGlobalFailure } from "../src/worker/session";
+import { getEpoch, globalLockedUntil, ipBucket, issueSessionCookie, lock, loginConfig, loginEventStmt, recordGlobalFailure } from "../src/worker/session";
 import { OWNER_EPOCH } from "../src/worker/users";
 import { bearer, call, ORIGIN, resetData } from "./helpers";
 import { addKey } from "./people";
@@ -659,6 +659,15 @@ describe("abuse limits", () => {
     const right = await call(`${ORIGIN}/api/links`, { headers: { ...bearer, ...ip } }, { AUTH_LIMITER: ALLOW_ALL });
     expect(right.status).toBe(429);
     expect((await call(`${ORIGIN}/api/links`, { headers: { ...bearer, "CF-Connecting-IP": "203.0.113.78" } })).status).toBe(200);
+  });
+
+  it("doesn't count requests without any token towards the lock, and caps API lockouts at an hour", async () => {
+    const ip = { "CF-Connecting-IP": "203.0.113.90" };
+    for (let i = 0; i < 12; i++) expect((await call(`${ORIGIN}/api/links`, { headers: ip })).status).toBe(401);
+    expect((await call(`${ORIGIN}/api/links`, { headers: { ...bearer, ...ip } })).status).toBe(200);
+    const now = nowSec();
+    expect(await lock(env.DB, "api:test", now, 20, API_LOCK_MAX_SEC)).toBe(now + API_LOCK_MAX_SEC);
+    expect(await lock(env.DB, "login:test", now, 20)).toBe(now + 86400);
   });
 
   it("hides login activity and the recipient from the API token", async () => {

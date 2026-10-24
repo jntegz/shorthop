@@ -8,6 +8,7 @@ import { getDefaultUtm, nowSec, statsSince } from "../db";
 import { demoStatus } from "../demo";
 import { configuredAdminHost, configuredDomains, domainsOf, shortOrigin } from "../domains";
 import { validate, type AppEnv } from "../hono";
+import { planLimits } from "../plan";
 import { chargeAttempt, clearFailuresStmt, getEpoch, issueSessionCookie, lock, loginConfig, verifyPasswordHash } from "../session";
 import { getUser } from "../users";
 
@@ -37,6 +38,7 @@ export const meApi = new Hono<AppEnv>()
         primaryDomain: list[0] ?? "",
         adminHost: configuredAdminHost(c.env),
         demo,
+        importRows: planLimits(c.env).importRows,
       },
     };
     return c.json(me);

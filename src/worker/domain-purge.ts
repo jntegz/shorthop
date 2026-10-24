@@ -10,12 +10,9 @@ import { addDays, utcDate } from "../shared/dates";
 import { linkKey } from "../shared/domains";
 import { getSetting, jsonChunks, setSettingStmt } from "./db";
 import { forgetDomainClears } from "./misses";
+import { planLimits } from "./plan";
 
 const PURGED = "domains_purged";
-/** Links removed per call, like /resync: keeps each call well inside per-invocation limits. */
-const PAGE = 200;
-/** KV operations one call may spend on deletes and the list (Workers allows 1000). */
-const KV_OPS_BUDGET = 900;
 /** AE keeps ~90 days, so older purges can't be resurrected and are dropped. */
 const PURGED_KEEP_DAYS = 92;
 
@@ -36,18 +33,22 @@ export interface PurgeResult {
   done: boolean;
 }
 
-/** Deletes a page of the domain's links; the last call also deletes its stats and misses. */
+/**
+ * Deletes a page of the domain's links (one KV delete each, sized to the
+ * Workers plan like /resync); the last call also deletes its stats and misses.
+ */
 export async function purgeDomain(env: Env, domain: string, now = new Date()): Promise<PurgeResult> {
+  const { bulkPage, purgeSweep } = planLimits(env);
   const { results } = await env.DB.prepare("SELECT slug FROM links WHERE domain = ? ORDER BY slug LIMIT ?")
-    .bind(domain, PAGE)
+    .bind(domain, bulkPage)
     .all<{ slug: string }>();
   const deleted = await deleteLinks(env, results.map((r) => ({ domain, slug: r.slug })));
-  if (results.length === PAGE) return { deleted, done: false };
+  if (results.length === bulkPage) return { deleted, done: false };
 
   // KV records without a D1 row (a failed write) would keep redirecting: sweep the prefix too.
   // The list can still return keys deleted just above (it is eventually consistent), so it is
-  // sized to keep this call's KV operations under the Workers limit of 1000.
-  const listed = await env.LINKS.list({ prefix: `${domain}/`, limit: Math.max(1, KV_OPS_BUDGET - deleted) });
+  // sized to keep this call's KV operations inside the plan's subrequest limit.
+  const listed = await env.LINKS.list({ prefix: `${domain}/`, limit: Math.max(1, purgeSweep - deleted) });
   await Promise.all(listed.keys.map((k) => env.LINKS.delete(k.name)));
   if (!listed.list_complete) return { deleted, done: false };
 

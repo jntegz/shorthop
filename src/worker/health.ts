@@ -9,16 +9,20 @@ import { escapeHtml } from "../shared/html";
 import type { HealthCheck, HealthStatus, JobRun, SystemHealthDTO } from "../shared/types";
 import { MIN_ADMIN_PASSWORD_LENGTH, parsePasswordHash, PLAN_ITERATIONS } from "../shared/password";
 import { aeAvailable } from "./ae";
+import { pruneDaySalts } from "./analytics";
 import { accessConfigured, adminAuthMode, legacyApiToken } from "./auth";
 import { getSetting, nowSec, setSettingStmt } from "./db";
 import { autoClearDemo } from "./demo";
 import { domainsOf } from "./domains";
 import { runDigest } from "./digest";
+import { pruneHistory } from "./history";
 import { MailerError, mailerStatus, providerName, sendMail, withMailSettings } from "./mailer";
+import { prunePreviewImages } from "./preview";
 import { runRollup, type RollupResult } from "./rollup";
 import { getCheckSettings, runLinkChecks } from "./link-check";
+import { pruneApiKeys } from "./users";
 import { checkMilestones, deliver, pruneDeliveries } from "./webhooks";
-import { loginConfig, plainAdminPassword } from "./session";
+import { loginConfig, plainAdminPassword, pruneLoginState } from "./session";
 
 type Job = "rollup" | "digest" | "alert" | "links";
 const JOBS_KEY = "job_runs";
@@ -73,6 +77,36 @@ export async function scheduledLinkChecks(env: Env): Promise<void> {
   } catch (err) {
     console.error(JSON.stringify({ message: "link checks failed", error: String(err) }));
     await recordJob(env.DB, "links", false, String(err));
+  }
+}
+
+/** The half-hourly cron's 02:00 UTC slot runs the daily cleanup instead of destination checks. */
+export function isCleanupRun(now: Date): boolean {
+  return now.getUTCHours() === 2 && now.getUTCMinutes() < 30;
+}
+
+/**
+ * The daily cleanup, in the half-hourly cron's 02:00 UTC slot: due webhook
+ * deliveries, then each prune in turn. It has that invocation to itself, so
+ * the deletes (one KV and one D1 call per unused upload) can't crowd out the
+ * rollup's Analytics Engine queries or a run's destination checks on the
+ * Free plan's 50 subrequests. One job failing doesn't stop the others.
+ */
+export async function scheduledCleanup(env: Env, now = new Date()): Promise<void> {
+  const jobs: [string, () => Promise<unknown>][] = [
+    ["webhook deliveries", () => deliver(env)],
+    ["login state prune", () => pruneLoginState(env.DB, nowSec())],
+    ["day salt prune", () => pruneDaySalts(env.DB, utcDate(now))],
+    ["api key prune", () => pruneApiKeys(env.DB, nowSec())],
+    ["history prune", () => pruneHistory(env.DB)],
+    ["upload prune", () => prunePreviewImages(env)],
+  ];
+  for (const [name, run] of jobs) {
+    try {
+      await run();
+    } catch (err) {
+      console.error(JSON.stringify({ message: `${name} failed`, error: String(err) }));
+    }
   }
 }
 

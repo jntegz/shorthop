@@ -92,7 +92,9 @@
     "KV_CACHE_TTL": "60",
     // The Analytics Engine dataset above (letters, digits and _ only).
     "AE_DATASET": "shorthop_clicks",
-    // "free" or "paid": System status checks the password hash cost against it.
+    // "free" or "paid". Sizes bulk work (republish pages, import batches, checks
+    // per run) to the plan's subrequest limit, and System status checks the
+    // password hash cost against it. Say "free" unless you pay for Workers.
     "WORKERS_PLAN": "free",
     // What the API token may do: "create" reads, creates links and imports new
     // ones; "full" also changes and deletes links and settings.

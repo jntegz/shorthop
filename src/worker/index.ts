@@ -1,22 +1,16 @@
-import { utcDate } from "../shared/dates";
 import { NOT_FOUND_IMAGE_PATH, NOT_FOUND_PREVIEW_PATH } from "../shared/not-found";
 import { CHECKS_CRON, DIGEST_CRON } from "../shared/schedule";
 import { serveAdmin } from "./admin";
-import { pruneDaySalts } from "./analytics";
 import { app } from "./app";
-import { nowSec } from "./db";
 import { SERVED_BY_HEADER } from "./dns-check";
 import { resolveSite } from "./domains";
-import { scheduledDaily, scheduledDigest, scheduledLinkChecks } from "./health";
+import { isCleanupRun, scheduledCleanup, scheduledDaily, scheduledDigest, scheduledLinkChecks } from "./health";
 import { PREVIEW_IMAGE_PATH } from "../shared/preview";
-import { pruneHistory } from "./history";
-import { prunePreviewImages, servePreviewImage } from "./preview";
+import { servePreviewImage } from "./preview";
 import { loginApp } from "./login";
 import { notFoundResponse, serveNotFoundImage } from "./not-found";
 import { handleRedirect, redirectTo } from "./redirect";
 import { withGeneratedSecrets } from "./secrets";
-import { pruneLoginState } from "./session";
-import { pruneApiKeys } from "./users";
 
 /** Server-rendered password pages (src/worker/login.ts). */
 const LOGIN_PATHS = new Set(["/_admin/login", "/_admin/logout", "/_admin/forgot", "/_admin/bot-check"]);
@@ -58,18 +52,18 @@ export default {
     return handleRedirect(request, env, ctx, url, site.domain);
   },
 
+  // One job per invocation, so each stays inside the plan's subrequest limit
+  // (src/worker/plan.ts). The half-hourly cron's 02:00 UTC slot does the
+  // daily cleanup instead of that run's destination checks.
   async scheduled(controller, env, ctx) {
     env = await withGeneratedSecrets(env);
     const now = new Date(controller.scheduledTime);
-    if (controller.cron === DIGEST_CRON) ctx.waitUntil(scheduledDigest(env, now));
-    else if (controller.cron === CHECKS_CRON) ctx.waitUntil(scheduledLinkChecks(env));
-    else {
-      ctx.waitUntil(scheduledDaily(env, now));
-      ctx.waitUntil(pruneLoginState(env.DB, nowSec()));
-      ctx.waitUntil(pruneDaySalts(env.DB, utcDate(now)));
-      ctx.waitUntil(pruneApiKeys(env.DB, nowSec()));
-      ctx.waitUntil(prunePreviewImages(env).catch((err) => console.error(JSON.stringify({ message: "preview image prune failed", error: String(err) }))));
-      ctx.waitUntil(pruneHistory(env.DB).catch((err) => console.error(JSON.stringify({ message: "history prune failed", error: String(err) }))));
-    }
+    const run = (what: string, work: Promise<unknown>) =>
+      ctx.waitUntil(work.catch((err: unknown) => console.error(JSON.stringify({ message: `${what} failed`, error: String(err) }))));
+    if (controller.cron === DIGEST_CRON) run("digest run", scheduledDigest(env, now));
+    else if (controller.cron === CHECKS_CRON) {
+      if (isCleanupRun(now)) run("cleanup run", scheduledCleanup(env, now));
+      else run("link checks run", scheduledLinkChecks(env));
+    } else run("daily run", scheduledDaily(env, now));
   },
 } satisfies ExportedHandler<Env>;

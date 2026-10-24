@@ -122,6 +122,12 @@ export async function handleRedirect(request: Request, env: Env, ctx: ExecutionC
 
   // Password first: nothing about the destination is revealed before it.
   if (link.pw) {
+    // The access cookie is signed with SESSION_SECRET. A Deploy to Cloudflare install reads it
+    // from D1; while that can't be read there is nothing to sign or check with, so hold the door.
+    if (!env.SESSION_SECRET) {
+      console.error(JSON.stringify({ message: "protected link needs SESSION_SECRET", domain, slug }));
+      return unavailablePage(env, domain, slug);
+    }
     if (request.method === "POST") {
       const attempt = await tryPassword(request, env, domain, slug, link.pw);
       // Back to the short link as a GET, which now redirects (and counts the click).
@@ -140,7 +146,7 @@ export async function handleRedirect(request: Request, env: Env, ctx: ExecutionC
   if (link.mc) {
     const bot = detectBot(request, ua, Number((request.cf as { asn?: number } | undefined)?.asn ?? 0));
     try {
-      const cap = await capAdmit(env, domain, slug, link.mc, !bot);
+      const cap = await capAdmit(env, domain, slug, link.mc, !bot, ctx);
       if (!cap.ok) return limitPage(env, domain, slug);
     } catch (err) {
       console.error(JSON.stringify({ message: "click counter failed", domain, slug, error: String(err) }));

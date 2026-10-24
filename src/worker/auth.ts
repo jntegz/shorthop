@@ -6,7 +6,7 @@
 //   /api                  Bearer: a personal API key, or the API_TOKEN secret
 
 import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from "jose";
-import { API_MAX_FAILS, API_WINDOW_SEC } from "../shared/login-policy";
+import { API_LOCK_MAX_SEC, API_MAX_FAILS, API_WINDOW_SEC } from "../shared/login-policy";
 import { PERMISSIONS, type Actor } from "../shared/permissions";
 import { nowSec } from "./db";
 import { isLocalHost } from "./domains";
@@ -54,6 +54,9 @@ export function isDevBypass(request: Request, env: Env): boolean {
 
 export const NOT_ALLOWED: AuthFailure = { ok: false, status: 403, reason: "This account is not allowed.", code: "not_allowed" };
 const LOGIN_REQUIRED: AuthFailure = { ok: false, status: 401, reason: "Log in with your password.", code: "login_required" };
+/** Shown on the admin pages until the password exists: says what to do, for both ways of installing. */
+export const PASSWORD_UNCONFIGURED =
+  "Admin password is not configured. Set the ADMIN_PASSWORD secret (9 or more characters) under the Worker's Settings → Variables and Secrets, or run npm run setup -- password, then open this page again.";
 
 const DEV_IDENTITY = "dev@localhost";
 
@@ -127,7 +130,7 @@ async function verifyAccess(request: Request, env: Env): Promise<AccessResult> {
 export async function verifySession(request: Request, env: Env, access: { email: string; owner: boolean }): Promise<AuthResult> {
   const cfg = loginConfig(env);
   // Local development without a password: the admin is open on localhost only.
-  const unconfigured: AuthFailure | null = cfg || isDevBypass(request, env) ? null : { ok: false, status: 500, reason: "Admin password is not configured." };
+  const unconfigured: AuthFailure | null = cfg || isDevBypass(request, env) ? null : { ok: false, status: 500, reason: PASSWORD_UNCONFIGURED };
   const cookie = cfg ? await parseSessionCookie(request, cfg, access.email, nowSec()) : null;
 
   if (access.owner) {
@@ -182,9 +185,15 @@ const TOO_MANY = "Too many failed attempts. Try again later.";
 /**
  * Verifies "Authorization: Bearer …": a personal key (shp_…) or the API_TOKEN
  * secret. A network that sent too many wrong credentials is locked in D1 and
- * refused before anything is even compared, so it can't keep guessing.
+ * refused before anything is even compared, so it can't keep guessing. A
+ * request with no token at all isn't a guess and isn't counted. Lockouts
+ * double only up to API_LOCK_MAX_SEC, since a network is often shared.
  */
 export async function verifyBearer(request: Request, env: Env, ctx?: WaitUntil): Promise<AuthResult> {
+  const header = request.headers.get("Authorization") ?? "";
+  const presented = /^Bearer\s+(\S+)$/i.exec(header)?.[1] ?? "";
+  if (!presented) return { ok: false, status: 401, reason: "Missing API key: send it as Authorization: Bearer <key>." };
+
   // Per /64 for IPv6, so rotating addresses inside one allocation doesn't escape the limit.
   const ip = ipBucket(request.headers.get("CF-Connecting-IP") ?? "unknown");
   const key = await apiFailureKey(env, ip);
@@ -192,8 +201,6 @@ export async function verifyBearer(request: Request, env: Env, ctx?: WaitUntil):
   const locked = await env.DB.prepare("SELECT locked_until FROM auth_failures WHERE key = ?").bind(key).first<{ locked_until: number }>();
   if (locked && locked.locked_until > now) return { ok: false, status: 429, reason: TOO_MANY };
 
-  const header = request.headers.get("Authorization") ?? "";
-  const presented = /^Bearer\s+(\S+)$/i.exec(header)?.[1] ?? "";
   if (presented.startsWith("shp_")) {
     const found = await findApiKey(env, presented, now);
     if (found) {
@@ -205,7 +212,7 @@ export async function verifyBearer(request: Request, env: Env, ctx?: WaitUntil):
       }
       return { ok: true, actor, identity: actorLabel(actor) };
     }
-  } else if (presented && (await tokenMatches(presented, legacyApiToken(env)))) {
+  } else if (await tokenMatches(presented, legacyApiToken(env))) {
     const actor: Actor = { email: "api-token", name: "API token", role: "admin", owner: true, permissions: [...PERMISSIONS], via: "token" };
     return { ok: true, actor, identity: actorLabel(actor) };
   }
@@ -219,8 +226,8 @@ export async function verifyBearer(request: Request, env: Env, ctx?: WaitUntil):
   }
   // The failure that reaches the limit locks the network; its next request gets a 429.
   const state = await chargeAttempt(env.DB, key, now, API_WINDOW_SEC);
-  if (state.fails >= API_MAX_FAILS) await lock(env.DB, key, now, state.lockouts);
-  return { ok: false, status: 401, reason: "Missing or invalid API key." };
+  if (state.fails >= API_MAX_FAILS) await lock(env.DB, key, now, state.lockouts, API_LOCK_MAX_SEC);
+  return { ok: false, status: 401, reason: "Invalid API key." };
 }
 
 /**

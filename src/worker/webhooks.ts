@@ -14,9 +14,7 @@ import type { WebhookDTO, WebhookDeliveryDTO } from "../shared/types";
 import { DELIVERY_RETENTION_DAYS, DELIVERY_TIMEOUT_MS, milestoneFor, RETRY_DELAYS_SEC, type WebhookEvent } from "../shared/webhooks";
 import { getSetting, nowSec, setSettingStmt, type LinkRow } from "./db";
 import { webhookSignature } from "./mailer";
-
-/** Deliveries one cron run may send (the checks need the rest of the 50 outbound requests). */
-export const CRON_DELIVERY_BUDGET = 6;
+import { planLimits } from "./plan";
 
 // ---- Secrets ------------------------------------------------------------------
 
@@ -152,22 +150,51 @@ export interface Background {
 }
 
 export async function emit(env: Env, type: WebhookEvent, data: Record<string, unknown>, opts: { ctx?: Background; only?: number } = {}): Promise<string[]> {
+  return emitAll(env, [{ type, data }], opts);
+}
+
+export interface Event {
+  type: WebhookEvent;
+  data: Record<string, unknown>;
+}
+
+/**
+ * Queues several events in one D1 round trip (an import creates many links at
+ * once). With `ctx`, the first `now` deliveries (the plan's allowance by
+ * default) are attempted right away in the background; the cron sends the
+ * rest a few at a time, so one request can't spend its whole subrequest
+ * budget on webhooks.
+ */
+export async function emitAll(env: Env, events: readonly Event[], opts: { ctx?: Background; only?: number; now?: number } = {}): Promise<string[]> {
+  if (!events.length) return [];
   try {
     const { results } = await env.DB.prepare("SELECT * FROM webhooks WHERE active = 1").all<HookRow>();
-    const hooks = results.filter((h) => (opts.only === undefined ? subscribed(h, type) : h.id === opts.only));
-    if (!hooks.length) return [];
     const now = nowSec();
-    const eventId = randomId("evt");
-    const body = JSON.stringify({ id: eventId, type, created_at: iso(now), api_version: 1, data });
-    const ids = hooks.map(() => randomId("dlv"));
     const stmt = env.DB.prepare(
       "INSERT INTO webhook_deliveries (id, webhook_id, event_id, event_type, payload, status, attempts, next_at, created_at) VALUES (?, ?, ?, ?, ?, 'pending', 0, ?, ?)",
     );
-    await env.DB.batch(hooks.map((h, i) => stmt.bind(ids[i]!, h.id, eventId, type, body, now, now)));
-    if (opts.ctx) opts.ctx.waitUntil(deliver(env, { ids }));
+    const writes: D1PreparedStatement[] = [];
+    const ids: string[] = [];
+    for (const { type, data } of events) {
+      const hooks = results.filter((h) => (opts.only === undefined ? subscribed(h, type) : h.id === opts.only));
+      if (!hooks.length) continue;
+      const eventId = randomId("evt");
+      const body = JSON.stringify({ id: eventId, type, created_at: iso(now), api_version: 1, data });
+      for (const h of hooks) {
+        const id = randomId("dlv");
+        ids.push(id);
+        writes.push(stmt.bind(id, h.id, eventId, type, body, now, now));
+      }
+    }
+    if (!writes.length) return [];
+    await env.DB.batch(writes);
+    if (opts.ctx) {
+      const first = ids.slice(0, opts.now ?? planLimits(env).deliveriesNow);
+      if (first.length) opts.ctx.waitUntil(deliver(env, { ids: first }));
+    }
     return ids;
   } catch (err) {
-    console.error(JSON.stringify({ message: "webhook emit failed", type, error: String(err) }));
+    console.error(JSON.stringify({ message: "webhook emit failed", types: [...new Set(events.map((e) => e.type))], error: String(err) }));
     return [];
   }
 }
@@ -244,13 +271,13 @@ async function attempt(env: Env, d: DeliveryRow, hook: HookRow | undefined, fetc
     .run();
 }
 
-/** Sends the given deliveries, or whatever is due (the cron), within a budget of requests. */
+/** Sends the given deliveries, or whatever is due (the cron) within the plan's budget: each costs a fetch and two D1 writes. */
 export async function deliver(env: Env, opts: { ids?: string[]; budget?: number; fetcher?: typeof fetch } = {}): Promise<number> {
   const now = nowSec();
   const { results } = opts.ids
     ? await env.DB.prepare("SELECT * FROM webhook_deliveries WHERE id IN (SELECT value FROM json_each(?1)) AND status = 'pending'").bind(JSON.stringify(opts.ids)).all<DeliveryRow>()
     : await env.DB.prepare("SELECT * FROM webhook_deliveries WHERE status = 'pending' AND next_at <= ?1 ORDER BY next_at LIMIT ?2")
-        .bind(now, opts.budget ?? CRON_DELIVERY_BUDGET)
+        .bind(now, opts.budget ?? planLimits(env).cronDeliveries)
         .all<DeliveryRow>();
   if (!results.length) return 0;
   const { results: hooks } = await env.DB.prepare("SELECT * FROM webhooks WHERE id IN (SELECT value FROM json_each(?1))")

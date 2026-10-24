@@ -78,6 +78,7 @@ ADMIN_HOST = ""
 FALLBACK_URL = "https://example.com"
 KV_CACHE_TTL = "60"
 AE_DATASET = "shorthop_clicks"
+# "free" or "paid": sizes republish pages, import batches and checks per run to the plan's limit. Say "free" unless you pay for Workers.
 WORKERS_PLAN = "free"
 API_TOKEN_SCOPE = "create"
 # Email is off. Turn it on in the admin: Settings → Statistics & email → Set up email.

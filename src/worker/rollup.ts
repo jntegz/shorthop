@@ -7,6 +7,7 @@ import { AE_DIMS, AeRowLimitError, aeAvailable, queryCombos, queryDim, queryMiss
 import { getSetting, jsonChunks, setSettingStmt } from "./db";
 import { purgedDomains } from "./domain-purge";
 import { isNoise, missesCleared, pruneMisses, savedMissPolicy } from "./misses";
+import { planLimits } from "./plan";
 
 export interface StatsRow {
   date: string;
@@ -224,13 +225,22 @@ export async function runRollup(env: Env, now: Date = new Date()): Promise<Rollu
     const { cutoffs } = await missesCleared(env.DB);
     const collect = (from: string, to: string) =>
       collectFromAE(env, dayStartSec(from), dayStartSec(addDays(to, 1)), { missCutoffs: cutoffs, strict: true });
+    // Each collect is about 14 Analytics Engine queries: a Free-plan run stops after a few and
+    // the next run carries on from last_rolled (one day pending, the usual case, is one collect).
+    const maxCollects = planLimits(env).rollupCollects;
+    let collects = 0;
     let chunkDays = MAX_CHUNK_DAYS;
     let start = pending.from;
     while (start <= pending.to) {
+      if (collects >= maxCollects) {
+        console.log(JSON.stringify({ message: "rollup continues next run", from: start, to: pending.to, reason: "subrequest budget" }));
+        break;
+      }
       let end = addDays(start, chunkDays - 1);
       if (end > pending.to) end = pending.to;
       let chunk: Awaited<ReturnType<typeof collect>>;
       try {
+        collects++;
         chunk = await collect(start, end);
       } catch (err) {
         // Too many rows for one query: go a day at a time for the rest of this run. A single day
@@ -238,6 +248,7 @@ export async function runRollup(env: Env, now: Date = new Date()): Promise<Rollu
         if (!(err instanceof AeRowLimitError) || start === end) throw err;
         chunkDays = 1;
         end = start;
+        collects++;
         chunk = await collect(start, end);
       }
       const { stats, dims } = chunk;

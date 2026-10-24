@@ -18,9 +18,15 @@ export const GLOBAL_MIN_NETWORKS = 5;
 export const GLOBAL_WINDOW_SEC = 60 * 60;
 export const GLOBAL_LOCK_SEC = 15 * 60;
 
-/** Wrong API tokens per network within API_WINDOW_SEC before it is locked (same doubling as logins). */
+/** Wrong API keys or tokens per network within API_WINDOW_SEC before it is locked (same doubling as logins). */
 export const API_MAX_FAILS = 10;
 export const API_WINDOW_SEC = 60;
+/**
+ * API lockouts stop doubling at an hour (logins go up to a day): the network is
+ * often an office or home shared by several people and devices, and one script
+ * with a stale key mustn't shut the rest of them out of the API for a day.
+ */
+export const API_LOCK_MAX_SEC = 60 * 60;
 
 /** Login events (success and failure) are kept this long. */
 export const LOGIN_EVENT_RETENTION_SEC = 30 * 24 * 60 * 60;
