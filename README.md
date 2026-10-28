@@ -13,7 +13,7 @@ See which link, post, newsletter or AI answer brought each visitor, and each pay
 
 ![The Shorthop overview: human clicks, daily unique visitors and bots over 30 days, compared with the previous period](docs/images/dashboard.png)
 
-[Why Shorthop](#why-shorthop) · [Features](#features) · [Screenshots](#screenshots) · [Install](#install) · [Common trip-ups](#things-new-users-commonly-trip-over) · [Documentation](#documentation) · [Costs](#costs) · [FAQ](#faq)
+[Why Shorthop](#why-shorthop) · [What's new](#whats-new-in-13) · [Features](#features) · [Screenshots](#screenshots) · [Install](#install) · [Common trip-ups](#things-new-users-commonly-trip-over) · [Documentation](#documentation) · [Costs](#costs) · [FAQ](#faq)
 
 ## Why Shorthop
 
@@ -23,7 +23,12 @@ See which link, post, newsletter or AI answer brought each visitor, and each pay
 - **Proof you can share.** Send a brand, client or sponsor a live, read-only statistics page for one link: clicks, countries, sources and devices, without your login or your destination URL. Useful for creators and influencers reporting campaign results.
 - **Free to run.** One Worker on Cloudflare's free tier covers most personal use (100,000 requests a day). Install it with one button.
 
-## What's new in 1.2
+## What's new in 1.3
+
+- **Privacy requests:** find, export or erase everything stored about one visitor or customer, and let customer details expire after 1 to 7 years.
+- **`ENCRYPTION_KEY`:** an optional secret for stored webhook, share and payment secrets, so rotating `SESSION_SECRET` no longer makes them unreadable.
+
+New in 1.2:
 
 - **Websites:** a small cookieless script (about 8 KB) for your own sites, with a live view of who's on the site right now.
 - **Revenue:** payments from **Stripe, Paddle, Lemon Squeezy, Dodo Payments, Creem, Gumroad, FastSpring and PayPal**, matched to the visit and the short link that brought each buyer.
