@@ -26,7 +26,7 @@ export const sharesApi = new Hono<AppEnv>()
     const body = c.req.valid("json");
     if (!(await getLink(c.env.DB, domain, slug))) return c.json({ error: "Link not found" }, 404);
     // The secret is kept encrypted, and a password remembered with a signed cookie: both need it.
-    if (!c.env.SESSION_SECRET) return c.json({ error: "Sharing needs the SESSION_SECRET secret (docs/RUNBOOK.md)." }, 503);
+    if (!c.env.SESSION_SECRET) return c.json({ error: "Sharing needs the SESSION_SECRET secret (docs/SETUP.md#secrets)." }, 503);
     const now = nowSec();
     if (body.expiresAt && body.expiresAt <= now) return c.json({ error: "expiresAt: Pick a time in the future." }, 400);
 
