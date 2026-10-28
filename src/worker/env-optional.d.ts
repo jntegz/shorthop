@@ -6,9 +6,12 @@ declare namespace Cloudflare {
     CF_ANALYTICS_TOKEN?: string;
     /** The owners' password in plain text, when ADMIN_PASSWORD_HASH isn't set (Deploy to Cloudflare installs). */
     ADMIN_PASSWORD?: string;
+    /** The key stored secrets are encrypted with; without it, one derived from SESSION_SECRET. */
+    ENCRYPTION_KEY?: string;
   }
 }
 interface Env {
   CF_ANALYTICS_TOKEN?: string;
   ADMIN_PASSWORD?: string;
+  ENCRYPTION_KEY?: string;
 }

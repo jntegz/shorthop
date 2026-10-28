@@ -18,6 +18,8 @@ import {
   eventListQuerySchema,
   minorFactor,
   paymentsQuerySchema,
+  privacyEraseSchema,
+  privacyPersonSchema,
   goalPropsQuerySchema,
   peakQuerySchema,
   siteConnParamSchema,
@@ -36,13 +38,15 @@ import { IMPORT_SLUG_RE } from "../../shared/slug";
 import { aeAvailable } from "../ae";
 import { configuredDomains, domainsOf } from "../domains";
 import { csv, validate, type AppEnv } from "../hono";
+import { actorLabel } from "../users";
 import { recreditSite } from "../revenue/attribute";
 import { reconvertSite, refreshFx } from "../revenue/fx";
 import { importPage } from "../revenue/backfill";
 import { checkConnection, connectionChanges, connectionSecrets, connectionView, settingsOf } from "../revenue/connections";
 import { applyEvent, storePayment, type ConnectionRow } from "../revenue/ingest";
-import { rematchSite } from "../revenue/match";
+import { liveSession, rematchSite } from "../revenue/match";
 import { announcePayments } from "../revenue/notify";
+import { erasePerson, exportPerson, listPrivacyRequests, logExport, personCounts, resolvePerson } from "../web/privacy";
 import { identifyVisitor } from "../web/sessions";
 import { breakdown, eventList, filtersOf, goalProps, linkRevenue, onlineNow, payments, previousWindow, recentSessions, series, siteSummaries, spikesIn, subscriptionStats, totals, unmatchedCount, visitorProfile, windowOf } from "../web/queries";
 import { funnelDTO, funnelReport, type FunnelRow } from "../web/funnels";
@@ -111,10 +115,18 @@ export const sitesApi = new Hono<AppEnv>()
 
   .patch("/:id", validate("param", siteParamSchema), validate("json", updateSiteSchema), async (c) => {
     const { id } = c.req.valid("param");
+    const input = c.req.valid("json");
+    // Retention removes customers' details for good: only for people who may see them.
+    if (input.customerRetentionMonths !== undefined && !seesMoney(c.get("actor"))) {
+      return c.json({ error: "Changing customer data retention needs the See revenue permission.", code: "forbidden" }, 403);
+    }
     const before = await getSite(c.env.DB, id);
     if (!before) return c.json({ error: "Site not found" }, 404);
-    const site = await updateSite(c.env.DB, id, c.req.valid("json"));
+    const site = await updateSite(c.env.DB, id, input);
     if (!site) return c.json({ error: "Site not found" }, 404);
+    if (site.customerRetentionMonths !== before.customerRetentionMonths) {
+      console.log(JSON.stringify({ message: "customer retention changed", site: site.id, months: site.customerRetentionMonths, by: actorLabel(c.get("actor")) }));
+    }
     // Revenue follows the new currency and the new attribution rules.
     if (site.currency !== before.currency) await reconvertSite(c.env.DB, site.id, site.currency);
     if (site.attributionModel !== before.attributionModel || site.lookbackDays !== before.lookbackDays) await recreditSite(c.env.DB, site);
@@ -317,6 +329,44 @@ export const sitesApi = new Hono<AppEnv>()
     return c.json(await visitorProfile(c.env.DB, site, visitor));
   })
 
+  // ---- Requests from visitors and customers: who is named travels in the body, never the URL, so it stays out of request logs.
+
+  .post("/:id/privacy/lookup", validate("param", siteParamSchema), validate("json", privacyPersonSchema), async (c) => {
+    const site = await getSite(c.env.DB, c.req.valid("param").id);
+    if (!site) return c.json({ error: "Site not found" }, 404);
+    const person = await resolvePerson(c.env.DB, site, c.req.valid("json"));
+    return c.json(await personCounts(c.env.DB, site, person));
+  })
+
+  .post("/:id/privacy/export", validate("param", siteParamSchema), validate("json", privacyPersonSchema), async (c) => {
+    const site = await getSite(c.env.DB, c.req.valid("param").id);
+    if (!site) return c.json({ error: "Site not found" }, 404);
+    const person = await resolvePerson(c.env.DB, site, c.req.valid("json"));
+    const data = await exportPerson(c.env.DB, site, person);
+    await logExport(c.env.DB, site, actorLabel(c.get("actor")), await personCounts(c.env.DB, site, person));
+    const day = new Date().toISOString().slice(0, 10);
+    return c.body(JSON.stringify(data, null, 2), 200, {
+      "Content-Type": "application/json; charset=utf-8",
+      "Content-Disposition": `attachment; filename="shorthop-${site.id}-person-${day}.json"`,
+    });
+  })
+
+  .post("/:id/privacy/erase", validate("param", siteParamSchema), validate("json", privacyEraseSchema), async (c) => {
+    const site = await getSite(c.env.DB, c.req.valid("param").id);
+    if (!site) return c.json({ error: "Site not found" }, 404);
+    const person = await resolvePerson(c.env.DB, site, c.req.valid("json"));
+    const by = actorLabel(c.get("actor"));
+    const result = await erasePerson(c.env.DB, site, person, by);
+    console.log(JSON.stringify({ message: "person erased", site: site.id, by, counts: result.counts }));
+    return c.json(result);
+  })
+
+  .get("/:id/privacy/requests", validate("param", siteParamSchema), async (c) => {
+    const site = await getSite(c.env.DB, c.req.valid("param").id);
+    if (!site) return c.json({ error: "Site not found" }, 404);
+    return c.json({ requests: await listPrivacyRequests(c.env.DB, site) });
+  })
+
   .post("/:id/rematch", validate("param", siteParamSchema), async (c) => {
     const site = await getSite(c.env.DB, c.req.valid("param").id);
     if (!site) return c.json({ error: "Site not found" }, 404);
@@ -494,7 +544,7 @@ export const sitesApi = new Hono<AppEnv>()
     if (!site) return c.json({ error: "Site not found" }, 404);
     let visitorId = body.visitorId ?? null;
     if (!visitorId && body.ref) {
-      const s = await c.env.DB.prepare("SELECT visitor_id FROM web_sessions WHERE id = ?1 AND site_id = ?2").bind(body.ref, site.id).first<{ visitor_id: string }>();
+      const s = await c.env.DB.prepare(`SELECT visitor_id FROM web_sessions s WHERE id = ?1 AND site_id = ?2 AND ${liveSession("s")}`).bind(body.ref, site.id).first<{ visitor_id: string }>();
       visitorId = s?.visitor_id ?? null;
     }
     if (!visitorId) return c.json({ error: "Unknown visit reference" }, 404);

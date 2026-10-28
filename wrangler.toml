@@ -93,9 +93,11 @@ FALLBACK_URL = "https://example.com"
 KV_CACHE_TTL = "60"
 AE_DATASET = "shorthop_clicks"
 AE_WEB_DATASET = "shorthop_web"
-# "free" or "paid": sizes republish pages, import batches and checks per run to the plan's limit. Say "free" unless you pay for Workers.
+# "free" or "paid": sizes republish pages, import batches and checks per run to the plan's limit, and how strongly link passwords are hashed. Say "free" unless you pay for Workers.
 WORKERS_PLAN = "free"
 API_TOKEN_SCOPE = "create"
+# "host": browsers use HTTPS for your domains. "subdomains": for their subdomains too; only when all of them serve HTTPS (browsers keep it for a year).
+HSTS = "host"
 # Email is off. Turn it on in the admin: Settings → Statistics & email → Set up email.
 DIGEST_PROVIDER = "off"
 DIGEST_FROM = ""

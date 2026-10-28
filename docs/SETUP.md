@@ -465,7 +465,7 @@ The exact URL is shown when you add the connection. Every webhook is verified wi
 
 Names of the Worker's own secrets (`SESSION_SECRET` and the like) are refused. Only people with **Manage websites** can add or change connections.
 
-**Billing without a connection:** send payments and identities from your server to `POST /api/sites/<id>/payments` and `POST /api/sites/<id>/identify`, with a personal [API key](#api-keys) that has Manage websites. The site's Settings & setup shows the request bodies.
+**Billing without a connection:** send payments and identities from your server to `POST /api/sites/<id>/payments` and `POST /api/sites/<id>/identify`, with a personal [API key](#api-keys) that has Manage websites. The site's Settings & setup shows the request bodies. Requests about one person (lookup, export, erasure) are in [PRIVACY.md](PRIVACY.md#requests-from-visitors-and-customers).
 
 <a id="secrets"></a>
 ## Secrets
@@ -473,7 +473,8 @@ Names of the Worker's own secrets (`SESSION_SECRET` and the like) are refused. O
 | Secret | Created by | Rotate with |
 |---|---|---|
 | `API_TOKEN` | optional: older installs (40 random characters) | `npm run setup -- secrets --rotate`, then update scripts and the iOS Shortcut. Better: switch them to [personal API keys](#api-keys) and delete it |
-| `SESSION_SECRET` | the setup (button installs: generated in D1) | `npm run setup -- secrets --rotate`. This logs everyone out, also signs visitors out of password-protected links, and makes webhook secrets unreadable: rotate each webhook's secret afterwards (Settings → API & webhooks) |
+| `SESSION_SECRET` | the setup (button installs: generated in D1) | `npm run setup -- secrets --rotate`. This logs everyone out and also signs visitors out of password-protected links. Without `ENCRYPTION_KEY` it also makes stored webhook, share and payment secrets unreadable: replace each one afterwards |
+| `ENCRYPTION_KEY` | you, optional (32+ random characters, such as `openssl rand -base64 32`) | Encrypts stored webhook, share and payment secrets instead of `SESSION_SECRET`. Recommended for button installs, whose `SESSION_SECRET` is kept in D1. Once set, the daily cleanup moves existing secrets over (25 per kind per day); after that, `SESSION_SECRET` can be rotated without touching them. Removing or changing it makes them unreadable |
 | `VISITOR_SALT` | the setup | `npm run setup -- secrets --rotate --salt` (visitors already counted today may be counted again) |
 | `ADMIN_PASSWORD_HASH` | the setup | `npm run setup -- password` |
 | `ADMIN_PASSWORD` | the Deploy to Cloudflare button | the Worker's Settings → Variables and Secrets. Used only without `ADMIN_PASSWORD_HASH` |

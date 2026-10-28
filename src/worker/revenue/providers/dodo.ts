@@ -5,7 +5,7 @@
 //
 // payment.succeeded is every payment (one-time and each subscription charge);
 // refund.succeeded and dispute.* take money back; subscription.* keeps the
-// subscription state. Metadata from checkout (?metadata_tl_ref=) rides along.
+// subscription state. Metadata from checkout (?metadata_sh_ref=) rides along.
 
 import type { NormalizedEvent, NormalizedSubscription, ProviderAdapter } from "../types";
 import { emptyEvent } from "../types";

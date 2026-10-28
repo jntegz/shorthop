@@ -1,14 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, BookOpen, Bot, CheckCircle2, Copy, EyeOff, Loader2, Trash2 } from "lucide-react";
+import { ArrowLeft, BookOpen, Bot, CheckCircle2, Copy, Download, EyeOff, Loader2, Search, Trash2 } from "lucide-react";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { toast } from "sonner";
-import { ATTRIBUTION_INFO, ATTRIBUTION_MODELS, LOOKBACK_DAYS, type AttributionModel, type IdMode, type SiteDTO } from "../../shared/sites";
-import { api, ApiError, call, keys } from "../api";
+import { ATTRIBUTION_INFO, ATTRIBUTION_MODELS, CUSTOMER_RETENTION_MONTHS, LOOKBACK_DAYS, type AttributionModel, type IdMode, type PrivacyCountsDTO, type SiteDTO } from "../../shared/sites";
+import { api, ApiError, call, downloadFile, keys } from "../api";
 import { PaymentProviders } from "../components/PaymentProviders";
 import { SetupGuide } from "../components/SetupGuide";
 import { Button, Card, CardHeader, Combobox, Field, Input, Notice, PageHeader, Segmented, Select, Spinner, Switch, Textarea } from "../components/ui";
 import { useDomains } from "../lib/links";
+import { useCan } from "../lib/me";
 import { ago } from "../lib/format";
 import { currencyOptions, timeZones } from "../lib/sites";
 import { copy } from "../lib/utils";
@@ -17,6 +18,7 @@ export function SiteSettings() {
   const { id = "" } = useParams();
   const site = useQuery({ queryKey: keys.site(id), queryFn: () => call(api.sites[":id"].$get({ param: { id } })) });
   const { domains, primary } = useDomains();
+  const can = useCan();
   // Which short domain the snippets name. Every short domain serves the script, so this only changes what's copied.
   const [host, setHost] = useState("");
   const origin = `https://${(domains.includes(host) ? host : primary) || window.location.host}`;
@@ -53,6 +55,7 @@ export function SiteSettings() {
         <SetupGuide site={s} origin={origin} />
         <GeneralCard site={s} />
         <ApiCard site={s} origin={origin} />
+        {can("revenue.view") ? <PrivacyCard site={s} /> : null}
         <DeleteCard site={s} />
       </div>
     </>
@@ -381,6 +384,143 @@ ${site.idMode === "consent" ? 'The site counts visitors cookieless until consent
       <div className="space-y-4 px-4 pb-5">
         <Code label="API examples">{curl}</Code>
         <Button variant="outline" onClick={() => void copy(prompt, "Setup prompt copied")}><Bot /> Copy setup prompt for an AI coding assistant</Button>
+      </div>
+    </Card>
+  );
+}
+
+type PersonKind = "email" | "visitorId" | "paymentId";
+const PERSON_KINDS = [
+  { value: "email", label: "Email" },
+  { value: "visitorId", label: "Visitor ID" },
+  { value: "paymentId", label: "Payment ID" },
+] as const;
+
+const plural = (n: number, one: string, many = `${one}s`) => `${n.toLocaleString()} ${n === 1 ? one : many}`;
+function countsText(c: Partial<PrivacyCountsDTO>): string {
+  return [
+    plural(c.identities ?? 0, "identity", "identities"),
+    plural(c.visits ?? 0, "visit"),
+    plural(c.payments ?? 0, "payment"),
+    plural(c.subscriptions ?? 0, "subscription"),
+  ].join(", ");
+}
+
+/** Customer data retention, and requests from visitors and customers (access, export, erasure). */
+function PrivacyCard({ site }: { site: SiteDTO }) {
+  const qc = useQueryClient();
+  const requestsKey = keys.siteData(site.id, "privacy-requests", {});
+  const requests = useQuery({ queryKey: requestsKey, queryFn: () => call(api.sites[":id"].privacy.requests.$get({ param: { id: site.id } })) });
+  const [kind, setKind] = useState<PersonKind>("email");
+  const [value, setValue] = useState("");
+  const [found, setFound] = useState<{ who: Record<string, string>; counts: PrivacyCountsDTO } | null>(null);
+  const who = { [kind]: value.trim() };
+
+  const retention = useMutation({
+    mutationFn: (months: number | null) => call(api.sites[":id"].$patch({ param: { id: site.id }, json: { customerRetentionMonths: months } })),
+    onSuccess: (updated) => {
+      qc.setQueryData(keys.site(site.id), updated);
+      toast.success("Saved");
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  const lookup = useMutation({
+    mutationFn: () => call(api.sites[":id"].privacy.lookup.$post({ param: { id: site.id }, json: who })),
+    onSuccess: (counts) => setFound({ who, counts }),
+    onError: (e) => toast.error(e.message),
+  });
+  const exportJson = useMutation({
+    mutationFn: (person: Record<string, string>) =>
+      downloadFile(`/_admin/api/sites/${site.id}/privacy/export`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(person) }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: requestsKey }),
+    onError: (e) => toast.error(e.message),
+  });
+  const erase = useMutation({
+    mutationFn: (person: Record<string, string>) => call(api.sites[":id"].privacy.erase.$post({ param: { id: site.id }, json: { ...person, confirm: true } })),
+    onSuccess: (res) => {
+      setFound(null);
+      setValue("");
+      void qc.invalidateQueries({ queryKey: ["sites", site.id] });
+      toast.success("Erased", { description: res.warnings.join(" "), duration: 15_000 });
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    if (value.trim()) lookup.mutate();
+  };
+  const empty = found && !found.counts.identities && !found.counts.visits && !found.counts.payments && !found.counts.subscriptions;
+
+  return (
+    <Card>
+      <CardHeader title="Privacy" description="How long customer details are kept, and requests from your visitors and customers to see or delete their data." />
+      <div className="space-y-6 px-4 pb-5">
+        <Field
+          label="Customer data retention"
+          htmlFor="privacy-retention"
+          hint="After this, payments lose the customer's email, customer ID and visitor; amounts stay, so revenue reports still add up. Your payment provider remains the accounting record."
+        >
+          <Select
+            id="privacy-retention"
+            value={site.customerRetentionMonths ?? ""}
+            disabled={retention.isPending}
+            onChange={(e) => retention.mutate(e.target.value ? Number(e.target.value) : null)}
+          >
+            <option value="">Keep until the site is deleted</option>
+            {CUSTOMER_RETENTION_MONTHS.map((m) => <option key={m} value={m}>{plural(m / 12, "year")}</option>)}
+          </Select>
+        </Field>
+
+        <form onSubmit={submit} className="space-y-3">
+          <p className="text-sm font-medium">Find a person</p>
+          <Segmented label="Find by" value={kind} onChange={(k) => { setKind(k); setFound(null); }} options={PERSON_KINDS} />
+          <div className="flex flex-wrap gap-2">
+            <Input
+              aria-label={PERSON_KINDS.find((k) => k.value === kind)!.label}
+              className="min-w-0 flex-1"
+              type={kind === "email" ? "email" : "text"}
+              value={value}
+              onChange={(e) => { setValue(e.target.value); setFound(null); }}
+              placeholder={kind === "email" ? "customer@example.com" : kind === "visitorId" ? "From shorthop.visitor() or a visitor's profile" : "Such as stripe:charge:pi_…"}
+            />
+            <Button type="submit" variant="outline" loading={lookup.isPending} disabled={!value.trim()}><Search /> Look up</Button>
+          </div>
+          {found ? (
+            <div className="space-y-3 rounded-md border border-line bg-surface-2 p-3 text-sm">
+              <p>{empty ? "Nothing recorded for them on this site." : `Found ${countsText(found.counts)}${found.counts.activeSubscriptions ? ` (${found.counts.activeSubscriptions} active)` : ""}.`}</p>
+              {empty ? null : (
+                <div className="flex flex-wrap gap-2">
+                  <Button variant="outline" onClick={() => exportJson.mutate(found.who)} loading={exportJson.isPending}><Download /> Export JSON</Button>
+                  <Button
+                    variant="danger"
+                    loading={erase.isPending}
+                    onClick={() =>
+                      confirm(`Erase ${countsText(found.counts)}? Their visits and identity are deleted, and their payments keep only the amount and date. This can't be undone.`) &&
+                      erase.mutate(found.who)
+                    }
+                  >
+                    <Trash2 /> Erase
+                  </Button>
+                </div>
+              )}
+            </div>
+          ) : null}
+          <p className="text-xs text-muted">The export has everything stored here. Single page views stay in Cloudflare Analytics Engine, without a name, for about 90 days.</p>
+        </form>
+
+        {requests.data?.requests.length ? (
+          <div className="space-y-2">
+            <p className="text-sm font-medium">Recent requests</p>
+            <ul className="divide-y divide-line rounded-md border border-line text-sm">
+              {requests.data.requests.slice(0, 10).map((r) => (
+                <li key={r.id} className="flex flex-wrap justify-between gap-x-4 gap-y-1 px-3 py-2">
+                  <span>{r.kind === "erase" ? "Erased" : "Exported"} {countsText(r.counts)}</span>
+                  <span className="text-muted">{r.by} · {ago(r.createdAt)}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
       </div>
     </Card>
   );

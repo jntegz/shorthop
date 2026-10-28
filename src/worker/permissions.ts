@@ -165,6 +165,11 @@ export const RULES: Record<string, Rule> = {
   "GET /sites/:id/payments.csv": need("revenue.view"),
   "GET /sites/:id/subscriptions": need("revenue.view"),
   "GET /sites/:id/visitors/:visitor": need("revenue.view"),
+  // One person's records: finding, exporting and erasing them touches customers' details, so both are needed.
+  "POST /sites/:id/privacy/lookup": need({ all: ["sites.manage", "revenue.view"] }),
+  "POST /sites/:id/privacy/export": need({ all: ["sites.manage", "revenue.view"] }),
+  "POST /sites/:id/privacy/erase": need({ all: ["sites.manage", "revenue.view"] }),
+  "GET /sites/:id/privacy/requests": need({ all: ["sites.manage", "revenue.view"] }),
   "POST /sites/:id/rematch": need("sites.manage"),
   "GET /sites/:id/funnels": need("stats.view"),
   "POST /sites/:id/funnels": need("sites.manage"),

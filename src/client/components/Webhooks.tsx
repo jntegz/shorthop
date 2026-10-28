@@ -144,7 +144,7 @@ function WebhookDialog({ hook, onClose }: { hook: WebhookDTO | "new"; onClose: (
             <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line pt-4">
               <div>
                 <p className="text-sm font-medium text-fg">Signing secret</p>
-                <p className="text-xs text-muted">{hook.secretReadable ? "Replace it if it may have leaked. The old one stops working at once." : "It can't be read anymore (SESSION_SECRET changed): replace it to resume deliveries."}</p>
+                <p className="text-xs text-muted">{hook.secretReadable ? "Replace it if it may have leaked. The old one stops working at once." : "It can't be read anymore (its encryption key, ENCRYPTION_KEY or SESSION_SECRET, changed): replace it to resume deliveries."}</p>
               </div>
               <Button type="button" variant="outline" size="sm" onClick={() => rotate.mutate()} loading={rotate.isPending}>
                 <RotateCcw /> New secret
@@ -345,7 +345,7 @@ export function Webhooks() {
                   </p>
                   {!h.secretReadable ? (
                     <p className="flex items-center gap-1.5 text-xs text-danger">
-                      <AlertTriangle className="size-3.5" /> The signing secret can't be read since SESSION_SECRET changed. Edit the webhook and create a new secret.
+                      <AlertTriangle className="size-3.5" /> The signing secret can't be read since its encryption key (ENCRYPTION_KEY or SESSION_SECRET) changed. Edit the webhook and create a new secret.
                     </p>
                   ) : null}
                 </div>

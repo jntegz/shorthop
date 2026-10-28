@@ -21,6 +21,9 @@ export const ATTRIBUTION_INFO: Record<AttributionModel, { label: string; descrip
 
 export const LOOKBACK_DAYS = [7, 30, 60, 90] as const;
 
+/** Months after which payments lose their personal details (null: kept until the site is deleted). */
+export const CUSTOMER_RETENTION_MONTHS = [12, 24, 36, 60, 84] as const;
+
 /** How a visit arrived. "Short link" is a click on one of this workspace's links. */
 export const CHANNELS = ["Direct", "Short link", "Organic Search", "Paid", "Organic Social", "AI", "Email", "Referral"] as const;
 export type Channel = (typeof CHANNELS)[number];
@@ -94,7 +97,7 @@ export const PROVIDER_INFO: Record<Provider, ProviderInfo> = {
   },
   dodo: {
     label: "Dodo Payments",
-    checkout: "Checkout links get metadata_tl_ref from the script. API checkouts: metadata: { sh_ref }.",
+    checkout: "Checkout links get metadata_sh_ref from the script. API checkouts: metadata: { sh_ref }.",
     where: "Developer → Webhooks → Add endpoint",
     events: ["payment.succeeded", "refund.succeeded", "dispute.opened", "dispute.won", "subscription.active", "subscription.renewed", "subscription.cancelled", "subscription.expired", "subscription.on_hold"],
     webhookSecret: { label: "Signing key", hint: "Developer → Webhooks → your endpoint → Signing Key.", prefix: "whsec_", suggestedName: "DODO_WEBHOOK_SECRET" },
@@ -215,6 +218,8 @@ export interface SiteDTO {
   digestHour: number;
   /** Off: visits aren't recorded and short links aren't tagged; payments still are. */
   tracking: boolean;
+  /** Months after which customer details are removed from payments; null keeps them until the site is deleted. */
+  customerRetentionMonths: number | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -607,6 +612,11 @@ const siteFields = {
   dailyDigest: z.boolean(),
   digestHour: z.number().int().min(0).max(23),
   tracking: z.boolean(),
+  customerRetentionMonths: z
+    .number()
+    .int()
+    .refine((m) => (CUSTOMER_RETENTION_MONTHS as readonly number[]).includes(m), "Choose 1, 2, 3, 5 or 7 years")
+    .nullable(),
 };
 
 export const createSiteSchema = z.object({
@@ -625,6 +635,7 @@ export const createSiteSchema = z.object({
   dailyDigest: siteFields.dailyDigest.default(false),
   digestHour: siteFields.digestHour.default(8),
   tracking: siteFields.tracking.default(true),
+  customerRetentionMonths: siteFields.customerRetentionMonths.default(null),
 });
 export const updateSiteSchema = z.object(siteFields).partial();
 export type CreateSiteInput = z.input<typeof createSiteSchema>;
@@ -666,7 +677,7 @@ export const SECRET_NAME_RE = /^[A-Z][A-Z0-9_]{2,63}$/;
 
 /** The Worker's own secrets and settings: a connection may not read them. */
 export function isReservedSecretName(name: string): boolean {
-  return /^(SESSION_SECRET|ADMIN_PASSWORD_HASH|ADMIN_EMAIL|ADMIN_HOST|VISITOR_SALT|CF_ANALYTICS_TOKEN|CF_ACCOUNT_ID|API_TOKEN|TURNSTILE_SECRET|RESEND_API_KEY|EMAILIT_API_KEY|POSTMARK_API_KEY|SENDGRID_API_KEY|MAILGUN_API_KEY|ACCESS_.*|DIGEST_.*|DEV_.*|PRIVACY_.*|SHORT_DOMAINS|FALLBACK_URL|KV_CACHE_TTL|WORKERS_PLAN)$/.test(name);
+  return /^(SESSION_SECRET|ENCRYPTION_KEY|ADMIN_PASSWORD|ADMIN_PASSWORD_HASH|ADMIN_EMAIL|ADMIN_HOST|VISITOR_SALT|CF_ANALYTICS_TOKEN|CF_ACCOUNT_ID|API_TOKEN|TURNSTILE_SECRET|RESEND_API_KEY|EMAILIT_API_KEY|POSTMARK_API_KEY|SENDGRID_API_KEY|MAILGUN_API_KEY|ACCESS_.*|DIGEST_.*|DEV_.*|PRIVACY_.*|SHORT_DOMAINS|FALLBACK_URL|KV_CACHE_TTL|WORKERS_PLAN)$/.test(name);
 }
 
 const secretName = z
@@ -718,6 +729,43 @@ export const apiIdentifySchema = z.object({
   name: z.string().max(200).optional(),
   userId: z.string().max(200).optional(),
 }).refine((v) => v.ref || v.visitorId, { message: "Send ref or visitorId" });
+
+// ---- Privacy requests ----------------------------------------------------------------
+
+/** One person, by exactly one of what a request can name. */
+export const privacyPersonSchema = z
+  .object({
+    email: z.email().max(254).toLowerCase().optional(),
+    visitorId: z.string().trim().min(1).max(64).optional(),
+    paymentId: z.string().trim().min(1).max(300).optional(),
+  })
+  .refine((v) => [v.email, v.visitorId, v.paymentId].filter(Boolean).length === 1, { message: "Send exactly one of email, visitorId or paymentId" });
+export const privacyEraseSchema = privacyPersonSchema.and(z.object({ confirm: z.literal(true, { message: "Send confirm: true to erase" }) }));
+export type PrivacyPersonInput = z.infer<typeof privacyPersonSchema>;
+
+/** What was found for one person (lookup), or removed (erase). */
+export interface PrivacyCountsDTO {
+  identities: number;
+  visits: number;
+  payments: number;
+  subscriptions: number;
+  /** Of the subscriptions, the ones still active or past due. */
+  activeSubscriptions: number;
+}
+
+export interface PrivacyEraseDTO {
+  /** What was removed or anonymized. */
+  counts: PrivacyCountsDTO & { anonymizedVisits: number; webhookDeliveries: number };
+  warnings: string[];
+}
+
+export interface PrivacyRequestDTO {
+  id: string;
+  kind: "export" | "erase";
+  by: string;
+  createdAt: number;
+  counts: Partial<PrivacyCountsDTO>;
+}
 
 // ---- Money ----------------------------------------------------------------------------
 

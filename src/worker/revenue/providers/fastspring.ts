@@ -65,7 +65,8 @@ export const fastspring: ProviderAdapter = {
   async parse(body) {
     const events = arr(parseJson(body).events).map(obj);
     const ids = events.map((e) => str(e.id) ?? "").sort();
-    const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(ids.join(","))));
+    // Events without ids would all name the same batch, so those batches are told apart by their body.
+    const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(ids.every(Boolean) ? ids.join(",") : body)));
     const out: NormalizedEvent = emptyEvent(ids.length === 1 ? ids[0]! : `batch:${bytesToHex(digest.slice(0, 12))}`, events.map((e) => str(e.type)).join(",").slice(0, 80));
 
     for (const e of events) {

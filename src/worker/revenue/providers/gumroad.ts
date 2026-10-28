@@ -47,11 +47,12 @@ export const gumroad: ProviderAdapter = {
     const resource = f.get("resource_name") ?? "sale";
     const saleId = str(f.get("sale_id"));
     const subId = str(f.get("subscription_id"));
-    const out: NormalizedEvent = emptyEvent(`${resource}:${saleId ?? subId ?? ""}`, resource);
-    const at = sec(f.get("sale_timestamp")) ?? sec(f.get("created_at")) ?? Math.floor(Date.now() / 1000);
-    const testMode = truthy(f.get("test"));
     // Gumroad reports every amount in USD cents, whatever the product's currency.
     const price = num(f.get("price")) ?? 0;
+    // Each refund ping carries the running total, so a larger one is a new event, not a repeat.
+    const out: NormalizedEvent = emptyEvent(`${resource}:${saleId ?? subId ?? ""}${resource === "refund" ? `:${price}` : ""}`, resource);
+    const at = sec(f.get("sale_timestamp")) ?? sec(f.get("created_at")) ?? Math.floor(Date.now() / 1000);
+    const testMode = truthy(f.get("test"));
 
     if (resource === "sale" && saleId) {
       out.payments.push({

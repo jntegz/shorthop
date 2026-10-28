@@ -33,7 +33,7 @@ export const webhooksApi = new Hono<AppEnv>()
     const secret = newSecret();
     const now = nowSec();
     const r = await c.env.DB.prepare("INSERT INTO webhooks (url, description, events, secret, active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id")
-      .bind(new URL(b.url).href, b.description, JSON.stringify([...new Set(b.events)]), await encryptSecret(c.env, secret), b.active ? 1 : 0, now, now)
+      .bind(new URL(b.url).href, b.description, JSON.stringify([...new Set(b.events)]), await encryptSecret(c.env, "webhook", secret), b.active ? 1 : 0, now, now)
       .first<{ id: number }>();
     return c.json({ id: r!.id, secret, webhooks: await listWebhooks(c.env) }, 201);
   })
@@ -54,7 +54,7 @@ export const webhooksApi = new Hono<AppEnv>()
   .post("/:id/rotate", validate("param", idParam), async (c) => {
     const { id } = c.req.valid("param");
     const secret = newSecret();
-    const { meta } = await c.env.DB.prepare("UPDATE webhooks SET secret = ?, updated_at = ? WHERE id = ?").bind(await encryptSecret(c.env, secret), nowSec(), id).run();
+    const { meta } = await c.env.DB.prepare("UPDATE webhooks SET secret = ?, updated_at = ? WHERE id = ?").bind(await encryptSecret(c.env, "webhook", secret), nowSec(), id).run();
     if (!meta.changes) return c.json({ error: "Webhook not found" }, 404);
     return c.json({ secret, webhooks: await listWebhooks(c.env) });
   })

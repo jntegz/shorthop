@@ -52,19 +52,23 @@ const KEY_RE = /^[a-z0-9]{20}\.(png|jpg|gif|webp)$/;
 export function validateQrStyle(input: unknown): { ok: true; style: QrStyle } | { ok: false; error: string } {
   const s = input as Partial<QrStyle> | null;
   if (!s || typeof s !== "object") return { ok: false, error: "Missing design." };
-  if (!HEX_RE.test(s.fg ?? "") || !HEX_RE.test(s.bg ?? "")) return { ok: false, error: "Colours must look like #1a2b3c." };
-  if (!(QR_LEVELS as readonly string[]).includes(s.level ?? "")) return { ok: false, error: "Unknown error-correction level." };
-  if (!(QR_MODULE_SHAPES as readonly string[]).includes(s.modules ?? "")) return { ok: false, error: "Unknown module shape." };
-  if (!(QR_EYE_SHAPES as readonly string[]).includes(s.eyes ?? "")) return { ok: false, error: "Unknown corner shape." };
-  if (!(QR_FRAMES as readonly string[]).includes(s.frame ?? "")) return { ok: false, error: "Unknown frame." };
-  const margin = Number(s.margin);
+  // Strings and numbers only: coercing a JSON object like {"toString":1} would throw.
+  const text = (v: unknown) => (typeof v === "string" ? v : "");
+  if (!HEX_RE.test(text(s.fg)) || !HEX_RE.test(text(s.bg))) return { ok: false, error: "Colours must look like #1a2b3c." };
+  if (!(QR_LEVELS as readonly string[]).includes(text(s.level))) return { ok: false, error: "Unknown error-correction level." };
+  if (!(QR_MODULE_SHAPES as readonly string[]).includes(text(s.modules))) return { ok: false, error: "Unknown module shape." };
+  if (!(QR_EYE_SHAPES as readonly string[]).includes(text(s.eyes))) return { ok: false, error: "Unknown corner shape." };
+  if (!(QR_FRAMES as readonly string[]).includes(text(s.frame))) return { ok: false, error: "Unknown frame." };
+  const margin = typeof s.margin === "number" || typeof s.margin === "string" ? Number(s.margin) : NaN;
   if (!Number.isInteger(margin) || margin < QR_MARGIN_MIN || margin > QR_MARGIN_MAX) return { ok: false, error: `The quiet zone must be ${QR_MARGIN_MIN}–${QR_MARGIN_MAX} modules.` };
   let logo: QrStyle["logo"] = null;
   if (s.logo) {
-    if (!KEY_RE.test(s.logo.key) || !(s.logo.size >= QR_LOGO_MIN && s.logo.size <= QR_LOGO_MAX)) return { ok: false, error: "Upload the logo again." };
+    if (typeof s.logo !== "object" || !KEY_RE.test(text(s.logo.key)) || typeof s.logo.size !== "number" || !(s.logo.size >= QR_LOGO_MIN && s.logo.size <= QR_LOGO_MAX)) {
+      return { ok: false, error: "Upload the logo again." };
+    }
     logo = { key: s.logo.key, size: Math.round(s.logo.size * 100) / 100 };
   }
-  const caption = String(s.caption ?? "").trim().slice(0, QR_CAPTION_MAX);
+  const caption = text(s.caption).trim().slice(0, QR_CAPTION_MAX);
   return {
     ok: true,
     style: {

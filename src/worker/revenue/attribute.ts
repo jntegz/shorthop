@@ -24,10 +24,10 @@ export async function creditedSession(db: D1Database, site: SiteDTO, visitorId: 
   return row?.id ?? matchedSessionId;
 }
 
-/** After the model or the lookback changes: every matched payment is credited again. */
+/** After the model or the lookback changes: every matched payment is credited again. Erased ones keep theirs: their visitor is gone. */
 export async function recreditSite(db: D1Database, site: SiteDTO, limit = 5000): Promise<number> {
   const { results } = await db
-    .prepare("SELECT id, visitor_id, session_id, occurred_at FROM payments WHERE site_id = ?1 AND kind = 'charge' AND session_id IS NOT NULL ORDER BY occurred_at DESC LIMIT ?2")
+    .prepare("SELECT id, visitor_id, session_id, occurred_at FROM payments WHERE site_id = ?1 AND kind = 'charge' AND session_id IS NOT NULL AND personal_cleared_at IS NULL ORDER BY occurred_at DESC LIMIT ?2")
     .bind(site.id, limit)
     .all<{ id: string; visitor_id: string; session_id: string; occurred_at: number }>();
   const updates: D1PreparedStatement[] = [];

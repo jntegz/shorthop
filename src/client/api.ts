@@ -45,12 +45,17 @@ async function adminFetch(input: RequestInfo | URL, init?: RequestInit): Promise
 
 /**
  * Saves an admin file (a CSV export) through adminFetch, so an expired session
- * leads to the login instead of saving its error page as the file.
+ * leads to the login instead of saving its error page as the file. `init`
+ * makes it a POST, for exports whose subject mustn't appear in the URL.
  */
-export async function downloadFile(path: string): Promise<void> {
-  const res = await adminFetch(path);
-  if (!res.ok) throw new ApiError(`Export failed (${res.status})`, res.status);
-  const name = /filename="([^"]+)"/.exec(res.headers.get("Content-Disposition") ?? "")?.[1] ?? "export.csv";
+export async function downloadFile(path: string, init?: RequestInit): Promise<void> {
+  const res = await adminFetch(path, init);
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new ApiError(body?.error ?? `Export failed (${res.status})`, res.status);
+  }
+  const fallback = (res.headers.get("Content-Type") ?? "").includes("json") ? "export.json" : "export.csv";
+  const name = /filename="([^"]+)"/.exec(res.headers.get("Content-Disposition") ?? "")?.[1] ?? fallback;
   const url = URL.createObjectURL(await res.blob());
   const a = document.createElement("a");
   a.href = url;

@@ -82,7 +82,7 @@ res.json({ url: session.url });` },
       ];
     case "dodo":
       return [
-        { label: "Checkout link (no code)", code: `<!-- The script adds metadata_tl_ref=<ref> -->
+        { label: "Checkout link (no code)", code: `<!-- The script adds metadata_sh_ref=<ref> -->
 <a href="https://checkout.dodopayments.com/buy/pdt_123?quantity=1&redirect_url=${encodeURIComponent(success)}">Buy now</a>` },
         { label: "Checkout session from your server", code: `// POST https://live.dodopayments.com/checkouts
 {
@@ -215,7 +215,7 @@ export function SetupGuide({ site, origin }: { site: SiteDTO; origin: string }) 
           <p className="mb-2 flex items-center gap-2 font-semibold text-fg"><ShieldCheck className="size-4 text-good" /> How secrets are protected</p>
           <ul className="list-disc space-y-1 pl-5 text-muted">
             <li><strong className="text-fg">Cloudflare secret (recommended):</strong> the value is encrypted by Cloudflare and only this Worker can read it. Shorthop stores just its name; the admin, the database and backups never contain it.</li>
-            <li><strong className="text-fg">Pasted here:</strong> encrypted with AES-256-GCM before it's stored, with a key derived from <code className="font-mono text-xs">SESSION_SECRET</code>, which is itself a Cloudflare secret, so the database alone can't reveal it. It's never shown or sent back to the browser. Rotating SESSION_SECRET makes pasted secrets unreadable: paste them again.</li>
+            <li><strong className="text-fg">Pasted here:</strong> encrypted with AES-256-GCM before it's stored, with a key from the <code className="font-mono text-xs">ENCRYPTION_KEY</code> Cloudflare secret (or, without one, derived from <code className="font-mono text-xs">SESSION_SECRET</code>), so the database alone can't reveal it. It's never shown or sent back to the browser. Without ENCRYPTION_KEY, rotating SESSION_SECRET makes pasted secrets unreadable: paste them again.</li>
             <li>Only people with <em>Manage websites</em> can add or change secrets. A connection can't be pointed at the Worker's own secrets (SESSION_SECRET and the like): those names are refused.</li>
             <li>Every webhook is verified before anything is stored (signature, URL token or PayPal's own check), and each event is processed once, so a replayed request does nothing.</li>
             <li>Use read-only or restricted API keys where the provider offers them (Stripe restricted keys, Paddle per-permission keys).</li>

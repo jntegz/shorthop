@@ -13,7 +13,6 @@ import { aeAvailable, queryRecent } from "./ae";
 import { getLink, nowSec } from "./db";
 import { domainsOf, isDevHost } from "./domains";
 import { checkPasswordForm, equal, hmac } from "./link-password";
-import { HSTS } from "./pages";
 import { publicLimit } from "./redirect";
 import { linkStats } from "./stats-data";
 import { randomToken, sha256Hex } from "./users";
@@ -60,7 +59,7 @@ export function newShareSecret(): string {
 }
 
 export async function shareToDTO(env: Env, row: ShareRow, origin: string): Promise<ShareDTO> {
-  const secret = await decryptSecret(env, row.secret_enc).catch(() => null);
+  const secret = await decryptSecret(env, "share", row.secret_enc).catch(() => null);
   return {
     id: row.id,
     url: secret ? `${origin}${SHARE_PREFIX}${row.id}.${secret}` : null,
@@ -87,7 +86,6 @@ const BASE_HEADERS = {
   "X-Frame-Options": "DENY",
   // The secret is in the address: never pass it on.
   "Referrer-Policy": "no-referrer",
-  "Strict-Transport-Security": HSTS,
   "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
 };
 

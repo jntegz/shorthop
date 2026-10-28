@@ -324,7 +324,7 @@ export const linksApi = new Hono<AppEnv>()
       routing: routing.json,
       preview: preview.json,
       qr: null,
-      password_hash: body.password ? await hashLinkPassword(body.password) : null,
+      password_hash: body.password ? await hashLinkPassword(c.env, body.password) : null,
       max_clicks: body.maxClicks ?? null,
       created_at: now,
       updated_at: now,
@@ -412,7 +412,7 @@ export const linksApi = new Hono<AppEnv>()
     const preview = previewFor(body.preview, row.preview);
     if (!preview.ok) return c.json({ error: preview.error }, 400);
     next.preview = preview.json;
-    if (body.password !== undefined) next.password_hash = body.password === null ? null : await hashLinkPassword(body.password);
+    if (body.password !== undefined) next.password_hash = body.password === null ? null : await hashLinkPassword(c.env, body.password);
     if (body.maxClicks !== undefined) next.max_clicks = body.maxClicks;
     if (body.qr !== undefined) {
       if (body.qr === null) next.qr = null;

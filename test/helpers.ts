@@ -74,6 +74,7 @@ export async function resetData(): Promise<void> {
     env.DB.prepare("DELETE FROM subscriptions"),
     env.DB.prepare("DELETE FROM fx_rates"),
     env.DB.prepare("DELETE FROM funnels"),
+    env.DB.prepare("DELETE FROM privacy_requests"),
     env.DB.prepare("DELETE FROM stat_shares"),
     env.DB.prepare("DELETE FROM settings WHERE key != 'default_utm'"),
     env.DB.prepare(

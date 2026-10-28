@@ -28,7 +28,7 @@ interface ImportContext extends AdapterContext {
 type PageFn = (c: ImportContext, since: number, cursor: string | null) => Promise<ImportPage>;
 
 async function getJson(url: string, headers: Record<string, string>): Promise<Obj> {
-  const res = await fetch(url, { headers, signal: AbortSignal.timeout(15_000) });
+  const res = await fetch(url, { headers, redirect: "manual", signal: AbortSignal.timeout(15_000) });
   if (!res.ok) throw new Error(`${new URL(url).hostname} answered ${res.status}: ${(await res.text()).slice(0, 200)}`);
   return obj(await res.json());
 }

@@ -36,6 +36,14 @@ export function resetGeneratedSecretsCache(): void {
   loaded = null;
 }
 
+// The envs withGeneratedSecrets filled in, and with what.
+const filledFromD1 = new WeakMap<Env, Name[]>();
+
+/** The secrets this env (as withGeneratedSecrets returned it) took from D1. */
+export function secretsFromD1(env: Env): Name[] {
+  return filledFromD1.get(env) ?? [];
+}
+
 /** The Wrangler secrets this env lacks, and so takes from D1. */
 export function generatedSecretNames(env: Env): Name[] {
   return NAMES.filter((n) => !(env[n] ?? ""));
@@ -55,7 +63,9 @@ export async function withGeneratedSecrets(env: Env): Promise<Env> {
       throw err;
     });
     const values = await loaded;
-    return { ...env, ...Object.fromEntries(missing.map((n) => [n, values[n]])) };
+    const filled: Env = { ...env, ...Object.fromEntries(missing.map((n) => [n, values[n]])) };
+    filledFromD1.set(filled, missing);
+    return filled;
   } catch (err) {
     console.error(JSON.stringify({ message: "generated secrets unavailable", error: String(err) }));
     return env;

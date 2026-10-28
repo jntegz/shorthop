@@ -4,13 +4,14 @@
 
 import { derivePassword, hashPassword, parsePasswordHash, toBase64Url } from "../shared/password";
 import { LINK_ACCESS_HOURS, LINK_PASSWORD_ITERATIONS, LINK_PASSWORD_LOCK_MAX_SEC, LINK_PASSWORD_MAX, LINK_PASSWORD_MAX_FAILS, LINK_PASSWORD_WINDOW_SEC } from "../shared/protection";
+import { readCapped } from "./body";
 import { nowSec } from "./db";
 import { chargeAttempt, clearFailuresStmt, ipBucket, lock } from "./session";
 
 const COOKIE = "sh_access";
 
-export function hashLinkPassword(password: string): Promise<string> {
-  return hashPassword(password, LINK_PASSWORD_ITERATIONS);
+export function hashLinkPassword(env: Pick<Env, "WORKERS_PLAN">, password: string): Promise<string> {
+  return hashPassword(password, LINK_PASSWORD_ITERATIONS[env.WORKERS_PLAN === "paid" ? "paid" : "free"]);
 }
 
 export function equal(a: Uint8Array, b: Uint8Array): boolean {
@@ -88,10 +89,11 @@ export async function checkPasswordForm(
       console.error(JSON.stringify({ message: "link password limiter failed", error: String(err) }));
     }
   }
-  if (Number(request.headers.get("Content-Length") ?? 0) > 4096) return { ok: false, reason: "bad_request" };
+  const raw = await readCapped(request, 4096).catch(() => null);
+  if (!raw) return { ok: false, reason: "bad_request" };
   let password = "";
   try {
-    const form = await request.formData();
+    const form = await new Request(request.url, { method: "POST", headers: request.headers, body: raw }).formData();
     password = String(form.get("password") ?? "");
   } catch {
     return { ok: false, reason: "bad_request" };

@@ -162,7 +162,7 @@ export interface WebhookDTO {
   events: string[];
   active: boolean;
   createdAt: number;
-  /** False after SESSION_SECRET changed: rotate the secret. */
+  /** False after its encryption key (ENCRYPTION_KEY or SESSION_SECRET) changed: rotate the secret. */
   secretReadable: boolean;
   /** Deliveries waiting for a retry. */
   retrying: number;
@@ -659,7 +659,7 @@ export type ShareRange = (typeof SHARE_RANGES)[number];
 /** A read-only statistics page for one link (Link page → Share). */
 export interface ShareDTO {
   id: string;
-  /** The page's address; null when it can't be decrypted (SESSION_SECRET changed). */
+  /** The page's address; null when it can't be decrypted (its encryption key changed). */
   url: string | null;
   status: "active" | "expired" | "revoked";
   /** Unix seconds, or null until revoked. */

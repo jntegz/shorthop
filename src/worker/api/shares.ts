@@ -36,8 +36,8 @@ export const sharesApi = new Hono<AppEnv>()
       domain,
       slug,
       secret_hash: await sha256Hex(secret),
-      secret_enc: await encryptSecret(c.env, secret),
-      password_hash: body.password ? await hashLinkPassword(body.password) : null,
+      secret_enc: await encryptSecret(c.env, "share", secret),
+      password_hash: body.password ? await hashLinkPassword(c.env, body.password) : null,
       expires_at: body.expiresAt ?? null,
       range_limit: body.rangeLimit ?? null,
       show_recent: body.showRecent ? 1 : 0,
@@ -71,7 +71,7 @@ export const sharesApi = new Hono<AppEnv>()
       if (body.expiresAt !== null && body.expiresAt <= now) return c.json({ error: "expiresAt: Pick a time in the future." }, 400);
       next.expires_at = body.expiresAt;
     }
-    if (body.password !== undefined) next.password_hash = body.password === null ? null : await hashLinkPassword(body.password);
+    if (body.password !== undefined) next.password_hash = body.password === null ? null : await hashLinkPassword(c.env, body.password);
     if (body.rangeLimit !== undefined) next.range_limit = body.rangeLimit;
     if (body.showRecent !== undefined) next.show_recent = body.showRecent ? 1 : 0;
     if (body.revoke) next.revoked_at = now;

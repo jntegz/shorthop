@@ -291,7 +291,7 @@
     var p = provider(u), q = u.searchParams;
     if (p === "stripe" && !q.has("client_reference_id")) q.set("client_reference_id", "sh_" + ref);
     else if (p === "lemonsqueezy") q.set("checkout[custom][sh_ref]", ref);
-    else if (p === "dodo") q.set("metadata_tl_ref", ref);
+    else if (p === "dodo") q.set("metadata_sh_ref", ref);
     else if (p === "creem") q.set("metadata[sh_ref]", ref);
     else if (p === "gumroad") q.set("sh_ref", ref);
     else return href;

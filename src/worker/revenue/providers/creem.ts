@@ -39,6 +39,7 @@ async function transactionAmount(apiKey: string, transactionId: string, test: bo
   try {
     const res = await fetch(`${base}/v1/transactions?transaction_id=${encodeURIComponent(transactionId)}`, {
       headers: { "x-api-key": apiKey },
+      redirect: "manual",
       signal: AbortSignal.timeout(5000),
     });
     if (!res.ok) return null;

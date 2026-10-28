@@ -45,6 +45,8 @@ export interface SetupConfig {
   plan: Plan;
   /** What API_TOKEN may do; only "full" lets it change and delete. */
   tokenScope: TokenScope;
+  /** How far Strict-Transport-Security reaches: this host, or its subdomains too (src/worker/hsts.ts). */
+  hsts: "host" | "subdomains";
   digestProvider: Provider;
   digestFrom: string;
   digestTo: string;
@@ -73,6 +75,7 @@ export const EXAMPLE_CONFIG: SetupConfig = {
   webDataset: "shorthop_web",
   plan: "free",
   tokenScope: "create",
+  hsts: "host",
   digestProvider: "cloudflare",
   digestFrom: "digest@sh.example",
   digestTo: "owner@example.com",
@@ -230,6 +233,10 @@ ${sendEmail}
     // What the API token may do: "create" reads, creates links and imports new
     // ones; "full" also changes and deletes links and settings.
     "API_TOKEN_SCOPE": ${j(c.tokenScope)},
+    // "host": browsers use HTTPS for each domain above. "subdomains": for their
+    // subdomains too; only when every one of them serves HTTPS, since browsers
+    // keep it for a year.
+    "HSTS": ${j(c.hsts)},
     // Digest and alert delivery: ${PROVIDERS.join(", ")}.
     // Settings → Weekly digest → Set up email overrides the provider and sender
     // without a deploy. API keys and URLs are secrets (docs/SETUP.md#email).
@@ -309,6 +316,7 @@ export function configFromText(text: string, file = CONFIG_FILE): SetupConfig {
     webDataset: str(vars.AE_WEB_DATASET) || str(web.dataset) || webDatasetFor(aeDataset),
     plan: str(vars.WORKERS_PLAN) === "paid" ? "paid" : "free",
     tokenScope: str(vars.API_TOKEN_SCOPE) === "full" ? "full" : "create",
+    hsts: str(vars.HSTS) === "subdomains" ? "subdomains" : "host",
     digestProvider: (PROVIDERS as readonly string[]).includes(provider) ? (provider as Provider) : "off",
     digestFrom: str(vars.DIGEST_FROM),
     digestTo: str(vars.DIGEST_TO),
@@ -405,7 +413,8 @@ const BUTTON_COMMENTS: Record<string, string[]> = {
   "vars.CF_ACCOUNT_ID": ["Your account ID: with the CF_ANALYTICS_TOKEN secret, it makes the stats readable (docs/SETUP.md#analytics)."],
   "vars.SHORT_DOMAINS": ["Short domains, comma-separated, primary first. Each needs a route above. Links can't be created until one is set."],
   "vars.FALLBACK_URL": ['Where "/" goes, and clicks when the link store can\'t be read. Your own site.'],
-  "vars.WORKERS_PLAN": ['"free" or "paid": sizes republish pages, import batches and checks per run to the plan\'s limit. Say "free" unless you pay for Workers.'],
+  "vars.WORKERS_PLAN": ['"free" or "paid": sizes republish pages, import batches and checks per run to the plan\'s limit, and how strongly link passwords are hashed. Say "free" unless you pay for Workers.'],
+  "vars.HSTS": ['"host": browsers use HTTPS for your domains. "subdomains": for their subdomains too; only when all of them serve HTTPS (browsers keep it for a year).'],
   "vars.DIGEST_PROVIDER": ["Email is off. Turn it on in the admin: Settings → Statistics & email → Set up email."],
 };
 

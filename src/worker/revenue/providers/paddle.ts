@@ -28,6 +28,7 @@ async function customerEmail(apiKey: string, customerId: string): Promise<string
   try {
     const res = await fetch(`${base}/customers/${encodeURIComponent(customerId)}`, {
       headers: { Authorization: `Bearer ${apiKey}` },
+      redirect: "manual",
       signal: AbortSignal.timeout(5000),
     });
     if (!res.ok) return null;

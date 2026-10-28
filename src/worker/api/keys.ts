@@ -8,7 +8,7 @@ import { apiKeyListSchema, apiKeyParamSchema, apiKeySchema } from "../../shared/
 import type { ApiKeyDTO, NewApiKeyDTO } from "../../shared/types";
 import { nowSec } from "../db";
 import { validate, type AppEnv } from "../hono";
-import { MAX_KEYS_PER_PERSON, newApiKey, sha256Hex } from "../users";
+import { MAX_KEYS_PER_PERSON, newApiKey, ownerEmails, PASSWORD_IDENTITY, sha256Hex } from "../users";
 
 interface KeyRow {
   id: string;
@@ -71,14 +71,19 @@ export const keysApi = new Hono<AppEnv>()
     return c.json(created, 201);
   })
 
-  // Your own keys; admins can revoke anyone's.
+  // Your own keys; admins can revoke anyone's but an owner's, which only owners can.
   .delete("/:id", validate("param", apiKeyParamSchema), async (c) => {
     const actor = c.get("actor");
     const { id } = c.req.valid("param");
+    const owners = [...ownerEmails(c.env), PASSWORD_IDENTITY];
     const res =
-      actor.role === "admin"
+      actor.role === "admin" && actor.owner
         ? await c.env.DB.prepare("DELETE FROM api_keys WHERE id = ?").bind(id).run()
-        : await c.env.DB.prepare("DELETE FROM api_keys WHERE id = ? AND owner = ?").bind(id, actor.email).run();
+        : actor.role === "admin"
+          ? await c.env.DB.prepare("DELETE FROM api_keys WHERE id = ?1 AND (owner = ?2 OR owner NOT IN (SELECT value FROM json_each(?3)))")
+              .bind(id, actor.email, JSON.stringify(owners))
+              .run()
+          : await c.env.DB.prepare("DELETE FROM api_keys WHERE id = ? AND owner = ?").bind(id, actor.email).run();
     if (!res.meta.changes) return c.json({ error: "Not found" }, 404);
     console.log(JSON.stringify({ message: "api key revoked", id, by: actor.email }));
     return c.json({ revoked: true });

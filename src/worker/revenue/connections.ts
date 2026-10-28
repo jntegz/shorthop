@@ -67,7 +67,7 @@ export function connectionDTO(row: ConnectionRow, origin: string, urlToken: stri
 }
 
 export async function connectionSecrets(env: Env, row: ConnectionRow): Promise<{ webhook: ResolvedSecret; apiKey: ResolvedSecret }> {
-  const [webhook, apiKey] = await Promise.all([resolveSecret(env, row.webhook_secret, row.webhook_secret_ref), resolveSecret(env, row.api_key, row.api_key_ref)]);
+  const [webhook, apiKey] = await Promise.all([resolveSecret(env, "connection:webhook_secret", row.webhook_secret, row.webhook_secret_ref), resolveSecret(env, "connection:api_key", row.api_key, row.api_key_ref)]);
   return { webhook, apiKey };
 }
 
@@ -79,7 +79,7 @@ export async function connectionSecrets(env: Env, row: ConnectionRow): Promise<{
  */
 export async function connectionView(env: Env, row: ConnectionRow, origin: string): Promise<ConnectionDTO> {
   if (!PROVIDER_INFO[row.provider as Provider]?.urlToken || row.webhook_secret_ref || !row.webhook_secret) return connectionDTO(row, origin);
-  return connectionDTO(row, origin, await decryptSecret(env, row.webhook_secret));
+  return connectionDTO(row, origin, await decryptSecret(env, "connection:webhook_secret", row.webhook_secret));
 }
 
 type ConnectionInput = Partial<z.infer<typeof connectionSchema>>;
@@ -103,7 +103,7 @@ export async function connectionChanges(env: Env, input: ConnectionInput, curren
     const value = input[field];
     const ref = input[`${field}Ref` as "webhookSecretRef" | "apiKeyRef"];
     if (value !== undefined) {
-      out[col] = value ? await encryptSecret(env, value) : null;
+      out[col] = value ? await encryptSecret(env, `connection:${col}`, value) : null;
       if (value) out[`${col}_ref`] = null;
     }
     if (ref !== undefined) {

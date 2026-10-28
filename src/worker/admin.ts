@@ -47,7 +47,6 @@ export async function serveAdmin(request: Request, env: Env, url: URL): Promise<
   h.set("X-Frame-Options", "DENY");
   // same-origin (not no-referrer) so form posts such as Log out carry a real Origin.
   h.set("Referrer-Policy", "same-origin");
-  h.set("Strict-Transport-Security", "max-age=31536000");
   h.set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()");
   h.set("X-Robots-Tag", "noindex");
   return res;

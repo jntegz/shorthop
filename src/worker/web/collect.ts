@@ -128,7 +128,8 @@ export async function handleCollect(request: Request, env: Env, ctx: ExecutionCo
     return reply(400, origin);
   }
   if (!p || typeof p !== "object" || typeof p.s !== "string" || typeof p.u !== "string") return reply(400, origin);
-  const kind = TYPES[str(p.t, 20)];
+  const t = str(p.t, 20);
+  const kind = Object.hasOwn(TYPES, t) ? TYPES[t] : undefined;
   if (!kind) return reply(400, origin);
 
   let page: URL;

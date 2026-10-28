@@ -65,6 +65,17 @@ describe("personal API keys", () => {
     expect((await adminCall("", `/keys/${other.id}`, { method: "DELETE" })).status).toBe(200);
   });
 
+  it("can't be revoked by an admin who isn't an owner when it's an owner's", async () => {
+    await addUser("cat@example.com", "admin", ["api.use"]);
+    const ownerKey = await addKey("owner@example.com", []);
+    expect((await adminCall("cat@example.com", `/keys/${ownerKey.id}`, { method: "DELETE" })).status).toBe(404);
+    expect((await call(`${API}/links`, { headers: ownerKey.auth })).status).toBe(200);
+
+    await addUser("ben@example.com", "user", ["api.use"]);
+    const userKey = await addKey("ben@example.com", []);
+    expect((await adminCall("cat@example.com", `/keys/${userKey.id}`, { method: "DELETE" })).status).toBe(200);
+  });
+
   it("works for owners, and dies with an owner removed from ADMIN_EMAIL", async () => {
     const key = await addKey("owner@example.com", ["links.create"]);
     expect((await newLink(key.auth, "owner-key")).status).toBe(201);

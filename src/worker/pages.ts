@@ -5,8 +5,6 @@ import { APP_NAME } from "../shared/brand";
 import { escapeHtml } from "../shared/html";
 import { TURNSTILE_ORIGIN } from "./turnstile";
 
-export const HSTS = "max-age=31536000";
-
 /** `body` is inserted as HTML: callers escape anything that isn't markup. */
 function page(title: string, heading: string, body: string, link: { href: string; label: string }): string {
   return shell(
@@ -65,7 +63,6 @@ const PAGE_HEADERS = {
   "X-Robots-Tag": "noindex",
   "X-Content-Type-Options": "nosniff",
   "Referrer-Policy": "no-referrer",
-  "Strict-Transport-Security": HSTS,
   "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
 };
 
@@ -88,7 +85,6 @@ const LOGIN_HEADERS = {
   "X-Content-Type-Options": "nosniff",
   "X-Frame-Options": "DENY",
   "Referrer-Policy": "same-origin",
-  "Strict-Transport-Security": HSTS,
   "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
 };
 

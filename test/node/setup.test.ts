@@ -56,6 +56,7 @@ const REAL: SetupConfig = {
   aeDataset: "links_clicks",
   plan: "paid",
   tokenScope: "full",
+  hsts: "subdomains",
   digestProvider: "mailgun",
   digestFrom: "digest@example.net",
   digestTo: "me@example.net",

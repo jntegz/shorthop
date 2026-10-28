@@ -169,6 +169,18 @@ async function domainsStep(s: State): Promise<void> {
       break;
     }
   }
+  // Only a zone's apex has subdomains that aren't this Worker's: on go.example.com, the choice reaches nothing else.
+  const apexes = routeHosts(s.cfg).filter((h) => zoneFor(h, zoneNames) === h);
+  if (apexes.length) {
+    s.cfg.hsts = await choose(
+      `${apexes.join(", ")} ${apexes.length === 1 ? "is a zone's own domain" : "are zones' own domains"}. Should browsers also use HTTPS for every subdomain of ${apexes.length === 1 ? "it" : "them"}?`,
+      [
+        { value: "host", label: "No, just the short-link domains", hint: "safe whatever else runs on the zone" },
+        { value: "subdomains", label: "Yes, every subdomain", hint: "only if all of them serve HTTPS: browsers keep this for a year" },
+      ],
+      s.cfg.hsts,
+    );
+  }
   const fallback = s.cfg.fallbackUrl && !/\/\/example\.com/.test(s.cfg.fallbackUrl) ? s.cfg.fallbackUrl : undefined;
   s.cfg.fallbackUrl = await ask("Fallback URL (where / goes, and clicks when links can't be read; e.g. your website)", { default: fallback, check: httpsUrlProblem });
 }

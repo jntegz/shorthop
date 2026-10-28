@@ -16,7 +16,7 @@ import { ipBucket } from "../session";
 import { getSite } from "../web/sites";
 import { connectionSecrets, settingsOf, type ConnectionRow } from "./connections";
 import { convert, convertNow } from "./fx";
-import { claimRefs, LIKE_ESCAPE, matchPayment, PAYMENT_COLS, tokenLike, type PaymentRow } from "./match";
+import { claimRefs, LIKE_ESCAPE, liveSession, matchPayment, PAYMENT_COLS, tokenLike, type PaymentRow } from "./match";
 import { ADAPTERS } from "./providers";
 import { announcePayments } from "./notify";
 import type { Billing, NormalizedEvent, NormalizedPayment, NormalizedSubscription } from "./types";
@@ -133,7 +133,7 @@ export async function applyEvent(env: Env, site: SiteDTO, provider: Provider, co
     if (id && p.kind === "charge" && !before && !p.testMode && id === `${provider}:charge:${p.providerId}`) charges.push(id);
   }
   for (const c of event.claims) {
-    const session = await env.DB.prepare("SELECT visitor_id FROM web_sessions WHERE id = ?1 AND site_id = ?2").bind(c.ref, site.id).first<{ visitor_id: string }>();
+    const session = await env.DB.prepare(`SELECT visitor_id FROM web_sessions s WHERE id = ?1 AND site_id = ?2 AND ${liveSession("s")}`).bind(c.ref, site.id).first<{ visitor_id: string }>();
     if (session && c.ids.length) await claimRefs(env, site, c.ref, session.visitor_id, c.ids, now);
   }
   return charges;
@@ -151,10 +151,15 @@ function parseFilter(json: string): string[] {
 const SIGN: Record<NormalizedPayment["kind"], number> = { charge: 1, refund: -1, dispute: -1, dispute_won: 1 };
 
 /** The charge a refund or dispute belongs to: by id, or by one of its other ids. */
-async function findParent(db: D1Database, siteId: string, provider: string, ref: string): Promise<{ id: string; session_id: string | null; visitor_id: string | null; credited_session_id: string | null; matched_by: string | null; confidence: string | null } | null> {
+async function findParent(
+  db: D1Database,
+  siteId: string,
+  provider: string,
+  ref: string,
+): Promise<{ id: string; session_id: string | null; visitor_id: string | null; credited_session_id: string | null; matched_by: string | null; confidence: string | null; personal_cleared_at: number | null } | null> {
   return db
     .prepare(
-      `SELECT id, session_id, visitor_id, credited_session_id, matched_by, confidence FROM payments
+      `SELECT id, session_id, visitor_id, credited_session_id, matched_by, confidence, personal_cleared_at FROM payments
        WHERE site_id = ?1 AND provider = ?2 AND kind = 'charge' AND (id = ?3 OR (' ' || order_ref || ' ') LIKE ?4 ${LIKE_ESCAPE}) LIMIT 1`,
     )
     .bind(siteId, provider, `${provider}:charge:${ref}`, tokenLike(ref))
@@ -185,7 +190,8 @@ export async function storePayment(db: D1Database, site: SiteDTO, provider: stri
       .first<{ id: string }>();
     if (twin) {
       await db
-        .prepare("UPDATE payments SET ref = COALESCE(ref, ?2), email = COALESCE(email, ?3), subscription_id = COALESCE(subscription_id, ?4), customer_id = COALESCE(customer_id, ?5) WHERE id = ?1")
+        // An erased payment stays erased (src/worker/web/privacy.ts).
+        .prepare("UPDATE payments SET ref = COALESCE(ref, ?2), email = COALESCE(email, ?3), subscription_id = COALESCE(subscription_id, ?4), customer_id = COALESCE(customer_id, ?5) WHERE id = ?1 AND personal_cleared_at IS NULL")
         .bind(twin.id, p.ref ?? null, p.email ?? null, p.subscriptionId ?? null, p.customerId ?? null)
         .run();
       await rematchIfOpen(db, site, twin.id);
@@ -204,19 +210,23 @@ export async function storePayment(db: D1Database, site: SiteDTO, provider: stri
   const amount = SIGN[p.kind] * Math.abs(Math.round(p.amountMinor));
   const day = new Date(p.occurredAt * 1000).toISOString().slice(0, 10);
   const siteAmount = await convertNow(db, amount, p.currency, site.currency, day);
+  // A refund or dispute of an erased charge arrives erased too, so it can't bring the person back.
+  const cleared = parent?.personal_cleared_at ? now : null;
 
   await db
     .prepare(
       `INSERT INTO payments (id, site_id, connection_id, provider, kind, billing, occurred_at, amount_minor, currency, amount_site_minor,
-         customer_id, email, subscription_id, order_ref, parent_id, ref, session_id, visitor_id, credited_session_id, matched_by, confidence, test_mode, created_at)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)
+         customer_id, email, subscription_id, order_ref, parent_id, ref, session_id, visitor_id, credited_session_id, matched_by, confidence, test_mode, created_at, personal_cleared_at)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?25)
        ON CONFLICT (id) DO UPDATE SET
-         amount_minor = CASE WHEN ?24 = 1 THEN excluded.amount_minor ELSE payments.amount_minor END,
-         amount_site_minor = CASE WHEN ?24 = 1 THEN excluded.amount_site_minor ELSE payments.amount_site_minor END,
-         occurred_at = CASE WHEN ?24 = 1 THEN excluded.occurred_at ELSE payments.occurred_at END,
-         ref = COALESCE(payments.ref, excluded.ref),
-         email = COALESCE(payments.email, excluded.email),
-         customer_id = COALESCE(payments.customer_id, excluded.customer_id),
+         -- A running total only grows, so a replayed older total can't shrink it.
+         amount_minor = CASE WHEN ?24 = 1 AND ABS(excluded.amount_minor) >= ABS(payments.amount_minor) THEN excluded.amount_minor ELSE payments.amount_minor END,
+         amount_site_minor = CASE WHEN ?24 = 1 AND ABS(excluded.amount_minor) >= ABS(payments.amount_minor) THEN excluded.amount_site_minor ELSE payments.amount_site_minor END,
+         occurred_at = CASE WHEN ?24 = 1 AND ABS(excluded.amount_minor) >= ABS(payments.amount_minor) THEN excluded.occurred_at ELSE payments.occurred_at END,
+         -- The same event again after an erasure (a retry or a replay) can't refill what it removed.
+         ref = CASE WHEN payments.personal_cleared_at IS NULL THEN COALESCE(payments.ref, excluded.ref) END,
+         email = CASE WHEN payments.personal_cleared_at IS NULL THEN COALESCE(payments.email, excluded.email) END,
+         customer_id = CASE WHEN payments.personal_cleared_at IS NULL THEN COALESCE(payments.customer_id, excluded.customer_id) END,
          subscription_id = COALESCE(payments.subscription_id, excluded.subscription_id)`,
     )
     .bind(
@@ -230,12 +240,12 @@ export async function storePayment(db: D1Database, site: SiteDTO, provider: stri
       amount,
       p.currency,
       siteAmount,
-      p.customerId ?? null,
-      p.email ?? null,
+      cleared ? null : (p.customerId ?? null),
+      cleared ? null : (p.email ?? null),
       p.subscriptionId ?? null,
       refs.join(" "),
       parent?.id ?? null,
-      p.ref ?? null,
+      cleared ? null : (p.ref ?? null),
       parent?.session_id ?? null,
       parent?.visitor_id ?? null,
       parent?.credited_session_id ?? null,
@@ -244,6 +254,7 @@ export async function storePayment(db: D1Database, site: SiteDTO, provider: stri
       p.testMode ? 1 : 0,
       now,
       p.cumulative ? 1 : 0,
+      cleared,
     )
     .run();
 
@@ -272,7 +283,8 @@ export async function storeSubscription(db: D1Database, site: SiteDTO, provider:
        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
        ON CONFLICT (id) DO UPDATE SET
          status = excluded.status,
-         customer_id = COALESCE(excluded.customer_id, subscriptions.customer_id),
+         -- Erased or past retention: later events don't bring the customer back.
+         customer_id = CASE WHEN subscriptions.personal_cleared_at IS NULL THEN COALESCE(excluded.customer_id, subscriptions.customer_id) END,
          interval_unit = COALESCE(excluded.interval_unit, subscriptions.interval_unit),
          interval_count = CASE WHEN excluded.interval_unit IS NULL THEN subscriptions.interval_count ELSE excluded.interval_count END,
          amount_minor = COALESCE(excluded.amount_minor, subscriptions.amount_minor),

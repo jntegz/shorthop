@@ -26,6 +26,7 @@ async function accessToken(clientId: string, secret: string, settings: Record<st
     method: "POST",
     headers: { Authorization: `Basic ${btoa(`${clientId}:${secret}`)}`, "Content-Type": "application/x-www-form-urlencoded" },
     body: "grant_type=client_credentials",
+    redirect: "manual",
     signal: AbortSignal.timeout(8000),
   });
   if (!res.ok) throw new Error(`PayPal refused the client id and secret (HTTP ${res.status})`);
@@ -84,6 +85,7 @@ export const paypal: ProviderAdapter = {
           webhook_id: webhookId,
           webhook_event: event,
         }),
+        redirect: "manual",
         signal: AbortSignal.timeout(8000),
       });
       if (!res.ok) return `PayPal couldn't verify it (HTTP ${res.status})`;

@@ -11,7 +11,7 @@
 // Worker's own secrets are refused: a connection can't be pointed at them.
 
 import { isReservedSecretName } from "../../shared/sites";
-import { decryptSecret } from "../webhooks";
+import { decryptSecret, type SecretPurpose } from "../webhooks";
 
 export type SecretSource = "stored" | "cloudflare" | "none";
 
@@ -22,7 +22,7 @@ export interface ResolvedSecret {
   problem: string | null;
 }
 
-export async function resolveSecret(env: Env, stored: string | null, ref: string | null): Promise<ResolvedSecret> {
+export async function resolveSecret(env: Env, purpose: SecretPurpose, stored: string | null, ref: string | null): Promise<ResolvedSecret> {
   if (ref) {
     if (isReservedSecretName(ref)) return { value: null, source: "cloudflare", problem: `${ref} is one of the Worker's own secrets and can't be used here.` };
     const value = (env as unknown as Record<string, unknown>)[ref];
@@ -32,10 +32,10 @@ export async function resolveSecret(env: Env, stored: string | null, ref: string
     return { value, source: "cloudflare", problem: null };
   }
   if (stored) {
-    const value = await decryptSecret(env, stored);
+    const value = await decryptSecret(env, purpose, stored);
     return value
       ? { value, source: "stored", problem: null }
-      : { value: null, source: "stored", problem: "The saved secret can't be decrypted (SESSION_SECRET changed?). Paste it again." };
+      : { value: null, source: "stored", problem: "The saved secret can't be decrypted (ENCRYPTION_KEY or SESSION_SECRET changed?). Paste it again." };
   }
   return { value: null, source: "none", problem: null };
 }

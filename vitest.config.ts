@@ -32,6 +32,8 @@ export default defineConfig(async () => {
       // Node-side tests (the setup wizard) run with tsx --test.
       exclude: ["test/node/**"],
       setupFiles: ["./test/setup.ts"],
+      // Every file runs in parallel in workerd, so a test that takes half a second alone can take several under load.
+      testTimeout: 20_000,
     },
   };
 });

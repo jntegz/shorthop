@@ -20,6 +20,9 @@ describe("designs", () => {
     [{ modules: "stars" }, "module shape"],
     [{ logo: { key: "../x.png", size: 0.2 } }, "logo"],
     [{ logo: { key: "abcdefghij0123456789.png", size: 0.5 } }, "logo"], // gitleaks:allow (made-up logo key)
+    [{ fg: { toString: 1 } }, "Colours"],
+    [{ margin: { valueOf: 1, toString: 1 } }, "quiet zone"],
+    [{ logo: { key: { toString: 1 }, size: 0.2 } }, "logo"],
   ])("rejects %o", (over, message) => {
     const r = validateQrStyle({ ...style(), ...over });
     expect(r.ok).toBe(false);

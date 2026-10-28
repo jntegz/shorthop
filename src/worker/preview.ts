@@ -16,7 +16,6 @@ import {
 import { nowSec } from "./db";
 import { CHECK_USER_AGENT } from "./link-check";
 import { sniffImageType } from "./not-found";
-import { HSTS } from "./pages";
 import { planLimits } from "./plan";
 
 /** The preview as the redirect needs it (in the link's KV record). */
@@ -74,7 +73,6 @@ ${p.d ? `<p>${e(p.d)}</p>` : ""}
       "X-Robots-Tag": "noindex",
       "Content-Security-Policy": "default-src 'none'; img-src https:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
       "X-Content-Type-Options": "nosniff",
-      "Strict-Transport-Security": HSTS,
     },
   });
 }
@@ -117,7 +115,6 @@ export async function servePreviewImage(env: Env, url: URL, ctx: ExecutionContex
       "Cache-Control": "public, max-age=31536000, immutable",
       "X-Content-Type-Options": "nosniff",
       "Content-Security-Policy": "default-src 'none'",
-      "Strict-Transport-Security": HSTS,
     },
   });
   ctx.waitUntil(cache.put(cacheKey, res.clone()));

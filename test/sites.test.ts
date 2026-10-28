@@ -305,7 +305,8 @@ describe("payment webhooks", () => {
     const retry = await hook(conn, paid, await stripeHeaders("whsec_test", paid));
     expect(await retry.json()).toMatchObject({ duplicate: true });
 
-    for (const [id, refunded] of [["evt_r1", 1000], ["evt_r2", 1500]] as const) {
+    // The last one is an older total arriving late: it can't shrink the refund.
+    for (const [id, refunded] of [["evt_r1", 1000], ["evt_r2", 1500], ["evt_r0", 500]] as const) {
       const body = JSON.stringify({ id, type: "charge.refunded", livemode: true, created: now(), data: { object: { id: "ch_1", payment_intent: "pi_1", amount_refunded: refunded, currency: "usd" } } });
       expect((await hook(conn, body, await stripeHeaders("whsec_test", body))).status).toBe(200);
     }

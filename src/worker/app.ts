@@ -4,6 +4,7 @@
 // Then every route is checked against its rule in src/worker/permissions.ts.
 
 import { Hono, type Context, type MiddlewareHandler } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { csrf } from "hono/csrf";
 import { HTTPException } from "hono/http-exception";
 import { secureHeaders } from "hono/secure-headers";
@@ -21,8 +22,12 @@ import { sitesApi } from "./api/sites";
 import { statsApi } from "./api/stats";
 import { usersApi } from "./api/users";
 import { fullTokenScope, TOKEN_SCOPE_ERROR, verifyAdmin, verifyBearer, type AuthResult, type WaitUntil } from "./auth";
+import { PREVIEW_IMAGE_MAX_BYTES } from "../shared/preview";
 import type { AppEnv } from "./hono";
 import { authorize } from "./permissions";
+
+/** Room for a preview image upload and its form encoding. */
+const MAX_API_BODY = PREVIEW_IMAGE_MAX_BYTES + 64 * 1024;
 
 export const api = new Hono<AppEnv>()
   .route("/", linksApi)
@@ -86,7 +91,9 @@ function executionCtx(c: Context<AppEnv>): WaitUntil | undefined {
 
 export const app = new Hono<AppEnv>();
 
-app.use("*", secureHeaders({ crossOriginResourcePolicy: "same-origin", referrerPolicy: "no-referrer" }));
+app.use("*", secureHeaders({ crossOriginResourcePolicy: "same-origin", referrerPolicy: "no-referrer", strictTransportSecurity: false }));
+// The largest body any route takes is a preview image; uploads check their own tighter caps.
+app.use("*", bodyLimit({ maxSize: MAX_API_BODY, onError: (c) => c.json({ error: "The request is too large" }, 413) }));
 app.use("*", async (c, next) => {
   await next();
   c.header("Cache-Control", "no-store");

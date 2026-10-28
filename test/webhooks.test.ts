@@ -42,7 +42,7 @@ describe("endpoints", () => {
     expect(body.secret).toMatch(/^whsec_/);
     expect(JSON.stringify(body.webhooks)).not.toContain(body.secret);
     const stored = await env.DB.prepare("SELECT secret FROM webhooks").first<{ secret: string }>();
-    expect(stored!.secret).toMatch(/^v1:/);
+    expect(stored!.secret).toMatch(/^v2:s:/);
     expect(stored!.secret).not.toContain(body.secret.slice(6, 20));
     for (const bad of ["http://hooks.example.com/x", "https://127.0.0.1/x", "https://10.0.0.5/x", "https://hooks.local/x", "https://user:pw@hooks.example.com/"]) {
       expect((await addHook(undefined, bad)).res.status, bad).toBe(400);

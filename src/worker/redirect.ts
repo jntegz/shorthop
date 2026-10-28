@@ -23,8 +23,6 @@ const DEFAULT_CACHE_TTL = 60;
 const REDIRECT_HEADERS = {
   "Cache-Control": "private, max-age=0",
   "X-Robots-Tag": "noindex",
-  // After one HTTPS visit, browsers never ask this domain over plain HTTP, where a redirect could be altered.
-  "Strict-Transport-Security": "max-age=31536000",
 };
 
 export function redirectTo(location: string): Response {
@@ -47,7 +45,7 @@ export async function publicLimit(request: Request, env: Env): Promise<Response 
     console.error(JSON.stringify({ message: "public rate limiter failed", error: String(err) }));
     return null;
   }
-  return new Response("Too many requests", { status: 429, headers: { "Retry-After": "60", "Cache-Control": "no-store", "Strict-Transport-Security": REDIRECT_HEADERS["Strict-Transport-Security"] } });
+  return new Response("Too many requests", { status: 429, headers: { "Retry-After": "60", "Cache-Control": "no-store" } });
 }
 
 /** Extracts the slug from a path: decoded once, one trailing "/" ignored. */

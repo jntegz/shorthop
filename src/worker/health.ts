@@ -20,6 +20,8 @@ import { pruneHistory } from "./history";
 import { MailerError, mailerStatus, providerName, sendMail, withMailSettings } from "./mailer";
 import { planLimits } from "./plan";
 import { prunePreviewImages } from "./preview";
+import { reencryptSecrets } from "./reencrypt";
+import { secretsFromD1 } from "./secrets";
 import { runRollup, type RollupResult } from "./rollup";
 import { getCheckSettings, runLinkChecks } from "./link-check";
 import { pruneApiKeys } from "./users";
@@ -27,6 +29,7 @@ import { checkMilestones, deliver, pruneDeliveries } from "./webhooks";
 import { loginConfig, plainAdminPassword, pruneLoginState } from "./session";
 import { refreshFx } from "./revenue/fx";
 import { rematchAll } from "./revenue/match";
+import { pruneCustomerData } from "./web/privacy";
 import { listSites } from "./web/sites";
 
 type Job = "rollup" | "digest" | "alert" | "links";
@@ -38,6 +41,7 @@ const REMIND_AFTER_SEC = 7 * 86400;
 const ROLLUP_DUE_HOUR = 2;
 const MIN_API_TOKEN = 32;
 const MIN_SALT = 16;
+const MIN_ENCRYPTION_KEY = 32;
 
 /** The checks cron runs every 30 minutes; this much silence means it stopped. */
 const LINK_CHECKS_LATE_SEC = 3 * 3600;
@@ -110,6 +114,8 @@ export async function scheduledCleanup(env: Env, now = new Date()): Promise<void
     ["upload prune", () => prunePreviewImages(env)],
     ["health alert", () => checkAndAlert(env, now)],
     ["payment events prune", () => prunePaymentEvents(env.DB, nowSec())],
+    ["customer data retention", () => pruneCustomerData(env.DB)],
+    ["secret re-encryption", () => reencryptSecrets(env)],
   ];
   for (const [name, run] of jobs) {
     try {
@@ -346,9 +352,21 @@ function setupChecks(env: Env, add: (id: string, label: string, status: HealthSt
     // Optional since personal API keys: only a token that is set must be long enough.
     legacyApiToken(env) && legacyApiToken(env).length < MIN_API_TOKEN ? `API_TOKEN (${MIN_API_TOKEN}+ characters)` : "",
     (env.VISITOR_SALT ?? "").length < MIN_SALT ? `VISITOR_SALT (${MIN_SALT}+ characters)` : "",
+    env.ENCRYPTION_KEY && env.ENCRYPTION_KEY.length < MIN_ENCRYPTION_KEY ? `ENCRYPTION_KEY (${MIN_ENCRYPTION_KEY}+ characters)` : "",
   ].filter(Boolean);
   if (weak.length) add("secrets", "Secrets", "warn", `Too short or missing: ${weak.join(", ")}.`, { fix: "npm run setup -- secrets --rotate", docs: "docs/SETUP.md#secrets" });
   else add("secrets", "Secrets", "ok", legacyApiToken(env) ? "API token and visitor salt are set." : "The visitor salt is set.");
+
+  // Deploy to Cloudflare installs: the generated SESSION_SECRET sits in D1, next to the secrets it would encrypt.
+  if (!env.ENCRYPTION_KEY && secretsFromD1(env).includes("SESSION_SECRET")) {
+    add(
+      "encryption",
+      "Stored secrets",
+      "warn",
+      "Webhook, share and payment secrets are encrypted with a key kept in the database itself. Add an ENCRYPTION_KEY secret (32+ random characters) in the Worker's Settings → Variables and Secrets, or with npx wrangler secret put ENCRYPTION_KEY; the daily cleanup then moves them over. Nobody is signed out.",
+      { docs: "docs/SETUP.md#secrets", advisory: true },
+    );
+  }
 
   if (env.DEV_AUTH_BYPASS) {
     add("devbypass", "Local development flag", "warn", "DEV_AUTH_BYPASS is set. It only works on localhost, but belongs in .dev.vars, not in the deployed config.", { fix: "npm run setup", docs: "docs/SETUP.md#configuration" });

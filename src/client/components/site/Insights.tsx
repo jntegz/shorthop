@@ -66,7 +66,7 @@ export function PeakHoursCard({ siteId, view, site, revenue }: { siteId: string;
         <div className="px-4 pb-4">
           {/* relative: the cells' screen-reader numbers are absolutely positioned and must stay inside the scroller. */}
           <div className="relative overflow-x-auto">
-            <table className="w-full min-w-[640px] border-separate border-spacing-[3px] text-xs" aria-label={`Peak hours: ${metric}`}>
+            <table className="w-full min-w-[640px] table-fixed border-separate border-spacing-[3px] text-xs" aria-label={`Peak hours: ${metric}`}>
               <thead>
                 <tr>
                   <th className="w-10" />

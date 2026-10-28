@@ -80,6 +80,14 @@ describe("outbound URL safety", () => {
     ["http://[fd00::1]/", false],
     ["http://[fe80::1]/", false],
     ["http://[::ffff:127.0.0.1]/", false],
+    ["http://[::127.0.0.1]/", false],
+    ["http://[::a9fe:a9fe]/", false],
+    ["http://[64:ff9b::10.0.0.1]/", false],
+    ["http://[64:ff9b::8.8.8.8]/", true],
+    ["http://[2002:7f00:1::]/", false],
+    ["http://[2002:808:808::1]/", true],
+    ["http://[2001:0:4136:e378::1]/", false],
+    ["http://[0:0:0:0:0:ffff:a00:1]/", false],
     ["http://[2606:4700::1111]/", true],
   ])("%s → %s", (url, ok) => {
     expect(isFetchableUrl(new URL(url))).toBe(ok);

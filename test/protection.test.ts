@@ -20,8 +20,12 @@ const cookieOf = (res: Response) => res.headers.get("Set-Cookie")!.split(";")[0]
 
 describe("passwords", () => {
   it("hashes and checks, and rejects passwords that are too short or long", async () => {
-    const h = await hashLinkPassword("open sesame");
+    const h = await hashLinkPassword({ WORKERS_PLAN: "free" }, "open sesame");
     expect(h).toMatch(/^pbkdf2-sha256:30000:/);
+    // Paid installs use more; a hash keeps its own count, so either still checks.
+    const paid = await hashLinkPassword({ WORKERS_PLAN: "paid" }, "open sesame");
+    expect(paid).toMatch(/^pbkdf2-sha256:100000:/);
+    expect(await checkLinkPassword("open sesame", paid)).toBe(true);
     expect(await checkLinkPassword("open sesame", h)).toBe(true);
     expect(await checkLinkPassword("Open sesame", h)).toBe(false);
     expect(linkPasswordProblem("abc")).not.toBeNull();

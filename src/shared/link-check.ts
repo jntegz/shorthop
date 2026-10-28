@@ -216,20 +216,38 @@ function ipv4Private(host: string): boolean | null {
   );
 }
 
+/** The eight 16-bit groups of an IPv6 address as the URL class prints it, or null. */
+function ipv6Groups(ip: string): number[] | null {
+  const halves = ip.split("::");
+  if (halves.length > 2) return null;
+  const part = (s: string) => (s ? s.split(":").map((g) => (/^[0-9a-f]{1,4}$/.test(g) ? parseInt(g, 16) : NaN)) : []);
+  const head = part(halves[0]!);
+  const tail = halves.length === 2 ? part(halves[1]!) : [];
+  const fill = 8 - head.length - tail.length;
+  if (halves.length === 1 ? fill !== 0 : fill < 1) return null;
+  const groups = [...head, ...new Array<number>(halves.length === 2 ? fill : 0).fill(0), ...tail];
+  return groups.every((g) => !Number.isNaN(g)) ? groups : null;
+}
+
+const v4Of = (hi: number, lo: number) => `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`;
+
 function ipv6Private(host: string): boolean | null {
   if (!host.startsWith("[")) return null;
-  const ip = host.slice(1, -1).toLowerCase();
-  if (ip === "::" || ip === "::1") return true;
-  // IPv4-mapped (::ffff:7f00:1 after URL normalization): judge the embedded IPv4.
-  const mapped = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(ip);
-  if (mapped) {
-    const hi = parseInt(mapped[1]!, 16);
-    const lo = parseInt(mapped[2]!, 16);
-    return ipv4Private(`${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`) ?? true;
+  const g = ipv6Groups(host.slice(1, -1).toLowerCase());
+  if (!g) return true;
+  const [g0, g1, g2, g3, g4, g5, g6, g7] = g as [number, number, number, number, number, number, number, number];
+  // ::, ::1, IPv4-compatible (::7f00:1) and IPv4-mapped (::ffff:7f00:1): judge the embedded IPv4.
+  if (g0 === 0 && g1 === 0 && g2 === 0 && g3 === 0 && g4 === 0 && (g5 === 0 || g5 === 0xffff)) {
+    if (g5 === 0 && g6 === 0) return true;
+    return ipv4Private(v4Of(g6, g7)) ?? true;
   }
-  const first = parseInt(ip.split(":")[0] || "0", 16);
+  // NAT64 (64:ff9b::/96, and the local-use 64:ff9b:1::/48) reaches the embedded IPv4.
+  if (g0 === 0x64 && g1 === 0xff9b) return g2 === 0 ? (ipv4Private(v4Of(g6, g7)) ?? true) : true;
+  // 6to4 (2002::/16) carries an IPv4 in the next 32 bits; Teredo (2001::/32) hides one, so refuse it.
+  if (g0 === 0x2002) return ipv4Private(v4Of(g1, g2)) ?? true;
+  if (g0 === 0x2001 && g1 === 0) return true;
   // fc00::/7 unique local, fe80::/10 link-local, ff00::/8 multicast.
-  return (first & 0xfe00) === 0xfc00 || (first & 0xffc0) === 0xfe80 || (first & 0xff00) === 0xff00;
+  return (g0 & 0xfe00) === 0xfc00 || (g0 & 0xffc0) === 0xfe80 || (g0 & 0xff00) === 0xff00;
 }
 
 /**

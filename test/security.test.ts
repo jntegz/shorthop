@@ -191,3 +191,28 @@ describe("admin access", () => {
     expect((await adminCall("editor@example.com", "/settings/digest/preview")).status).toBe(403);
   });
 });
+
+describe("admin API bodies", () => {
+  it("refuses a body larger than the largest upload, before reading it as JSON", async () => {
+    const res = await call(`${API}/links`, json({ url: "https://example.com/", slug: "big", notes: "x".repeat(6 * 1024 * 1024) }));
+    expect(res.status).toBe(413);
+    expect((await call(`${API}/links`, json({ url: "https://example.com/", slug: "small" }))).status).toBe(201);
+  });
+});
+
+describe("Strict-Transport-Security", () => {
+  it("covers this host only unless HSTS says subdomains, on every kind of response", async () => {
+    await putLink("hsts", { u: "https://example.com/" });
+    const paths = [`${ORIGIN}/hsts`, `${ORIGIN}/no-such-link`, `${ORIGIN}/health`, `${API}/links`];
+    for (const [hsts, value] of [
+      [undefined, "max-age=31536000"],
+      ["host", "max-age=31536000"],
+      ["subdomains", "max-age=31536000; includeSubDomains"],
+    ] as const) {
+      for (const url of paths) {
+        const res = await call(url, { headers: json({}).headers }, hsts === undefined ? {} : { HSTS: hsts });
+        expect(res.headers.get("Strict-Transport-Security"), `${url} with ${hsts}`).toBe(value);
+      }
+    }
+  });
+});

@@ -36,7 +36,9 @@ A visitor hash is the first 16 hex characters of SHA-256 over the IP address, th
 | Missed paths | As set on the Misses page: Keep for 30 days, 2 months or 3 months, and the path limits |
 | The day's salt | Until the daily job after that day ends |
 | Website events in Analytics Engine | About 90 days |
-| Website visits, identified visitors and payments in D1, and daily page, goal and outbound totals | Until you delete the site in Websites, or the database |
+| Website visits, payment amounts and daily page, goal and outbound totals in D1 | Until you delete the site in Websites, or the database |
+| Customers' emails, customer IDs and identified visitors | As set in the site's Settings & setup → Privacy (1 to 7 years), or until the site is deleted; or until you [erase the person](#requests-from-visitors-and-customers) |
+| Export and erasure requests (who asked, when, how many records; never whom about) | Until the site is deleted |
 
 The daily totals contain counts only, no hashes.
 
@@ -65,6 +67,19 @@ With a payment provider connected, its webhooks send each payment. Shorthop keep
 Payments are matched to a visit by the reference passed through checkout, the return page after payment, the same customer, an identified email, or checkout timing. **Identified emails** come from `shorthop("identify", …)` on your site or from your server's API, stored with the visitor ID and an optional name and user ID. A site can match by email only to identities your server sent.
 
 Only people with the **See revenue** permission see payments, revenue and customers.
+
+**Customer data retention** (Settings & setup → Privacy) removes, every night, the customer's email, customer ID and visitor from payments older than the period you choose, the customer ID from subscriptions that ended before it, and identified visitors who haven't been back since. Amounts, dates and the visit each payment is credited to stay, so revenue reports still add up. Your payment provider keeps its own records.
+
+## Requests from visitors and customers
+
+In a site's Settings & setup → Privacy, find a person by their email, visitor ID or a payment ID. Shorthop collects the identified visitors with their email, their visits, the payments with their email or surely matched to their visitors (and those payments' visitors), the same provider customer's other payments and refunds, and their subscriptions. It doesn't follow a customer to other customers. Guesses never count: a payment matched to a visit by checkout timing, or by an email the visitor's browser claimed, doesn't bring that visitor in, and a visitor reached only through an email their browser claimed brings its own identity and visits but nothing further, since anyone's browser can claim any email. Matching itself only records an email on a visitor when the match is sure. Doing this needs both **Manage websites** and **See revenue**, and works through the API too (`POST /api/sites/<id>/privacy/lookup`, `/export`, `/erase` with `"confirm": true`, and `GET …/privacy/requests`), with the email or ID in the request body, never the address.
+
+- **Export** downloads everything stored about them as JSON, exactly as stored: identities, visits (the latest 5,000), payments and subscriptions.
+- **Erase** deletes their identities and visits, and removes their email, customer ID, visit reference and visitor from their payments, which keep the amount, date and credited visit. A visit a payment is credited to stays, so revenue by source still adds up, but belongs to nobody: it gets a new random visitor ID, and its region, city, network, time zone, language, screen, host, `utm_term` and `utm_content` and any `#fragment` of its pages are cleared; matching and identify ignore it from then on. Someone else's payment that was matched to their visitor only by a guess is unlinked, to be matched again, and otherwise left alone. Return-page references and queued or logged `site.payment` webhooks for their payments are deleted too. Refunds, repeated webhooks and subscription updates that arrive later for an erased payment or subscription are stored without the personal details again. The provider's own order and subscription IDs stay on the payment, to link refunds and disputes; they identify the person only together with the provider's records.
+
+What erasure can't reach: single page views and events in Analytics Engine, which have no name or email and expire after about 90 days; emails already sent (payment alerts, digests); the payment provider's own records; and the person's data on your other tracked sites, which is erased per site. A subscription that is still active brings the customer's details back with its next renewal, so cancel or erase it at the provider as well.
+
+Each export and erasure is logged with who did it, when and how many records, without anything identifying the person.
 
 ## The admin's own users
 
@@ -97,6 +112,6 @@ Adapt this to your service and your jurisdiction:
 
 If you track your website with Shorthop, add something like this, and choose the sentence that fits the site's visitor identification:
 
-> On this website we record the pages you view, where you came from, your approximate location (derived from your IP address by our hosting provider Cloudflare), your network operator, device, browser, language and screen size class, how long you read and how far you scroll, and how fast pages load. *(Cookieless:)* We don't store your IP address or anything in your browser; a code that changes every day tells visits apart. *(Recognise returning visitors / after consent:)* With your consent, we keep a random ID in your browser's local storage (`sh_vid`) to recognise you when you come back; you can withdraw consent at any time under Cookie settings. When you buy, we receive the purchase from our payment provider, including your email address, and connect it to the visit that led to it, to learn which pages and campaigns bring customers. Detailed page-view records are deleted after about 90 days; visit and purchase records are kept as long as we keep our website statistics. Contact: privacy@example.com.
+> On this website we record the pages you view, where you came from, your approximate location (derived from your IP address by our hosting provider Cloudflare), your network operator, device, browser, language and screen size class, how long you read and how far you scroll, and how fast pages load. *(Cookieless:)* We don't store your IP address or anything in your browser; a code that changes every day tells visits apart. *(Recognise returning visitors / after consent:)* With your consent, we keep a random ID in your browser's local storage (`sh_vid`) to recognise you when you come back; you can withdraw consent at any time under Cookie settings. When you buy, we receive the purchase from our payment provider, including your email address, and connect it to the visit that led to it, to learn which pages and campaigns bring customers. Detailed page-view records are deleted after about 90 days; visit records are kept as long as we keep our website statistics, and your email and customer details on purchases for [N years]. You can ask for a copy of your data or for its deletion at privacy@example.com.
 
 Link the notice from your website. The not-found page's button can point to it (Settings → Not-found page).

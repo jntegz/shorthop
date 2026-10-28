@@ -24,6 +24,7 @@ export interface SiteRow {
   digest_hour: number;
   digest_sent_on: string | null;
   tracking: number;
+  customer_retention_months: number | null;
   created_at: number;
   updated_at: number;
 }
@@ -56,6 +57,7 @@ export function siteDTO(row: SiteRow): SiteDTO {
     dailyDigest: row.daily_digest === 1,
     digestHour: row.digest_hour,
     tracking: row.tracking !== 0,
+    customerRetentionMonths: row.customer_retention_months ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -79,8 +81,8 @@ export async function createSite(db: D1Database, input: Required<CreateSiteInput
   await db
     .prepare(
       `INSERT INTO sites (id, name, domains, timezone, currency, id_mode, respect_gpc, attribution_model, lookback_days, exclude_paths, tag_links, created_at, updated_at, notify_payments, server_emails_only,
-         spike_alerts, daily_digest, digest_hour, tracking)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12, ?13, ?14, ?15, ?16, ?17, ?18)`,
+         spike_alerts, daily_digest, digest_hour, tracking, customer_retention_months)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)`,
     )
     .bind(
       id,
@@ -101,6 +103,7 @@ export async function createSite(db: D1Database, input: Required<CreateSiteInput
       input.dailyDigest ? 1 : 0,
       input.digestHour,
       input.tracking ? 1 : 0,
+      input.customerRetentionMonths,
     )
     .run();
   resetSiteCaches();
@@ -130,6 +133,7 @@ export async function updateSite(db: D1Database, id: string, input: UpdateSiteIn
   if (input.dailyDigest !== undefined) set("daily_digest", input.dailyDigest ? 1 : 0);
   if (input.digestHour !== undefined) set("digest_hour", input.digestHour);
   if (input.tracking !== undefined) set("tracking", input.tracking ? 1 : 0);
+  if (input.customerRetentionMonths !== undefined) set("customer_retention_months", input.customerRetentionMonths);
   set("updated_at", nowSec());
   values.push(id);
   const res = await db.prepare(`UPDATE sites SET ${sets.join(", ")} WHERE id = ?${values.length}`).bind(...values).run();
@@ -149,6 +153,11 @@ export async function deleteSite(db: D1Database, id: string): Promise<boolean> {
     db.prepare("DELETE FROM payment_events WHERE connection_id IN (SELECT id FROM payment_connections WHERE site_id = ?)").bind(id),
     db.prepare("DELETE FROM payment_connections WHERE site_id = ?").bind(id),
     db.prepare("DELETE FROM funnels WHERE site_id = ?").bind(id),
+    db.prepare("DELETE FROM site_spikes WHERE site_id = ?").bind(id),
+    db.prepare("DELETE FROM web_daily_events WHERE site_id = ?").bind(id),
+    db.prepare("DELETE FROM privacy_requests WHERE site_id = ?").bind(id),
+    // site.payment webhooks, queued or logged, carry customers' emails.
+    db.prepare("DELETE FROM webhook_deliveries WHERE event_type = 'site.payment' AND json_extract(payload, '$.data.site.id') = ?").bind(id),
   ]);
   resetSiteCaches();
   return Boolean(results[0]?.meta.changes);

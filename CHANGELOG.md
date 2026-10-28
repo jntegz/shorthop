@@ -3,6 +3,39 @@
 What changed in each Shorthop release, and what to do when you upgrade.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Privacy requests** (a site's Settings & setup → Privacy, and `POST /api/sites/<id>/privacy/lookup`, `/export`, `/erase`, `GET …/privacy/requests`): find one person by email, visitor ID or payment ID, export their records as JSON, or erase them. Erasing deletes their identities and visits and removes their personal details from payments, which keep amount, date and credited visit (that visit stays, anonymized), so revenue totals don't change. Erased payments are never matched again, and later webhooks for them arrive without personal details. Each request is logged with who, when and how many records, never whom. Needs Manage websites and See revenue.
+- **Customer data retention** per site: after 1, 2, 3, 5 or 7 years, payments lose the customer's email, customer ID and visitor, ended subscriptions their customer ID, and identified visitors who haven't been back are forgotten. Off by default.
+
+- **`ENCRYPTION_KEY`** (optional secret): encrypts stored webhook, share and payment secrets instead of `SESSION_SECRET`, so rotating `SESSION_SECRET` no longer makes them unreadable. Each value is now also bound to what it's for. The daily cleanup moves existing values over; older ones keep working meanwhile. System status suggests it to Deploy to Cloudflare installs, whose `SESSION_SECRET` is kept in D1.
+- **`HSTS`** (var): `"host"` (the default) or `"subdomains"` to add `includeSubDomains`. `npm run setup` asks only when a domain is a zone's apex.
+
+### Changed
+
+- Revenue matching: a payment matched by a guess (checkout timing, or an email the browser claimed) no longer records the payer's email on that visitor, and a later payment of the same customer is only as sure as the match it follows (it used to show as high confidence). One payment that fails to match no longer stops the daily retry for the others.
+- Changing a site's customer data retention needs See revenue as well as Manage websites.
+
+- Link passwords set on Workers Paid (`WORKERS_PLAN = "paid"`) are hashed with 100,000 PBKDF2 iterations instead of 30,000. Existing passwords keep working.
+- Strict-Transport-Security is set once for every response. The admin API no longer sends `includeSubDomains` unless `HSTS` is `"subdomains"`.
+- The admin API refuses bodies over 5 MB plus 64 KB (the largest upload).
+
+### Fixed
+
+- Security: `ADMIN_PASSWORD` and `ENCRYPTION_KEY` can't be named as a payment connection's secret; preview fetches refuse private addresses inside IPv4-compatible, NAT64, 6to4 and Teredo IPv6 forms; provider API calls no longer follow redirects with their keys; an admin who isn't an owner can't revoke an owner's API key; the link password form caps chunked bodies too.
+- Deleting a website also deletes its traffic-spike history and daily page, goal and outbound totals.
+- Revenue: a late, older refund total can't shrink a newer one; repeated Gumroad refunds of a sale are all counted; FastSpring batches without event ids are no longer taken for duplicates.
+- A QR design or tracker event with unexpected JSON types is refused instead of failing.
+- Dodo Payments: checkout links now get `metadata_sh_ref`, the key the webhook reads, so those payments match their visit by reference instead of falling back to email or timing.
+- Peak hours: all 24 hour columns are the same width; before, the hours without a label collapsed to slivers.
+
+### Upgrading
+
+- Apply the new database migration (`0025_privacy.sql`): `npm run db:migrate:remote`, or deploy through Workers Builds, which applies it.
+- **Deploy to Cloudflare copies:** the Update Shorthop workflow can't change `.github/workflows`. Copy `update-shorthop.yml` from this release by hand: its token is now limited to the steps that need it.
+
 ## [1.2.0] - 2026-10-28
 
 ### Added

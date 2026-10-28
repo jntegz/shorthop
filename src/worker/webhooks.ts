@@ -18,10 +18,23 @@ import { planLimits } from "./plan";
 
 // ---- Secrets ------------------------------------------------------------------
 
-async function secretKey(env: Env): Promise<CryptoKey> {
-  const base = await crypto.subtle.importKey("raw", new TextEncoder().encode(env.SESSION_SECRET), "HKDF", false, ["deriveKey"]);
+// Stored secrets (webhook signing secrets, share links' secrets, payment
+// connections' secrets) are AES-256-GCM encrypted:
+//   v2:<e|s>:<iv>:<data>  a key from ENCRYPTION_KEY (e) or, without one,
+//                         SESSION_SECRET (s), with what the secret is for as
+//                         associated data, so one can't stand in for another.
+//   v1:<iv>:<data>        older: SESSION_SECRET, nothing bound. Still read.
+// The daily cleanup re-encrypts older values with the current key
+// (reencryptSecrets), so setting ENCRYPTION_KEY later moves everything over,
+// after which SESSION_SECRET can be rotated without losing them.
+
+/** What a stored secret is for. */
+export type SecretPurpose = "webhook" | "share" | "connection:webhook_secret" | "connection:api_key";
+
+async function deriveKey(material: string, salt: string, info: string): Promise<CryptoKey> {
+  const base = await crypto.subtle.importKey("raw", new TextEncoder().encode(material), "HKDF", false, ["deriveKey"]);
   return crypto.subtle.deriveKey(
-    { name: "HKDF", hash: "SHA-256", salt: new TextEncoder().encode("shorthop-webhooks"), info: new TextEncoder().encode("webhook-secret-v1") },
+    { name: "HKDF", hash: "SHA-256", salt: new TextEncoder().encode(salt), info: new TextEncoder().encode(info) },
     base,
     { name: "AES-GCM", length: 256 },
     false,
@@ -29,24 +42,51 @@ async function secretKey(env: Env): Promise<CryptoKey> {
   );
 }
 
+const v1Key = (env: Env) => deriveKey(env.SESSION_SECRET, "shorthop-webhooks", "webhook-secret-v1");
+const v2Key = (material: string) => deriveKey(material, "shorthop-secrets", "stored-secret-v2");
+
+/** The key new values are encrypted with: ENCRYPTION_KEY when set. */
+function currentKeyTag(env: Env): "e" | "s" {
+  return env.ENCRYPTION_KEY ? "e" : "s";
+}
+
+/** Whether a stored value is encrypted with something other than the current key. */
+export function isStaleSecret(env: Env, stored: string): boolean {
+  return !stored.startsWith(`v2:${currentKeyTag(env)}:`);
+}
+
 export function newSecret(): string {
   return `whsec_${toBase64Url(crypto.getRandomValues(new Uint8Array(32)))}`;
 }
 
-export async function encryptSecret(env: Env, secret: string): Promise<string> {
+export async function encryptSecret(env: Env, purpose: SecretPurpose, secret: string): Promise<string> {
+  const tag = currentKeyTag(env);
   const iv = crypto.getRandomValues(new Uint8Array(12));
-  const data = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, await secretKey(env), new TextEncoder().encode(secret));
-  return `v1:${toBase64Url(iv)}:${toBase64Url(new Uint8Array(data))}`;
+  const key = await v2Key(tag === "e" ? env.ENCRYPTION_KEY! : env.SESSION_SECRET);
+  const data = await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: new TextEncoder().encode(purpose) }, key, new TextEncoder().encode(secret));
+  return `v2:${tag}:${toBase64Url(iv)}:${toBase64Url(new Uint8Array(data))}`;
 }
 
-/** Null when it can't be decrypted (SESSION_SECRET changed): the owner rotates the secret. */
-export async function decryptSecret(env: Env, stored: string): Promise<string | null> {
-  const [v, ivText, dataText] = stored.split(":");
-  const iv = fromBase64Url(ivText ?? "");
-  const data = fromBase64Url(dataText ?? "");
-  if (v !== "v1" || !iv || !data) return null;
+/** Null when it can't be decrypted (its key changed or is gone): the owner replaces the secret. */
+export async function decryptSecret(env: Env, purpose: SecretPurpose, stored: string): Promise<string | null> {
+  const parts = stored.split(":");
+  let key: Promise<CryptoKey>;
+  let aad: Uint8Array | undefined;
+  if (parts[0] === "v1" && parts.length === 3) {
+    key = v1Key(env);
+  } else if (parts[0] === "v2" && parts.length === 4 && (parts[1] === "e" || parts[1] === "s")) {
+    const material = parts[1] === "e" ? env.ENCRYPTION_KEY : env.SESSION_SECRET;
+    if (!material) return null;
+    key = v2Key(material);
+    aad = new TextEncoder().encode(purpose);
+  } else {
+    return null;
+  }
+  const iv = fromBase64Url(parts.at(-2) ?? "");
+  const data = fromBase64Url(parts.at(-1) ?? "");
+  if (!iv || !data) return null;
   try {
-    return new TextDecoder().decode(await crypto.subtle.decrypt({ name: "AES-GCM", iv }, await secretKey(env), data));
+    return new TextDecoder().decode(await crypto.subtle.decrypt({ name: "AES-GCM", iv, ...(aad ? { additionalData: aad } : {}) }, await key, data));
   } catch {
     return null;
   }
@@ -213,10 +253,10 @@ async function attempt(env: Env, d: DeliveryRow, hook: HookRow | undefined, fetc
   const started = Date.now();
   let status: number | null = null;
   let error: string | null = null;
-  const secret = hook ? await decryptSecret(env, hook.secret) : null;
+  const secret = hook ? await decryptSecret(env, "webhook", hook.secret) : null;
   if (!hook) error = "The webhook was deleted.";
   else if (!hook.active) error = "The webhook is paused.";
-  else if (!secret) error = "The signing secret can't be read (SESSION_SECRET changed). Rotate the secret.";
+  else if (!secret) error = "The signing secret can't be read (ENCRYPTION_KEY or SESSION_SECRET changed). Rotate the secret.";
   else {
     let url: URL | null = null;
     try {
@@ -375,7 +415,7 @@ export async function listWebhooks(env: Env): Promise<WebhookDTO[]> {
         events: JSON.parse(h.events) as string[],
         active: h.active === 1,
         createdAt: h.created_at,
-        secretReadable: (await decryptSecret(env, h.secret)) !== null,
+        secretReadable: (await decryptSecret(env, "webhook", h.secret)) !== null,
         retrying: h.retrying,
         failedRecent: h.failed_recent,
         last: last ? { ok: last.status === "delivered", httpStatus: last.last_status, at: last.last_at, error: last.last_error } : null,

@@ -51,6 +51,18 @@ describe("Gumroad", () => {
     expect((await payments(site))[0]).toMatchObject({ amountMinor: 2900, currency: "USD", email: "g@x.co", matchedBy: "ref" });
   });
 
+  it("keeps the latest refund total when a sale is refunded twice", async () => {
+    const site = await createSite();
+    const conn = await connect(site, { provider: "gumroad" });
+    const post = (fields: Record<string, string>) =>
+      call(conn.webhookUrl.replace("https://sh.example", ORIGIN), { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams(fields).toString() });
+    expect((await post({ sale_id: "s2", sale_timestamp: new Date().toISOString(), price: "5000" })).status).toBe(200);
+    expect(await (await post({ resource_name: "refund", sale_id: "s2", price: "1000" })).json()).toMatchObject({ ok: true });
+    expect(await (await post({ resource_name: "refund", sale_id: "s2", price: "3000" })).json()).not.toMatchObject({ duplicate: true });
+    expect(await (await post({ resource_name: "refund", sale_id: "s2", price: "3000" })).json()).toMatchObject({ duplicate: true });
+    expect((await payments(site)).find((p) => p.kind === "refund")).toMatchObject({ amountMinor: -3000 });
+  });
+
   it("confirms the sale with Gumroad when an access token is set", async () => {
     const site = await createSite();
     const conn = await connect(site, { provider: "gumroad", apiKey: "tok" });
@@ -87,6 +99,24 @@ describe("FastSpring", () => {
       ["charge", 4950, "EUR", "ref"],
       ["refund", -1000, "EUR", "ref"],
     ]);
+  });
+
+  it("tells apart batches whose events have no ids", async () => {
+    const site = await createSite();
+    const conn = await connect(site, { provider: "fastspring", webhookSecret: "fs-secret" });
+    const send = async (order: string) => {
+      const body = JSON.stringify({
+        events: [
+          { type: "order.completed", live: true, data: { id: order, currency: "EUR", total: 10 } },
+          { type: "order.completed", live: true, data: { id: `${order}-b`, currency: "EUR", total: 10 } },
+        ],
+      });
+      const res = await call(`${ORIGIN}/_pay/fastspring/${conn.id}`, { method: "POST", headers: { "X-FS-Signature": bytesToBase64(await sign("fs-secret", body)) }, body });
+      return res.json();
+    };
+    expect(await send("ord-a")).not.toMatchObject({ duplicate: true });
+    expect(await send("ord-c")).not.toMatchObject({ duplicate: true });
+    expect(await payments(site)).toHaveLength(4);
   });
 });
 

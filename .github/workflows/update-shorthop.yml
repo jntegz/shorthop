@@ -37,19 +37,22 @@ jobs:
       DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
       INPUT_VERSION: ${{ inputs.version }}
       MODE: ${{ inputs.mode }}
-      GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ github.event.repository.default_branch }}
           path: copy
+          # The token stays out of .git/config while the release's npm ci runs; Commit sets it up.
+          persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
 
       - name: Find the version
         id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           if [ "$INPUT_VERSION" = "latest" ]; then
             tag=$(gh api "repos/$UPSTREAM/releases/latest" --jq .tag_name)
@@ -96,6 +99,7 @@ jobs:
         working-directory: copy
         env:
           VERSION: ${{ steps.version.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           if [ -z "$(git status --porcelain)" ]; then
             echo "Nothing to change." | tee -a "$GITHUB_STEP_SUMMARY"
@@ -103,6 +107,7 @@ jobs:
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          gh auth setup-git
           branch="shorthop-update-v$VERSION"
           if [ "$MODE" = "commit" ]; then
             git add -A

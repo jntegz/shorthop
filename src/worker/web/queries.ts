@@ -251,7 +251,7 @@ export async function onlineNow(db: D1Database, siteId: string, now = Math.floor
 
 export async function unmatchedCount(db: D1Database, siteId: string, start: number, end: number): Promise<number> {
   const row = await db
-    .prepare("SELECT COUNT(*) AS n FROM payments WHERE site_id = ?1 AND kind = 'charge' AND session_id IS NULL AND test_mode = 0 AND occurred_at >= ?2 AND occurred_at < ?3")
+    .prepare("SELECT COUNT(*) AS n FROM payments WHERE site_id = ?1 AND kind = 'charge' AND session_id IS NULL AND personal_cleared_at IS NULL AND test_mode = 0 AND occurred_at >= ?2 AND occurred_at < ?3")
     .bind(siteId, start, end)
     .first<{ n: number }>();
   return row?.n ?? 0;
@@ -465,7 +465,7 @@ export async function payments(
   w: Window,
   opts: { status: "all" | "matched" | "unmatched"; limit: number; offset?: number; q?: string },
 ): Promise<PaymentsPage> {
-  let where = opts.status === "matched" ? " AND p.session_id IS NOT NULL" : opts.status === "unmatched" ? " AND p.session_id IS NULL AND p.kind = 'charge'" : "";
+  let where = opts.status === "matched" ? " AND p.session_id IS NOT NULL" : opts.status === "unmatched" ? " AND p.session_id IS NULL AND p.kind = 'charge' AND p.personal_cleared_at IS NULL" : "";
   const binds: unknown[] = [site.id, w.start, w.end];
   const q = opts.q?.trim().toLowerCase();
   if (q) {

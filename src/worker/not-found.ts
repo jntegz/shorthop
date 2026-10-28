@@ -28,7 +28,6 @@ export const PAGE_HEADERS = {
   "X-Robots-Tag": "noindex",
   "X-Content-Type-Options": "nosniff",
   "Referrer-Policy": "no-referrer",
-  "Strict-Transport-Security": "max-age=31536000",
   "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
 };
 

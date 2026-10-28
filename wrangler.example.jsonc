@@ -111,6 +111,10 @@
     // What the API token may do: "create" reads, creates links and imports new
     // ones; "full" also changes and deletes links and settings.
     "API_TOKEN_SCOPE": "create",
+    // "host": browsers use HTTPS for each domain above. "subdomains": for their
+    // subdomains too; only when every one of them serves HTTPS, since browsers
+    // keep it for a year.
+    "HSTS": "host",
     // Digest and alert delivery: cloudflare, resend, emailit, postmark, sendgrid, mailgun, custom, webhook, off.
     // Settings → Weekly digest → Set up email overrides the provider and sender
     // without a deploy. API keys and URLs are secrets (docs/SETUP.md#email).
