@@ -118,9 +118,18 @@ npm run setup
 
 The full manual, including every Cloudflare dashboard step, is in **[docs/SETUP.md](docs/SETUP.md)**.
 
+## Updating
+
+Dashboard → System status shows the version you run and says when a new release is out. On GitHub, **Watch → Custom → Releases** emails you about each one.
+
+- **Installed with the button:** in your copy on GitHub, run **Actions → Update Shorthop**. It opens a pull request with the new version, keeping your `wrangler.toml` ids, routes and vars; merging it deploys. ([Details](docs/SETUP.md#update-button), including copies from before 1.2.0.)
+- **Installed with the setup wizard:** `git pull`, `npm ci`, then `npm run setup -- upgrade`, which updates `wrangler.jsonc`, applies the database migrations and deploys ([updating](docs/SETUP.md#updating)).
+
+Read the [changelog](CHANGELOG.md)'s Upgrading notes for each version first.
+
 ## Documentation
 
-- **[Setup manual](docs/SETUP.md):** [requirements](docs/SETUP.md#what-you-need), [the Deploy to Cloudflare button](docs/SETUP.md#deploy-button), [domains](docs/SETUP.md#domains), [Cloudflare Access](docs/SETUP.md#access), [email](docs/SETUP.md#email), [troubleshooting](docs/SETUP.md#troubleshooting), [updating](docs/SETUP.md#updating), [moving from another shortener](docs/SETUP.md#import), [uninstalling](docs/SETUP.md#uninstalling)
+- **[Setup manual](docs/SETUP.md):** [requirements](docs/SETUP.md#what-you-need), [the Deploy to Cloudflare button](docs/SETUP.md#deploy-button), [domains](docs/SETUP.md#domains), [Cloudflare Access](docs/SETUP.md#access), [email](docs/SETUP.md#email), [websites and revenue](docs/SETUP.md#websites), [troubleshooting](docs/SETUP.md#troubleshooting), [updating](docs/SETUP.md#updating), [moving from another shortener](docs/SETUP.md#import), [uninstalling](docs/SETUP.md#uninstalling)
 - **[Cloudflare free tier](docs/CLOUDFLARE-FREE-TIER.md):** what each service allows and what Shorthop uses
 - **[iOS Shortcut](docs/ios-shortcut.md):** shorten a link from the share sheet
 - **[Visitor privacy](docs/PRIVACY.md):** what Shorthop records about visitors, for your privacy notice
@@ -240,7 +249,7 @@ Asset routing uses `html_handling: "none"`, `not_found_handling: "none"` and `ru
 _admin/index.html          admin app entry (builds to dist/client/_admin/)
 migrations/                D1 schema
 public/                    robots.txt, favicon, brand icon
-scripts/setup/             npm run setup: the wizard, config template, deploy guard
+scripts/setup/             npm run setup: the wizard, config template, deploy guard, button-copy updater
 scripts/                   import, check-slugs, seed-dev, hash-password
 src/shared/                slug rules, domains, UTM handling, schemas, API types, brand, cron schedule
 src/worker/index.ts        entry: request dispatch and cron handlers
@@ -254,6 +263,7 @@ src/worker/link-check.ts   destination checks: safe fetching, scheduling, alert 
 src/worker/webhooks.ts     signed webhook events, retries and the delivery log
 src/worker/click-cap.ts    the click-limit Durable Object
 src/worker/health.ts       System status, setup checks and alert emails
+src/worker/version.ts      the running version and the newest release (System status)
 src/worker/api/            links, stats, settings, checks, previews, UTM, QR, webhooks, people and keys routes
 src/client/                admin app (React, Vite, Tailwind, TanStack Query, Recharts)
 test/                      Workers-runtime tests; test/node: setup tests

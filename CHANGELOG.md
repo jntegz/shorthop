@@ -17,6 +17,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - **Misses:** ignore a path for good, or send it to an existing link with a link picker. The Ignored tab clears, exports and imports its list as CSV. Creating a link from a miss keeps you on the page, to fix the next one.
 - **Link health:** open a destination's link from its row, or edit it (a menu when several links share the destination).
 - **Appearance:** an accent colour per browser (Settings → Access & security).
+- **One-click updates for button installs:** an **Update Shorthop** workflow (Actions → Update Shorthop → Run workflow) brings a Deploy to Cloudflare copy to the latest release in a pull request, keeping its `wrangler.toml` ids, routes and vars and adding the new bindings (`scripts/setup/update-copy.ts`). A `.shorthop-keep` file lists files to leave alone.
+- **Version notice:** System status shows the running version and says when a newer release is out (GitHub is asked at most once a day, through the Worker).
+- **Secret scanning:** CI runs gitleaks over the full history.
 
 ### Changed
 
@@ -42,7 +45,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   - the hourly cron `"15 * * * *"` in place of `"15 1 * * *"`.
 
   A plain `npm run deploy` refuses an older `wrangler.jsonc` and names what's missing.
-- Installed with the Deploy to Cloudflare button: pull this version into your copy ([docs/SETUP.md](docs/SETUP.md#deploy-button)) and keep the new entries when `wrangler.toml` conflicts. The next build applies the migrations.
+- Installed with the Deploy to Cloudflare button: run the **Update Shorthop** workflow in your copy and merge its pull request; the deploy applies the migrations ([docs/SETUP.md](docs/SETUP.md#update-button)). Copies from 1.1.1 and earlier don't have the workflow yet: add [`.github/workflows/update-shorthop.yml`](.github/workflows/update-shorthop.yml) to your copy once (Add file → Create new file), then run it. Or pull this version with git and keep the new entries when `wrangler.toml` conflicts.
 - Websites read Analytics Engine with the same `CF_ACCOUNT_ID` and `CF_ANALYTICS_TOKEN` as link stats; without them, sites record visits but the dashboard can't show them.
 
 ## [1.1.1] - 2026-10-24

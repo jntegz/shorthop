@@ -123,7 +123,20 @@ Commit, and Workers Builds deploys it. The custom domain gets its DNS record and
 - **A hashed password:** run `npx tsx scripts/hash-password.ts --generate` anywhere you have Node.js, put the output in an `ADMIN_PASSWORD_HASH` secret, then delete `ADMIN_PASSWORD`. Changing either one signs everyone out.
 - **Your own session secret or visitor salt:** add `SESSION_SECRET` (32+ random characters) or `VISITOR_SALT` as secrets, and they replace the generated ones. A new session secret signs everyone out, and webhook secrets then need rotating.
 
-**Updates.** Your copy doesn't follow this repository by itself. To update, pull the new version into a clone of your copy and push:
+<a id="update-button"></a>
+**Updates.** Your copy doesn't follow this repository by itself: the button makes a copy, not a fork, so GitHub's **Sync fork** doesn't apply. It comes with a workflow that does the update for you:
+
+1. In your copy on GitHub, open **Actions → Update Shorthop → Run workflow**, and run it. Leave the version at `latest`.
+2. It opens a pull request with the new version and its changelog. Read the Upgrading notes in it, then **merge** it. Workers Builds deploys, and the deploy applies the new database migrations.
+
+Your `wrangler.toml` keeps its ids, routes and vars, and gets the bindings the new version adds. Files the new version removed are deleted. To keep your own changes to a file, list it in a `.shorthop-keep` file at the root of your copy, one path or glob per line (`docs/`, `public/*.png`).
+
+- **"GitHub Actions is not permitted to create pull requests":** new repositories don't allow it. The update is then on a `shorthop-update-v…` branch, and the run's summary links to open the pull request yourself. To allow it for next time: Settings → Actions → General → **Allow GitHub Actions to create and approve pull requests**.
+- **Straight to your main branch,** without a pull request: run it with mode `commit`. It deploys at once.
+- **Workflow files** (`.github/workflows/`) can't be changed by a workflow. When a version changes them, the run's summary lists them to copy from the release by hand.
+- **No Update Shorthop workflow** in Actions: your copy is from before 1.2.0. Add [`.github/workflows/update-shorthop.yml`](../.github/workflows/update-shorthop.yml) to your copy once (Add file → Create new file, paste it, commit), or update with git as below.
+
+**With git instead** (GitLab, or if you prefer), pull the new version into a clone of your copy and push:
 
 ```sh
 git remote add upstream https://github.com/jntegz/shorthop.git
@@ -131,7 +144,7 @@ git pull upstream main     # keep your values when wrangler.toml conflicts
 git push
 ```
 
-Read the [changelog](../CHANGELOG.md)'s Upgrading notes first: a new version can add bindings to `wrangler.toml`.
+Keep the new entries when `wrangler.toml` conflicts: an old one without them breaks the features that need them. Read the [changelog](../CHANGELOG.md)'s Upgrading notes first.
 
 **Limits.** Shorthop uses 3 of the 5 cron triggers an account has on Workers Free.
 
@@ -263,7 +276,7 @@ The owners are the emails in `ADMIN_EMAIL`. They can do everything, sign in with
 
 - **Admin:** everything, including people and security.
 - **Manager:** adds, changes and removes users, and can give only the permissions they have themselves.
-- **User:** views and copies links, plus what you tick: create, edit or delete links; statistics; Link health and missed visits; workspace settings; personal API keys.
+- **User:** views and copies links, plus what you tick: create, edit or delete links; statistics; Link health and missed visits; workspace settings; personal API keys; **See revenue** (payments, revenue and customers of tracked websites, and revenue per short link); **Manage websites** (add sites, change their settings and connect payment providers).
 
 **Adding someone** creates a one-time invite link (`/_admin/invite/…`). It works for 24 hours and only for their Access email, and they choose their own password with it (at least 12 characters). Shorthop can email it to them, or you send it yourself. Also add their email to the Access policy ([Cloudflare Access](#access), step 4): Access lets them reach the admin, and their role decides what they can do there. Changes apply on their next click.
 
@@ -418,6 +431,42 @@ API keys, the custom and webhook URLs and the webhook secret are Wrangler secret
 
 Test it from the admin (Settings → Statistics & email → Weekly digest → **Send test**) or at the end of the setup.
 
+<a id="websites"></a>
+## Websites and revenue
+
+Websites (in the admin's menu) tracks your own sites and the payments they bring. Add a site with its domains; its **Setup guide** shows everything below with your values filled in, and a live check that the script arrives.
+
+**The script.** Put this in every page's `<head>`, with your short domain (or `ADMIN_HOST`) and the site's ID:
+
+```html
+<script defer src="https://go.example.com/_t/script.js" data-site="SITE_ID"></script>
+```
+
+- `data-sh-goal="signup"` on a button or link records a goal; extra `data-sh-goal-*` attributes become its properties. `data-sh-scroll="pricing_seen"` records one when an element comes into view (`-threshold`, `-delay`). From code: `shorthop("goal", "newsletter", { list: "weekly" })`.
+- `data-hash` counts `#/routes` as pages. `data-allow-localhost` counts visits from localhost. `data-consent-banner` (and `data-consent-text`) shows a small consent bar, for sites set to identify visitors after consent.
+- `shorthop("identify", { email, id, name })` after sign-in ties a visitor to a customer. From the browser it only fills in an email that isn't known yet; the server API below can set it for sure.
+- **Content Security Policy:** allow the short domain in `script-src` and `connect-src`, for example `script-src 'self' https://go.example.com; connect-src 'self' https://go.example.com`. The script sends events to `/_t/e` on the same host.
+- Visits are only accepted from the site's domains. Add `?sh_debug=1` to a page's address to see in the console why the script turned itself off.
+
+**Reading the numbers** needs the same `CF_ACCOUNT_ID` var and `CF_ANALYTICS_TOKEN` secret as link statistics ([the analytics token](#analytics)), and visits go to the `WEB` Analytics Engine dataset (`AE_WEB_DATASET`). Without the token, sites record visits but the dashboard can't show them.
+
+**Payments.** In the site's Settings & setup, connect Stripe, Paddle, Lemon Squeezy, Dodo Payments, Creem, Gumroad, FastSpring or PayPal. Each provider has step-by-step instructions and a **Check connection** button. You add a webhook at the provider pointing to:
+
+```
+https://go.example.com/_pay/<provider>/<connection>
+```
+
+The exact URL is shown when you add the connection. Every webhook is verified with the provider's signing secret (PayPal's through its API) before anything is saved, and webhook calls are rate-limited per network (`PUBLIC_LIMITER`).
+
+**Connection secrets** (webhook signing secrets and API keys) can be kept two ways, chosen per field:
+
+- **As a Cloudflare Worker secret** (recommended): Shorthop stores only the name. Set the value with `npx wrangler secret put STRIPE_WEBHOOK_SECRET` (the admin suggests a name), or in the dashboard under the Worker's **Settings → Variables and Secrets**. The value never reaches D1 or the browser.
+- **Stored:** pasted in the admin and kept in D1, encrypted with AES-256-GCM under a key derived from `SESSION_SECRET`. It's never shown again. A new `SESSION_SECRET` makes them unreadable: paste them again.
+
+Names of the Worker's own secrets (`SESSION_SECRET` and the like) are refused. Only people with **Manage websites** can add or change connections.
+
+**Billing without a connection:** send payments and identities from your server to `POST /api/sites/<id>/payments` and `POST /api/sites/<id>/identify`, with a personal [API key](#api-keys) that has Manage websites. The site's Settings & setup shows the request bodies.
+
 <a id="secrets"></a>
 ## Secrets
 
@@ -489,7 +538,9 @@ npm run setup -- upgrade
 
 `upgrade` re-renders `wrangler.jsonc` with the new version's template (your values are kept, and you see the diff before it's written), applies new database migrations and deploys. Run it **before** `npm run deploy`: a plain deploy refuses a `wrangler.jsonc` that lacks bindings the new version uses. Read the [changelog](../CHANGELOG.md)'s Upgrading notes too.
 
-Installed with the button? See [updates](#deploy-button) there.
+Installed with the button? Run the **Update Shorthop** workflow ([updates](#update-button)).
+
+**Knowing when there's a new version.** Dashboard → System status shows the version you're running, and says when a newer release is out (it asks GitHub once a day, when the page is opened). To get an email for each release, open the repository on GitHub and choose **Watch → Custom → Releases**.
 
 <a id="import"></a>
 ## Moving from another shortener
