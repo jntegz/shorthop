@@ -3,7 +3,7 @@
 What changed in each Shorthop release, and what to do when you upgrade.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.2.0] - 2026-10-28
 
 ### Added
 
@@ -201,6 +201,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 First release.
 
+[1.2.0]: https://github.com/jntegz/shorthop/compare/v1.1.1...v1.2.0
 [1.1.1]: https://github.com/jntegz/shorthop/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/jntegz/shorthop/compare/v1.0.2...v1.1.0
 [1.0.2]: https://github.com/jntegz/shorthop/compare/v1.0.1...v1.0.2

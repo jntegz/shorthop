@@ -24,7 +24,7 @@ body:
     attributes:
       label: Version
       description: Shown at the bottom of Dashboard → System status in the admin (or in package.json).
-      placeholder: "1.1.1"
+      placeholder: "1.2.0"
     validations:
       required: true
   - type: dropdown
