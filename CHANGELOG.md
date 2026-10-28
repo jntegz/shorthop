@@ -3,6 +3,48 @@
 What changed in each Shorthop release, and what to do when you upgrade.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Websites:** analytics and revenue for your own sites. A small script (`/_t/script.js`) records visits, sources and channels, pages, goals (`data-sh-goal`, scroll goals with `data-sh-scroll`, or `shorthop("goal", …)`), outbound clicks and page speed (LCP, CLS, INP). Cookieless by default; a site can instead recognise returning visitors with a first-party ID, always or after consent, with an optional built-in consent banner (`data-consent-banner`). Pause tracking per site. Each site has a setup guide, a live install check, and notes for Content Security Policy.
+- **Revenue:** payments from Stripe, Paddle, Lemon Squeezy, Dodo Payments, Creem, Gumroad, FastSpring and PayPal arrive as verified webhooks at `/_pay/<provider>/<connection>`, are converted at the day's ECB rate and matched to the visit that led to them (the visit reference passed through checkout, a return page, the same customer, an identified email, then checkout timing), with how sure each match is. Refunds, disputes, subscriptions (MRR, churn, new against renewal) and an import of past payments. A server API (`/api/sites/<id>/payments`, `/identify`) covers other billing. Connection secrets can be Cloudflare Worker secrets (only the name is saved) or stored encrypted. Seeing revenue needs the new **See revenue** permission; managing sites, **Manage websites**.
+- **Site dashboard:** the path to money, a main chart (visitors, visits, pageviews, time per visit, goal conversion) compared with the period before and with traffic spikes marked, funnels, peak hours, reading time and scroll depth, path to purchase, customer value by first source, AI-assistant landing pages, and location, device, network and UTM breakdowns. Page, goal and outbound totals are copied to D1 every night, so they outlast Analytics Engine's 90 days.
+- **Revenue per short link:** short links to a tracked site carry a signed click token (`?sh_c=`), so a link's page shows the visits and revenue it brought. Link stats also get a Networks breakdown.
+- **Website alerts:** an email for each payment, hourly traffic-spike alerts, a daily summary, and `site.payment` / `site.traffic_spike` webhooks. The weekly digest lists each site's visitors and revenue.
+- **Shared statistics:** a read-only page for one link at `/_share/<id>.<secret>`, with an optional end date, password (rate-limited and locked like protected links), period limit, recent clicks, and an automatic, light or dark theme. It never shows the destination, history or revenue. The Links list marks shared links and can filter by them.
+- **Turning a link off** asks where visitors go meanwhile: the 404 page, your site, or another of your links. The Links list shows a Disabled badge saying where, with a Disabled filter.
+- **Misses:** ignore a path for good, or send it to an existing link with a link picker. The Ignored tab clears, exports and imports its list as CSV. Creating a link from a miss keeps you on the page, to fix the next one.
+- **Link health:** open a destination's link from its row, or edit it (a menu when several links share the destination).
+- **Appearance:** an accent colour per browser (Settings → Access & security).
+
+### Changed
+
+- **Phones:** the bottom bar has Overview, Stats, Links and Websites, and **More** opens the other pages, the account and log out. Wide tables become labelled rows, and pages no longer scroll sideways.
+- The admin's spacing, type sizes and corners are tighter and more consistent; tab bars no longer show a scrollbar.
+- A tab opened before a deploy reloads once when it asks for files the new deploy no longer has, and shows a short error page instead of a blank one.
+- **Cron schedule:** the daily trigger now runs hourly at :15 (the daily rollup still at 01:15 UTC; website alerts the other hours). The half-hourly runs at 02:30 and 03:00 UTC copy website totals to D1 and fetch exchange rates and match payments, instead of checking destinations. Milestone webhooks and the health alert moved to the 02:00 cleanup run; the Monday digest run no longer checks health itself.
+- Failed logins by people pause only people's logins, never the owners'.
+- Click counts in the Links list and the digest preview need the **View statistics** permission.
+
+### Fixed
+
+- **Workers Free:** a rollup catching up two weeks, the Monday digest and the 02:00 cleanup could pass the 50 calls one invocation may make. The rollup writes each window in one batch instead of one per day, milestone events go out in one write, and unused uploads are deleted in one D1 call; a test now counts every scheduled run's calls.
+- A new invite, or pausing someone, ends the reset link they'd asked for. Using a reset link no longer clears the network's wrong-password count. When the reset email can't be sent, they can ask again straight away.
+- Link passwords need at least 8 characters, and a link locks for a while after 20 wrong passwords from anywhere. Previews, prefetches and HEAD requests on links with a click limit aren't sent on.
+- Deleting a link answers 502 and keeps it when it can't be removed from KV, instead of failing halfway.
+
+### Upgrading
+
+- Run `npm run setup -- upgrade` **before** deploying. It applies migrations 0015–0024 and adds what Websites needs to `wrangler.jsonc` (your values are kept, and you see the diff first):
+  - the `WEB` Analytics Engine dataset and the `AE_WEB_DATASET` var;
+  - the `PUBLIC_LIMITER` and `COLLECT_LIMITER` rate limiters;
+  - the hourly cron `"15 * * * *"` in place of `"15 1 * * *"`.
+
+  A plain `npm run deploy` refuses an older `wrangler.jsonc` and names what's missing.
+- Installed with the Deploy to Cloudflare button: pull this version into your copy ([docs/SETUP.md](docs/SETUP.md#deploy-button)) and keep the new entries when `wrangler.toml` conflicts. The next build applies the migrations.
+- Websites read Analytics Engine with the same `CF_ACCOUNT_ID` and `CF_ANALYTICS_TOKEN` as link stats; without them, sites record visits but the dashboard can't show them.
+
 ## [1.1.1] - 2026-10-24
 
 ### Added

@@ -100,7 +100,7 @@ export function PeopleCard({ me }: { me: MeDTO }) {
           </Button>
         }
       />
-      <div className="grid gap-6 px-5 pb-5 md:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
+      <div className="grid gap-6 px-4 pb-4 md:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
         {q.isPending ? (
           <div className="flex justify-center py-10">
             <Spinner />
@@ -108,7 +108,7 @@ export function PeopleCard({ me }: { me: MeDTO }) {
         ) : q.isError ? (
           <Notice tone="danger">{q.error.message}</Notice>
         ) : (
-          <ul className="self-start divide-y divide-line rounded-xl border border-line">
+          <ul className="self-start divide-y divide-line rounded-md border border-line">
             {people.map((p) => (
               <li key={p.email} className="flex flex-wrap items-center gap-3 px-3 py-3">
                 <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-accent-soft text-accent">
@@ -319,7 +319,7 @@ function PersonDialog({
                 </Button>
               ))}
             </div>
-            <ul className="divide-y divide-line rounded-xl border border-line">
+            <ul className="divide-y divide-line rounded-md border border-line">
               {PERMISSIONS.map((p) => (
                 <li key={p}>
                   <label className={cn("flex items-start gap-3 px-3 py-2.5", mine(p) ? "cursor-pointer" : "opacity-60")} title={mine(p) ? undefined : "Only an admin can change this"}>
@@ -434,7 +434,7 @@ function InviteDialog({ invite, onClose }: { invite: InviteDTO | null; onClose: 
           ) : invite.emailProblem ? (
             <Notice>Not emailed: {invite.emailProblem} Copy the link below and send it yourself.</Notice>
           ) : null}
-          <div className="flex items-center gap-2 rounded-xl border border-line bg-bg p-3">
+          <div className="flex items-center gap-2 rounded-md border border-line bg-bg p-3">
             <code className="min-w-0 flex-1 font-mono text-xs break-all text-fg">{invite.inviteUrl}</code>
             <Button variant="outline" size="sm" onClick={() => void copy(invite.inviteUrl, "Invite link copied")}>
               <Copy /> Copy

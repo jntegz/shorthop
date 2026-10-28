@@ -3,8 +3,9 @@
 // password form's POST.
 
 import { derivePassword, hashPassword, parsePasswordHash, toBase64Url } from "../shared/password";
-import { LINK_ACCESS_HOURS, LINK_PASSWORD_ITERATIONS, LINK_PASSWORD_MAX } from "../shared/protection";
-import { ipBucket } from "./session";
+import { LINK_ACCESS_HOURS, LINK_PASSWORD_ITERATIONS, LINK_PASSWORD_LOCK_MAX_SEC, LINK_PASSWORD_MAX, LINK_PASSWORD_MAX_FAILS, LINK_PASSWORD_WINDOW_SEC } from "../shared/protection";
+import { nowSec } from "./db";
+import { chargeAttempt, clearFailuresStmt, ipBucket, lock } from "./session";
 
 const COOKIE = "sh_access";
 
@@ -12,7 +13,7 @@ export function hashLinkPassword(password: string): Promise<string> {
   return hashPassword(password, LINK_PASSWORD_ITERATIONS);
 }
 
-function equal(a: Uint8Array, b: Uint8Array): boolean {
+export function equal(a: Uint8Array, b: Uint8Array): boolean {
   if (a.length !== b.length) return false;
   let diff = 0;
   for (let i = 0; i < a.length; i++) diff |= a[i]! ^ b[i]!;
@@ -25,7 +26,7 @@ export async function checkLinkPassword(password: string, stored: string): Promi
   return equal(await derivePassword(password, h.salt, h.iterations), h.hash);
 }
 
-async function hmac(secret: string, message: string): Promise<string> {
+export async function hmac(secret: string, message: string): Promise<string> {
   const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   return toBase64Url(new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(message))));
 }
@@ -64,10 +65,24 @@ export type PasswordAttempt = { ok: true; cookie: string } | { ok: false; reason
 
 /** Handles the password form: rate limit, size limit, then the check. */
 export async function tryPassword(request: Request, env: Env, domain: string, slug: string, hash: string): Promise<PasswordAttempt> {
+  const attempt = await checkPasswordForm(request, env, { limitKey: `${domain}/${slug}`, lockKey: `link:${domain}/${slug}`, hash });
+  return attempt.ok ? { ok: true, cookie: await accessCookie(env, domain, slug, hash) } : attempt;
+}
+
+/**
+ * A password form's POST for anything protected by a link-style password:
+ * the per-network limiter keyed by `limitKey`, the D1 lock counted across all
+ * networks under `lockKey`, then the check.
+ */
+export async function checkPasswordForm(
+  request: Request,
+  env: Env,
+  { limitKey, lockKey, hash }: { limitKey: string; lockKey: string; hash: string },
+): Promise<{ ok: true } | { ok: false; reason: "wrong" | "limited" | "bad_request" }> {
   const ip = request.headers.get("CF-Connecting-IP");
   if (ip) {
     try {
-      const { success } = await env.LINK_PASSWORD_LIMITER.limit({ key: `pw:${ipBucket(ip)}:${domain}/${slug}` });
+      const { success } = await env.LINK_PASSWORD_LIMITER.limit({ key: `pw:${ipBucket(ip)}:${limitKey}` });
       if (!success) return { ok: false, reason: "limited" };
     } catch (err) {
       console.error(JSON.stringify({ message: "link password limiter failed", error: String(err) }));
@@ -81,6 +96,31 @@ export async function tryPassword(request: Request, env: Env, domain: string, sl
   } catch {
     return { ok: false, reason: "bad_request" };
   }
-  if (!password || !(await checkLinkPassword(password, hash))) return { ok: false, reason: "wrong" };
-  return { ok: true, cookie: await accessCookie(env, domain, slug, hash) };
+  if (!password) return { ok: false, reason: "wrong" };
+
+  // Counted per link across every network before the check (D1 is strongly
+  // consistent), so many addresses guessing in parallel still hit the lock.
+  const key = lockKey;
+  const now = nowSec();
+  let state;
+  try {
+    state = await chargeAttempt(env.DB, key, now, LINK_PASSWORD_WINDOW_SEC);
+    if (state.lockedUntil > now) return { ok: false, reason: "limited" };
+    if (state.fails > LINK_PASSWORD_MAX_FAILS) {
+      await lock(env.DB, key, now, state.lockouts, LINK_PASSWORD_LOCK_MAX_SEC);
+      return { ok: false, reason: "limited" };
+    }
+  } catch (err) {
+    console.error(JSON.stringify({ message: "link password counter failed", key, error: String(err) }));
+    return { ok: false, reason: "bad_request" };
+  }
+
+  if (!(await checkLinkPassword(password, hash))) {
+    if (state.fails >= LINK_PASSWORD_MAX_FAILS) await lock(env.DB, key, now, state.lockouts, LINK_PASSWORD_LOCK_MAX_SEC).catch(() => undefined);
+    return { ok: false, reason: "wrong" };
+  }
+  await clearFailuresStmt(env.DB, key)
+    .run()
+    .catch(() => undefined);
+  return { ok: true };
 }

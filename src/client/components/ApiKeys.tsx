@@ -70,7 +70,7 @@ export function ApiKeys({ me, origin }: { me: MeDTO; origin: string }) {
           </div>
         }
       />
-      <div className="px-5 pb-5">
+      <div className="px-4 pb-4">
         {q.isPending ? (
           <div className="flex justify-center py-8">
             <Spinner />
@@ -82,13 +82,13 @@ export function ApiKeys({ me, origin }: { me: MeDTO; origin: string }) {
             <p>Create one for each tool that uses Shorthop, so you can revoke them one by one.</p>
           </Empty>
         ) : (
-          <ul className="divide-y divide-line rounded-xl border border-line">
+          <ul className="divide-y divide-line rounded-md border border-line">
             {list.map((k) => (
               <li key={k.id} className="flex flex-wrap items-center gap-3 px-3 py-3">
                 <div className="min-w-0 flex-1">
                   <p className="flex flex-wrap items-center gap-1.5 text-sm font-medium text-fg">
                     {k.name}
-                    <code className="font-mono text-[11px] font-normal text-muted">shp_{k.id}_…</code>
+                    <code className="font-mono text-xs font-normal text-muted">shp_{k.id}_…</code>
                     {k.expired ? <Badge tone="danger">Expired</Badge> : null}
                   </p>
                   <p className="mt-0.5 text-xs text-muted">
@@ -175,7 +175,7 @@ function CreateKeyDialog({ me, onClose, onCreated }: { me: MeDTO; onClose: () =>
           <legend className="mb-1.5 text-sm font-medium text-fg">What it may do</legend>
           <p className="text-xs text-muted">Every key can list links and read their details. Tick only what the tool needs.</p>
           {offered.length ? (
-            <ul className="divide-y divide-line rounded-xl border border-line">
+            <ul className="divide-y divide-line rounded-md border border-line">
               {offered.map((p) => (
                 <li key={p}>
                   <label className="flex cursor-pointer items-start gap-3 px-3 py-2.5">
@@ -223,7 +223,7 @@ function NewKey({ created, origin, onDone }: { created: NewApiKeyDTO; origin: st
   -H "Authorization: Bearer ${created.secret}"`;
   return (
     <div className="space-y-4 text-sm">
-      <div className="flex items-center gap-2 rounded-xl border border-line bg-bg p-3">
+      <div className="flex items-center gap-2 rounded-md border border-line bg-bg p-3">
         <code className="min-w-0 flex-1 font-mono text-xs break-all text-fg">{created.secret}</code>
         <Button variant="outline" size="sm" onClick={() => void copy(created.secret, "API key copied")}>
           <Copy /> Copy

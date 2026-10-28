@@ -45,7 +45,7 @@ function useImageSize(p: LinkPreview): { width: number; height: number } | null 
 
 function Counter({ value, shown, max }: { value: number; shown: number; max: number }) {
   return (
-    <span className={cn("text-[11px] tabular", value > max ? "text-danger" : value > shown ? "text-warn" : "text-subtle")} aria-live="polite">
+    <span className={cn("text-xs tabular", value > max ? "text-danger" : value > shown ? "text-warn" : "text-subtle")} aria-live="polite">
       {value}/{shown}
       {value > shown && value <= max ? " · may be cut off" : ""}
     </span>
@@ -154,7 +154,7 @@ function ImageField({ value, onChange, problem }: { value: LinkPreview; onChange
         />
       </div>
       {src ? (
-        <div className="relative overflow-hidden rounded-xl border border-line bg-surface-2">
+        <div className="relative overflow-hidden rounded-md border border-line bg-surface-2">
           <img src={src} alt="Preview image" className="aspect-[1.91] w-full object-cover" />
           <div className="absolute top-2 right-2 flex gap-1">
             {mode === "upload" ? (
@@ -167,7 +167,7 @@ function ImageField({ value, onChange, problem }: { value: LinkPreview; onChange
             </Button>
           </div>
           {size && typeof size === "object" ? (
-            <span className="absolute bottom-2 left-2 rounded bg-black/60 px-1.5 py-0.5 text-[11px] text-white tabular">
+            <span className="absolute bottom-2 left-2 rounded bg-black/60 px-1.5 py-0.5 text-xs text-white tabular">
               {size.width}×{size.height}
             </span>
           ) : null}
@@ -183,7 +183,7 @@ function ImageField({ value, onChange, problem }: { value: LinkPreview; onChange
           onDragLeave={() => setDragging(false)}
           onDrop={drop}
           className={cn(
-            "flex aspect-[1.91] w-full flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed text-center transition-colors",
+            "flex aspect-[1.91] w-full flex-col items-center justify-center gap-2 rounded-md border-2 border-dashed text-center transition-colors",
             dragging ? "border-accent bg-accent-soft" : "border-line bg-surface hover:border-accent/50",
           )}
         >
@@ -283,7 +283,7 @@ export function PreviewEditor({
   }
 
   return (
-    <div className="grid gap-5 md:grid-cols-[minmax(0,1fr)_minmax(0,18rem)]">
+    <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,18rem)]">
       <div className="space-y-4">
         <div className="space-y-1.5">
           <div className="flex items-center justify-between gap-2">
@@ -335,7 +335,7 @@ export function PreviewEditor({
             { value: "slack", label: "Slack" },
           ]}
         />
-        <div className="rounded-xl border border-line bg-white p-3" aria-label={`How the link looks on ${platform}`}>
+        <div className="rounded-md border border-line bg-white p-3" aria-label={`How the link looks on ${platform}`}>
           <PreviewCard platform={platform} p={value} domain={domain} />
         </div>
         <div className="space-y-1.5 text-xs leading-relaxed text-muted">

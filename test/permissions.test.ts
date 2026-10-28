@@ -42,7 +42,7 @@ describe("route rules", () => {
   });
 
   it("lets an owner's full key through everywhere except the browser-only routes", async () => {
-    const { auth } = await addKey("owner@example.com", ["links.create", "links.edit", "links.delete", "stats.view", "health.manage", "settings.manage"]);
+    const { auth } = await addKey("owner@example.com", ["links.create", "links.edit", "links.delete", "stats.view", "revenue.view", "sites.manage", "health.manage", "settings.manage"]);
     const wrong: string[] = [];
     for (const [route, rule] of Object.entries(RULES)) {
       const [method, path] = route.split(" ") as [string, string];

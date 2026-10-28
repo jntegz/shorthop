@@ -123,10 +123,12 @@ async function workerStep(s: State): Promise<void> {
   if (!s.hadConfig) {
     s.cfg.d1Name = name;
     s.cfg.aeDataset = `${name.replaceAll("-", "_")}_clicks`;
+    s.cfg.webDataset = `${name.replaceAll("-", "_")}_web`;
   }
   const renamed = name !== s.cfg.workerName;
   s.cfg.workerName = name;
   s.cfg.aeDataset = await ask("Analytics Engine dataset", { default: s.cfg.aeDataset, check: datasetProblem });
+  s.cfg.webDataset = await ask("Analytics Engine dataset for websites", { default: s.cfg.webDataset, check: datasetProblem });
   s.cfg.plan = await choose(
     "Which Workers plan is the account on?",
     [

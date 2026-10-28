@@ -260,7 +260,7 @@ export function Import() {
 
       <div className="space-y-4">
         <Card className="p-5">
-          <label className="flex cursor-pointer flex-col items-center gap-2 rounded-xl border-2 border-dashed border-line bg-bg px-6 py-16 text-center transition-colors hover:border-accent hover:bg-accent-soft/30 focus-within:ring-2 focus-within:ring-accent">
+          <label className="flex cursor-pointer flex-col items-center gap-2 rounded-md border-2 border-dashed border-line bg-bg px-6 py-16 text-center transition-colors hover:border-accent hover:bg-accent-soft/30 focus-within:ring-2 focus-within:ring-accent">
             <FileUp className="mb-3 size-10 text-accent" />
             <span className="text-sm font-medium text-fg">{fileName || "Choose a CSV or JSON file"}</span>
             <span className="text-xs text-muted">CSV or JSON · Review your columns before importing</span>

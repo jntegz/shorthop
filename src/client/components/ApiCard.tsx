@@ -62,9 +62,9 @@ export function ApiCard({ origin, tokenSet, tokenScope }: { origin: string; toke
   return (
     <Card id="api" className="scroll-mt-6 lg:col-span-2">
       <CardHeader title="API" description="What scripts and tools can do with an API key. Every request needs one in the Authorization header." info={SETTINGS_HELP.api} />
-      <div className="space-y-5 px-5 pb-5 text-sm">
+      <div className="space-y-4 px-4 pb-4 text-sm">
         <div className="grid gap-3 sm:grid-cols-2">
-          <div className="rounded-xl border border-line p-3">
+          <div className="rounded-md border border-line p-3">
             <p className="text-xs text-muted">Base URL</p>
             <div className="mt-1 flex items-center gap-2">
               <code className="min-w-0 flex-1 truncate font-mono text-xs text-fg">{base}</code>
@@ -73,7 +73,7 @@ export function ApiCard({ origin, tokenSet, tokenScope }: { origin: string; toke
               </Button>
             </div>
           </div>
-          <div className="rounded-xl border border-line p-3">
+          <div className="rounded-md border border-line p-3">
             <p className="flex items-center gap-1.5 text-xs text-muted">
               <KeyRound className="size-3.5" aria-hidden /> Authorization
             </p>
@@ -83,7 +83,7 @@ export function ApiCard({ origin, tokenSet, tokenScope }: { origin: string; toke
           </div>
         </div>
         {tokenSet !== null ? (
-          <div className="rounded-xl border border-line p-3">
+          <div className="rounded-md border border-line p-3">
             <p className="flex flex-wrap items-center gap-2 text-xs">
               <span className="font-medium text-fg">Server token (older)</span>
               {tokenSet ? <Badge tone="good">Set</Badge> : <Badge>Not set</Badge>}
@@ -113,12 +113,12 @@ export function ApiCard({ origin, tokenSet, tokenScope }: { origin: string; toke
           </div>
         ) : null}
 
-        <div className="overflow-hidden rounded-xl border border-line">
+        <div className="overflow-hidden rounded-md border border-line">
           <table className="w-full text-left text-xs">
             {ENDPOINTS.map((g) => (
                 <tbody key={g.group}>
                   <tr className="bg-bg">
-                    <th colSpan={3} className="px-3 py-2 text-[11px] font-semibold tracking-wide text-muted uppercase">
+                    <th colSpan={3} className="px-3 py-2 text-xs font-semibold tracking-wide text-muted uppercase">
                       {g.group}
                     </th>
                   </tr>
@@ -127,7 +127,7 @@ export function ApiCard({ origin, tokenSet, tokenScope }: { origin: string; toke
                       <td className="w-16 px-3 py-2">
                         <Badge tone={METHOD_TONE[method]}>{method}</Badge>
                       </td>
-                      <td className="px-3 py-2 font-mono text-[11px] break-all text-fg">
+                      <td className="px-3 py-2 font-mono text-xs break-all text-fg">
                         {path}
                         {full && tokenSet && tokenScope !== "full" ? (
                           <span className="ml-1.5 font-sans text-[10px] font-medium text-muted" title='The older API_TOKEN secret needs API_TOKEN_SCOPE = "full"; personal keys only need their permission'>

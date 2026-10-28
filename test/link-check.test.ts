@@ -2,10 +2,16 @@ import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DOWN_AFTER_FAILS, everyText, isFetchableUrl, MAX_HOPS, nextRecord, OK_INTERVAL, okIntervalFor, spreadByHost, type CheckOutcome } from "../src/shared/link-check";
 import type { LinkChecksDTO, LinkListItem, TargetCheckDTO } from "../src/shared/types";
-import { systemHealth } from "../src/worker/health";
+import { isCleanupRun, isRevenueRun, isWebRollupRun, systemHealth } from "../src/worker/health";
 import worker from "../src/worker/index";
 import { checkUrl, runLinkChecks } from "../src/worker/link-check";
 import { API, bearer, call, enableChecks, json, resetData } from "./helpers";
+
+/** Now, unless that's the half-hourly cron's 02:00 cleanup, 02:30 website rollup or 03:00 revenue slot (UTC): then two hours earlier, so the run checks destinations. */
+const checksRunTime = () => {
+  const now = new Date();
+  return isCleanupRun(now) || isWebRollupRun(now) || isRevenueRun(now) ? Date.now() - 2 * 3600_000 : Date.now();
+};
 
 type Route = (url: string, init: RequestInit) => Response | Promise<Response>;
 let routes: Record<string, Route>;
@@ -212,7 +218,7 @@ describe("automatic checking", () => {
     expect(await runLinkChecks(env)).toMatchObject({ checked: 0, skipped: expect.any(String) });
 
     const ctx = createExecutionContext();
-    await worker.scheduled({ cron: "*/30 * * * *", scheduledTime: Date.now(), noRetry() {} } as ScheduledController, env, ctx);
+    await worker.scheduled({ cron: "*/30 * * * *", scheduledTime: checksRunTime(), noRetry() {} } as ScheduledController, env, ctx);
     await waitOnExecutionContext(ctx);
     expect(await row("https://a.example/")).toBeNull();
     expect((await systemHealth(env)).checks.find((c) => c.id === "links")).toMatchObject({ status: "ok", detail: expect.stringContaining("Activate automatic checking") });
@@ -342,7 +348,7 @@ describe("scheduled runs", () => {
     routes["https://a.example/"] = status(200);
     await createLink("one", "https://a.example/");
     const ctx = createExecutionContext();
-    await worker.scheduled({ cron: "*/30 * * * *", scheduledTime: Date.now(), noRetry() {} } as ScheduledController, env, ctx);
+    await worker.scheduled({ cron: "*/30 * * * *", scheduledTime: checksRunTime(), noRetry() {} } as ScheduledController, env, ctx);
     await waitOnExecutionContext(ctx);
     expect(await row("https://a.example/")).toMatchObject({ status: "ok" });
     const check = (await systemHealth(env)).checks.find((c) => c.id === "links");

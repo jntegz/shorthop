@@ -63,7 +63,7 @@ export function PeriodPicker({ value, onChange }: { value: Period; onChange: (p:
     <>
       <Segmented label="Date range" value={quick} onChange={(v) => (v === "custom" ? setOpen(true) : onChange({ range: v }))} options={options} />
       <Dialog open={open} onOpenChange={setOpen} title="Choose a period" description="Pick a longer range, or any dates you like. Days are in UTC.">
-        <div className="space-y-5">
+        <div className="space-y-4">
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             {LONGER.map((l) => (
               <Button key={l.range} variant={value.range === l.range ? "primary" : "outline"} onClick={() => pick({ range: l.range })}>
@@ -71,7 +71,7 @@ export function PeriodPicker({ value, onChange }: { value: Period; onChange: (p:
               </Button>
             ))}
           </div>
-          <div className="space-y-4 rounded-xl border border-line p-4">
+          <div className="space-y-4 rounded-md border border-line p-4">
             <p className="text-sm font-medium text-fg">Custom dates</p>
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="From" htmlFor="period-from" hint={since ? `Your stats start ${day(since)}.` : undefined}>

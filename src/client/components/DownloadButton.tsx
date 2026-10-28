@@ -4,11 +4,12 @@ import { downloadFile } from "../api";
 import { Button } from "./ui";
 
 /** An export button: fetches `href` with the admin session, then saves it. */
-export function DownloadButton({ href, title, children }: { href: string; title?: string; children: ReactNode }) {
+export function DownloadButton({ href, title, size, children }: { href: string; title?: string; size?: "sm" | "md"; children: ReactNode }) {
   const [busy, setBusy] = useState(false);
   return (
     <Button
       variant="outline"
+      size={size}
       title={title}
       loading={busy}
       onClick={() => {

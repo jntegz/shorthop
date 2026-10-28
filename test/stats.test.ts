@@ -390,6 +390,46 @@ describe("misses cleanup", () => {
     expect((await digestData(env, NOW)).misses).toEqual([]);
   });
 
+  it("ignores a path for good, lists it, and brings it back", async () => {
+    const ignore = (path: string, body: unknown) => call(`${API}/stats/misses/${path}`, json(body), AE_ENV);
+    const old = { domain: "sh.example", slug: "old" };
+    expect((await ignore("ignore", { links: [old] })).status).toBe(200);
+    expect((await report()).some((r) => r.slug === "old")).toBe(false);
+    expect(await rows("SELECT slug FROM daily_dims WHERE dim = 'miss' AND slug = 'old'")).toEqual([]);
+    const listed = (await (await call(`${API}/stats/misses/ignored`, { headers: bearer }, AE_ENV)).json()) as { rows: { slug: string }[] };
+    expect(listed.rows.map((r) => r.slug)).toEqual(["old"]);
+    // Later visits and a re-rollup don't bring it back.
+    await env.DB.prepare("UPDATE settings SET value = ? WHERE key = 'last_rolled'").bind(addDays(YESTERDAY, -3)).run();
+    await runRollup({ ...env, ...AE_ENV }, NOW);
+    expect(await rows("SELECT slug FROM daily_dims WHERE dim = 'miss' AND slug = 'old'")).toEqual([]);
+    expect((await digestData(env, NOW)).misses).toEqual([]);
+
+    expect((await ignore("unignore", { links: [old] })).status).toBe(200);
+    expect((await (await call(`${API}/stats/misses/ignored`, { headers: bearer }, AE_ENV)).json()) as unknown).toEqual({ rows: [] });
+    expect((await ignore("ignore", { links: [] })).status).toBe(400);
+  });
+
+  it("imports ignored paths with their date, exports them as CSV, and un-ignores them all", async () => {
+    const post = (path: string, body: unknown) => call(`${API}/stats/misses/${path}`, json(body), AE_ENV);
+    const links = [
+      { domain: "sh.example", slug: "old", since: "2026-01-15" },
+      { domain: "sh.example", slug: "nope", since: "2999-01-01" }, // a future date is replaced by today
+      { domain: "sh.example", slug: "wp-login.php" },
+    ];
+    expect((await post("ignore", { links })).status).toBe(200);
+    const exported = await call(`${API}/stats/misses/ignored.csv`, { headers: bearer }, AE_ENV);
+    expect(exported.headers.get("Content-Type")).toContain("text/csv");
+    const lines = (await exported.text()).trim().split("\r\n");
+    expect(lines[0]).toBe("domain,path,short_url,ignored_on");
+    expect(lines).toContain("sh.example,old,/old,2026-01-15");
+    expect(lines.some((l) => l.startsWith("sh.example,nope,") && !l.endsWith("2999-01-01"))).toBe(true);
+    expect((await post("ignore", { links: [{ domain: "sh.example", slug: "x", since: "15.1.2026" }] })).status).toBe(400);
+
+    const cleared = await call(`${API}/stats/misses/ignored/clear`, { method: "POST", headers: bearer }, AE_ENV);
+    expect((await cleared.json()) as unknown).toEqual({ unignored: 3 });
+    expect((await (await call(`${API}/stats/misses/ignored`, { headers: bearer }, AE_ENV)).json()) as unknown).toEqual({ rows: [] });
+  });
+
   it("clears everything, including today's live misses", async () => {
     expect((await clear({})).status).toBe(200);
     expect(await report()).toEqual([]);

@@ -47,6 +47,11 @@ export function configuredAdminHost(env: Env): string {
  */
 export const NO_DOMAIN_ERROR = "Add a short domain first: set SHORT_DOMAINS and a route for it in your Wrangler config, then deploy. Settings → Short domains has the steps.";
 
+/** Where the admin lives, as an origin: the admin host (ADMIN_HOST, or the primary domain). */
+export function adminOrigin(env: Env): string {
+  return `https://${domainsOf(env).admin}`;
+}
+
 export function isConfiguredDomain(env: Env, domain: string): boolean {
   return domainsOf(env).list.includes(domain);
 }
@@ -56,7 +61,7 @@ export function isLocalHost(hostname: string): boolean {
 }
 
 /** localhost and the workers.dev preview, where there's no real short domain. */
-function isDevHost(hostname: string): boolean {
+export function isDevHost(hostname: string): boolean {
   return isLocalHost(hostname) || hostname.endsWith(".workers.dev");
 }
 

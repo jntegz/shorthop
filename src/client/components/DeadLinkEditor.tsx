@@ -88,10 +88,10 @@ export function DeadLinkEditor({ domain }: { domain: string }) {
         title="“Link no longer working” page"
         description="What visitors see for a link you've marked as no longer working (in the link's settings). Uses the colors of the not-found page."
       />
-      <div className="grid gap-6 px-5 pb-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+      <div className="grid gap-6 px-4 pb-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         <div className="space-y-4">
           <section
-            className={`space-y-4 rounded-xl border p-4 transition-colors ${variant === "replaced" ? "border-accent" : "border-line"}`}
+            className={`space-y-4 rounded-md border p-4 transition-colors ${variant === "replaced" ? "border-accent" : "border-line"}`}
             onFocus={() => setVariant("replaced")}
             onClick={() => setVariant("replaced")}
           >
@@ -128,7 +128,7 @@ export function DeadLinkEditor({ domain }: { domain: string }) {
           </section>
 
           <section
-            className={`space-y-4 rounded-xl border p-4 transition-colors ${variant === "gone" ? "border-accent" : "border-line"}`}
+            className={`space-y-4 rounded-md border p-4 transition-colors ${variant === "gone" ? "border-accent" : "border-line"}`}
             onFocus={() => setVariant("gone")}
             onClick={() => setVariant("gone")}
           >
@@ -204,7 +204,7 @@ export function DeadLinkEditor({ domain }: { domain: string }) {
               ]}
             />
           </div>
-          <iframe title="“Link no longer working” page preview" sandbox="" srcDoc={html} className="h-[520px] w-full rounded-xl border border-line bg-white" />
+          <iframe title="“Link no longer working” page preview" sandbox="" srcDoc={html} className="h-[520px] w-full rounded-md border border-line bg-white" />
         </div>
       </div>
     </Card>

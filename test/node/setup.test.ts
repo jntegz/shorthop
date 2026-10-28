@@ -104,12 +104,22 @@ describe("configs from older versions", () => {
   it("names the cron, rate limiter and Durable Object an older config lacks", () => {
     const old = renderConfig(REAL)
       .replace(`, ${JSON.stringify(CHECKS_CRON)}`, "")
-      .replace(/,\n\s*\/\/ Password attempts on a protected short link[^\n]*\n[^\n]*LINK_PASSWORD_LIMITER[^\n]*/, "")
+      .replace(/\n\s*\/\/ Password attempts on a protected short link[^\n]*\n[^\n]*LINK_PASSWORD_LIMITER[^\n]*/, "")
       .replace(/\n\s*\/\/ Exact click limits[\s\S]*?"migrations": \[[^\n]*\],/, "");
     assert.equal(parseJsonc(old, "old").durable_objects, undefined);
     const problems = outdatedProblems(old);
     assert.equal(problems.length, 3);
     assert.match(problems.join(" "), /\*\/30 \* \* \* \*.*LINK_PASSWORD_LIMITER.*CLICK_CAPS/);
+  });
+
+  it("names the hourly cron, rate limiters and dataset a config from before websites lacks", () => {
+    const old = renderConfig(REAL)
+      .replace(JSON.stringify(ROLLUP_CRON), JSON.stringify("15 1 * * *"))
+      .replace(/,\n\s*\/\/ Website analytics events from[^\n]*\n[^\n]*"WEB"[^\n]*/, "")
+      .replace(/,\n\s*\/\/ Shared statistics pages[\s\S]*?COLLECT_LIMITER[^\n]*/, "");
+    const problems = outdatedProblems(old);
+    assert.equal(problems.length, 4, problems.join("\n"));
+    assert.match(problems.join(" "), /15 \* \* \* \*.*PUBLIC_LIMITER.*COLLECT_LIMITER.*WEB/);
   });
 });
 

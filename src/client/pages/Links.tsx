@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, ArchiveRestore, BarChart3, CornerUpRight, Copy, Gauge, Lock, Split, Download, Link2, Plus, Search, QrCode, X } from "lucide-react";
+import { Archive, ArchiveRestore, BarChart3, CornerUpRight, Copy, Gauge, Lock, Power, Share2, Split, Download, Link2, Plus, Search, QrCode, X } from "lucide-react";
 import { lazy, Suspense, useDeferredValue, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { toast } from "sonner";
@@ -23,7 +23,7 @@ import { copy } from "../lib/utils";
 const QrStudio = lazy(() => import("../components/QrStudio").then((module) => ({ default: module.QrStudio })));
 const BulkQr = lazy(() => import("../components/BulkQr").then((module) => ({ default: module.BulkQr })));
 
-type Status = "all" | "active" | "disabled" | "expired" | "broken" | "failing";
+type Status = "all" | "active" | "disabled" | "expired" | "broken" | "failing" | "shared";
 type Sort = "created" | "updated" | "slug" | "target" | "total" | "clicks" | "status";
 
 const PERIODS: { value: ListPeriod; label: string; short: string }[] = [
@@ -49,24 +49,39 @@ const SORT_VALUE: Record<Sort, (l: LinkListItem) => string | number> = {
 const SORTS = Object.keys(SORT_VALUE) as Sort[];
 const TEXT_SORTS: ReadonlySet<Sort> = new Set(["slug", "target", "status"]);
 
-export function StateBadge({ link }: { link: Pick<LinkDTO, "domain" | "active" | "expiresAt" | "broken" | "replacement"> }) {
+export function StateBadge({ link }: { link: Pick<LinkDTO, "domain" | "active" | "expiresAt" | "broken" | "replacement" | "offRedirect"> }) {
   const label = useLinkLabel();
   const s = linkState(link);
-  if (s === "active") return <Badge tone="good">Active</Badge>;
+  if (s === "active") return <span className="text-xs text-muted">Active</span>;
   if (s === "expired") return <Badge tone="warn">Expired</Badge>;
   // Marked "no longer working" on purpose: the short link still works, so no warning colour.
   if (s === "broken") {
     return link.replacement ? (
-      <Badge title={`Visitors are pointed to ${label(link.replacement)}`}>
+      <span className="inline-flex items-center gap-1 text-xs text-muted" title={`Visitors are pointed to ${label(link.replacement)}`}>
         <CornerUpRight className="size-3" aria-hidden /> Replaced
-      </Badge>
+      </span>
     ) : (
-      <Badge title="Visitors see a short notice, then go to the site set in Settings">
+      <span className="inline-flex items-center gap-1 text-xs text-muted" title="Visitors see a short notice, then go to the site set in Settings">
         <Archive className="size-3" aria-hidden /> Retired
-      </Badge>
+      </span>
     );
   }
-  return <Badge>Disabled</Badge>;
+  const where = link.offRedirect === "home" ? "Visitors go to the main site" : link.offRedirect ? `Visitors go to ${label(link.offRedirect)}` : "Visitors see the “not found” page";
+  return (
+    <Badge tone="neutral" title={`Turned off. ${where}. Automatic checks are paused.`}>
+      <Power className="size-3" aria-hidden /> Disabled{link.offRedirect ? " · redirects" : ""}
+    </Badge>
+  );
+}
+
+/** "Shared" when the link has statistics pages that work right now. */
+export function SharedBadge({ count }: { count: number }) {
+  if (!count) return null;
+  return (
+    <Badge tone="accent" title={`${count} shared statistics ${count === 1 ? "page" : "pages"} working now`}>
+      <Share2 className="size-3" aria-hidden /> Shared{count > 1 ? ` · ${count}` : ""}
+    </Badge>
+  );
 }
 
 export function Links() {
@@ -94,6 +109,8 @@ export function Links() {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const can = useCan();
+  // Click counts are statistics: the API sends them only with stats.view.
+  const seesClicks = can("stats.view");
 
   const setParam = (k: string, v: string, def: string) => {
     const next = new URLSearchParams(params);
@@ -144,10 +161,25 @@ export function Links() {
   return (
     <>
       <PageHeader
-        title="Your links"
-        description="Every destination, beautifully connected. Create, organize, and share."
+        title="Links"
         actions={
           <>
+            <Button
+              variant={status === "disabled" ? "secondary" : "outline"}
+              aria-pressed={status === "disabled"}
+              onClick={() => setParam("status", status === "disabled" ? "all" : "disabled", "all")}
+              title="Show only links that are turned off"
+            >
+              <Power /> Disabled
+            </Button>
+            <Button
+              variant={status === "shared" ? "secondary" : "outline"}
+              aria-pressed={status === "shared"}
+              onClick={() => setParam("status", status === "shared" ? "all" : "shared", "all")}
+              title="Show only links with shared statistics pages"
+            >
+              <Share2 /> Shared
+            </Button>
             <Button variant="outline" onClick={() => setShowDeleted(true)}>
               <ArchiveRestore /> Recently deleted
             </Button>
@@ -166,7 +198,7 @@ export function Links() {
         }
       />
 
-      <div className="mb-5 flex flex-wrap gap-2 rounded-2xl border border-line bg-surface p-3">
+      <div className="mb-5 flex flex-wrap gap-2 rounded-lg border border-line bg-surface p-3">
         <div className="relative min-w-56 flex-1">
           <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-subtle" />
           <Input
@@ -206,23 +238,26 @@ export function Links() {
           <option value="expired">Expired</option>
           <option value="broken">Replaced or retired</option>
           <option value="failing">Destination problems</option>
+          <option value="shared">Shared statistics</option>
         </Select>
         <Select className="w-auto" value={sort} onChange={(e) => setParam("sort", e.target.value, "created")} aria-label="Sort">
           <option value="created">Newest</option>
           <option value="updated">Recently edited</option>
-          <option value="total">Most total clicks</option>
-          {period.value === "all" ? null : <option value="clicks">Most clicks: {period.label.toLowerCase()}</option>}
+          {seesClicks ? <option value="total">Most total clicks</option> : null}
+          {seesClicks && period.value !== "all" ? <option value="clicks">Most clicks: {period.label.toLowerCase()}</option> : null}
           <option value="slug">Slug A–Z</option>
           <option value="target">Destination A–Z</option>
           <option value="status">Status</option>
         </Select>
-        <Select className="w-auto" value={period.value} onChange={(e) => setParam("period", e.target.value, "7d")} aria-label="Clicks period">
-          {PERIODS.map((p) => (
-            <option key={p.value} value={p.value}>
-              Clicks: {p.label.toLowerCase()}
-            </option>
-          ))}
-        </Select>
+        {seesClicks ? (
+          <Select className="w-auto" value={period.value} onChange={(e) => setParam("period", e.target.value, "7d")} aria-label="Clicks period">
+            {PERIODS.map((p) => (
+              <option key={p.value} value={p.value}>
+                Clicks: {p.label.toLowerCase()}
+              </option>
+            ))}
+          </Select>
+        ) : null}
       </div>
 
       <div className="mb-3 flex items-center justify-between gap-3 text-xs text-muted" aria-live="polite">
@@ -245,13 +280,13 @@ export function Links() {
       ) : (
         <Card className="overflow-hidden">
           <table className="w-full table-fixed text-sm">
-            <thead className="hidden border-b border-line bg-bg text-left text-[11px] text-muted md:table-header-group">
+            <thead className="hidden border-b border-line bg-bg text-left text-xs text-muted md:table-header-group">
               <tr>
                 <SortHeader label="Link" className="py-3.5" active={sort === "slug"} dir={dir} onSort={() => sortBy("slug")} />
                 <SortHeader label="Destination" className="py-3.5" active={sort === "target"} dir={dir} onSort={() => sortBy("target")} />
-                <SortHeader label="Total clicks" className="w-20 text-right" active={sort === "total"} dir={dir} onSort={() => sortBy("total")} />
-                {period.value === "all" ? null : (
-                  <SortHeader label={period.label} className="hidden w-20 text-right xl:table-cell" active={sort === "clicks"} dir={dir} onSort={() => sortBy("clicks")} />
+                {seesClicks ? <SortHeader label="Total clicks" className="w-28 text-right" active={sort === "total"} dir={dir} onSort={() => sortBy("total")} /> : null}
+                {!seesClicks || period.value === "all" ? null : (
+                  <SortHeader label={period.label} className="hidden w-32 text-right xl:table-cell" active={sort === "clicks"} dir={dir} onSort={() => sortBy("clicks")} />
                 )}
                 <SortHeader label="Status" className="w-32 px-3" active={sort === "status"} dir={dir} onSort={() => sortBy("status")} />
                 <SortHeader label="Created" className="hidden w-24 py-3.5 2xl:table-cell" active={sort === "created"} dir={dir} onSort={() => sortBy("created")} />
@@ -306,15 +341,18 @@ export function Links() {
                       {l.target.slice(l.target.indexOf(hostOf(l.target)) + hostOf(l.target).length)}
                     </div>
                   </td>
-                  <td className="tabular md:px-4 md:py-5 md:text-right">
-                    <span className="font-medium text-fg">{num(l.clicksTotal)}</span>
-                    <span className="text-xs text-muted md:hidden"> clicks{period.value === "all" ? "" : ` · ${num(l.clicksPeriod)} in ${period.short}`}</span>
-                    {period.value === "all" ? null : <span className="hidden text-xs whitespace-nowrap text-muted md:block xl:hidden">{num(l.clicksPeriod)} in {period.short}</span>}
-                  </td>
-                  {period.value === "all" ? null : <td className="tabular hidden text-muted md:px-4 md:py-5 md:text-right xl:table-cell">{num(l.clicksPeriod)}</td>}
-                  <td className="md:px-3 md:py-5">
+                  {seesClicks ? (
+                    <td className="tabular md:px-4 md:py-5 md:text-right">
+                      <span className="font-medium text-fg">{num(l.clicksTotal)}</span>
+                      <span className="text-xs text-muted md:hidden"> clicks{period.value === "all" ? "" : ` · ${num(l.clicksPeriod)} in ${period.short}`}</span>
+                      {period.value === "all" ? null : <span className="hidden text-xs whitespace-nowrap text-muted md:block xl:hidden">{num(l.clicksPeriod)} in {period.short}</span>}
+                    </td>
+                  ) : null}
+                  {!seesClicks || period.value === "all" ? null : <td className="tabular hidden text-muted md:px-4 md:py-5 md:text-right xl:table-cell">{num(l.clicksPeriod)}</td>}
+                  <td className="md:px-4 md:py-5">
                     <div className="flex flex-wrap items-start gap-1 md:flex-col">
                       <StateBadge link={l} />
+                      <SharedBadge count={l.shares} />
                       {l.check && (l.check.state === "down" || l.check.state === "warning") && linkState(l) === "active" ? (
                         <Link
                           to={`/health?state=${l.check.state}`}
@@ -377,7 +415,7 @@ export function Links() {
         />
       ) : null}
 
-      {qrLink && <Suspense fallback={<div role="status" className="fixed right-6 bottom-24 z-40 rounded-xl border border-line bg-surface p-4 text-sm shadow-lg">Preparing QR code…</div>}><QrStudio open onOpenChange={(open) => !open && setQrLink(null)} link={qrLink} label={label(qrLink)} /></Suspense>}
+      {qrLink && <Suspense fallback={<div role="status" className="fixed right-6 bottom-24 z-40 rounded-md border border-line bg-surface p-4 text-sm shadow-lg">Preparing QR code…</div>}><QrStudio open onOpenChange={(open) => !open && setQrLink(null)} link={qrLink} label={label(qrLink)} /></Suspense>}
       {can("links.create") ? <LinkForm open={creating} onOpenChange={setCreating} onSaved={(l) => navigate(linkPath(l))} /> : null}
       <DeletedLinks open={showDeleted} onOpenChange={setShowDeleted} />
       {bulkQr ? (

@@ -2,13 +2,13 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { periodBounds } from "../../shared/dates";
 import { HOSTNAME_RE, linkLabel } from "../../shared/domains";
-import { clearMissesSchema, linkParamSchema, missExportQuerySchema, missPolicySchema, rangeQuerySchema } from "../../shared/schemas";
+import { clearMissesSchema, ignoreMissesSchema, linkParamSchema, missExportQuerySchema, missPolicySchema, rangeQuerySchema } from "../../shared/schemas";
 import { IMPORT_SLUG_RE } from "../../shared/slug";
 import type { RecentHit } from "../../shared/types";
 import { aeAvailable, HIT_DEVICES, HIT_EVENTS, queryRecent, queryScanners } from "../ae";
 import { domainsOf } from "../domains";
 import { csv, validate, type AppEnv } from "../hono";
-import { clearMisses, saveMissPolicy } from "../misses";
+import { clearMisses, ignoredMisses, ignoreMisses, saveMissPolicy, unignoreAllMisses, unignoreMisses } from "../misses";
 import { linkStats, missReport, overview } from "../stats-data";
 
 const recentQuerySchema = z.object({
@@ -49,6 +49,52 @@ export const statsApi = new Hono<AppEnv>()
     const cleared: "all" | "probes" | number = Array.isArray(target) ? target.length : target;
     console.log(JSON.stringify({ message: "misses cleared", count: cleared }));
     return c.json({ cleared });
+  })
+
+  .get("/misses/ignored", async (c) => {
+    const ignored = await ignoredMisses(c.env.DB);
+    const rows = Object.entries(ignored)
+      .map(([key, since]) => {
+        const i = key.indexOf("/");
+        return { domain: key.slice(0, i), slug: key.slice(i + 1), since };
+      })
+      .sort((a, b) => b.since.localeCompare(a.since) || a.slug.localeCompare(b.slug));
+    return c.json({ rows });
+  })
+
+  .get("/misses/ignored.csv", async (c) => {
+    const ignored = await ignoredMisses(c.env.DB);
+    const { primary } = domainsOf(c.env);
+    const rows = Object.entries(ignored)
+      .map(([key, since]) => {
+        const i = key.indexOf("/");
+        return { domain: key.slice(0, i), slug: key.slice(i + 1), since };
+      })
+      .sort((a, b) => b.since.localeCompare(a.since) || a.slug.localeCompare(b.slug));
+    const body = csv([["domain", "path", "short_url", "ignored_on"], ...rows.map((r) => [r.domain, r.slug, linkLabel(r.domain, r.slug, primary), r.since])]);
+    return c.body(body, 200, {
+      "Content-Type": "text/csv; charset=utf-8",
+      "Content-Disposition": `attachment; filename="shorthop-ignored-misses-${new Date().toISOString().slice(0, 10)}.csv"`,
+    });
+  })
+
+  .post("/misses/ignored/clear", async (c) => {
+    const count = await unignoreAllMisses(c.env);
+    console.log(JSON.stringify({ message: "ignored misses cleared", count }));
+    return c.json({ unignored: count });
+  })
+
+  .post("/misses/ignore", validate("json", ignoreMissesSchema), async (c) => {
+    const { links } = c.req.valid("json");
+    await ignoreMisses(c.env, links);
+    console.log(JSON.stringify({ message: "misses ignored", count: links.length }));
+    return c.json({ ignored: links.length });
+  })
+
+  .post("/misses/unignore", validate("json", ignoreMissesSchema), async (c) => {
+    const { links } = c.req.valid("json");
+    await unignoreMisses(c.env, links);
+    return c.json({ unignored: links.length });
   })
 
   .put("/misses/policy", validate("json", missPolicySchema), async (c) => {

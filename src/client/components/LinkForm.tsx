@@ -311,7 +311,7 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
           </Field>
         </div>
 
-        <details open={routingOpen} onToggle={(e) => setRoutingOpen(e.currentTarget.open)} className="group/routing rounded-xl border border-line bg-bg">
+        <details open={routingOpen} onToggle={(e) => setRoutingOpen(e.currentTarget.open)} className="group/routing rounded-md border border-line bg-bg">
           <summary className="flex list-none items-center gap-2 px-4 py-3 text-sm font-medium [&::-webkit-details-marker]:hidden">
             <Split className="size-4 shrink-0 text-accent" aria-hidden />
             <span className="whitespace-nowrap">Smart routing</span>
@@ -326,7 +326,7 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
           </div>
         </details>
 
-        <details open={previewOpen} onToggle={(e) => setPreviewOpen(e.currentTarget.open)} className="group/preview rounded-xl border border-line bg-bg">
+        <details open={previewOpen} onToggle={(e) => setPreviewOpen(e.currentTarget.open)} className="group/preview rounded-md border border-line bg-bg">
           <summary className="flex list-none items-center gap-2 px-4 py-3 text-sm font-medium [&::-webkit-details-marker]:hidden">
             <MessageSquareText className="size-4 shrink-0 text-accent" aria-hidden />
             <span className="whitespace-nowrap">Social preview</span>
@@ -347,7 +347,7 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
           </div>
         </details>
 
-        <details open={protectionOpen} onToggle={(e) => setProtectionOpen(e.currentTarget.open)} className="group/protection rounded-xl border border-line bg-bg">
+        <details open={protectionOpen} onToggle={(e) => setProtectionOpen(e.currentTarget.open)} className="group/protection rounded-md border border-line bg-bg">
           <summary className="flex list-none items-center gap-2 px-4 py-3 text-sm font-medium [&::-webkit-details-marker]:hidden">
             <ShieldCheck className="size-4 shrink-0 text-accent" aria-hidden />
             <span className="whitespace-nowrap">Protection</span>
@@ -380,7 +380,7 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
           </div>
         </details>
 
-        <details open={advanced} onToggle={(e) => setAdvanced(e.currentTarget.open)} className="group rounded-xl border border-line bg-bg">
+        <details open={advanced} onToggle={(e) => setAdvanced(e.currentTarget.open)} className="group rounded-md border border-line bg-bg">
           <summary className="flex list-none items-center justify-between px-4 py-3 text-sm font-medium [&::-webkit-details-marker]:hidden">Link settings <span className="ml-auto mr-3 text-xs font-normal text-muted">Tracking, expiry & notes</span><ChevronDown className="size-4 transition-transform group-open:rotate-180" /></summary>
           <div className="space-y-4 border-t border-line p-4">
         <Field label="Notes" htmlFor="notes" info={LINK_HELP.notes}>

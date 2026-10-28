@@ -27,21 +27,21 @@ function SecretReveal({ secret, onDone }: { secret: string; onDone: () => void }
   return (
     <div className="space-y-4">
       <Notice tone="accent">Copy this signing secret now: it can't be shown again, only replaced.</Notice>
-      <div className="flex items-center gap-2 rounded-xl border border-line bg-bg px-3 py-2.5">
+      <div className="flex items-center gap-2 rounded-md border border-line bg-bg px-3 py-2.5">
         <KeyRound className="size-4 shrink-0 text-accent" aria-hidden />
         <code className="min-w-0 flex-1 font-mono text-xs break-all text-fg">{secret}</code>
         <Button type="button" variant="outline" size="sm" onClick={() => void copy(secret, "Secret copied")}>
           <Copy /> Copy
         </Button>
       </div>
-      <details className="rounded-xl border border-line">
+      <details className="rounded-md border border-line">
         <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-fg">How your endpoint checks a request</summary>
         <div className="space-y-2 border-t border-line p-3">
           <p className="text-xs leading-relaxed text-muted">
             Each POST has <code className="font-mono">X-Shorthop-Signature: t=…,v1=…</code>, an HMAC-SHA256 of <code className="font-mono">t.body</code>. Use{" "}
             <code className="font-mono">X-Shorthop-Delivery</code> to ignore repeats: a delivery can arrive more than once.
           </p>
-          <pre className="overflow-x-auto rounded-lg bg-[#222438] p-3 text-[11px] leading-relaxed text-white">{VERIFY_SNIPPET}</pre>
+          <pre className="overflow-x-auto rounded-lg bg-[#222438] p-3 text-xs leading-relaxed text-white">{VERIFY_SNIPPET}</pre>
           <Button type="button" variant="ghost" size="sm" onClick={() => void copy(VERIFY_SNIPPET, "Code copied")}>
             <Copy /> Copy code
           </Button>
@@ -102,7 +102,7 @@ function WebhookDialog({ hook, onClose }: { hook: WebhookDTO | "new"; onClose: (
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()} title={editing ? "Edit webhook" : "Add a webhook"} description="Shorthop sends a signed JSON POST to this address when the events you pick happen." wide>
       <form
-        className="space-y-5"
+        className="space-y-4"
         noValidate
         onSubmit={(e) => {
           e.preventDefault();
@@ -121,11 +121,11 @@ function WebhookDialog({ hook, onClose }: { hook: WebhookDTO | "new"; onClose: (
           {WEBHOOK_EVENTS.map((ev) => {
             const on = events.includes(ev.type);
             return (
-              <label key={ev.type} className={cn("flex cursor-pointer items-start gap-3 rounded-xl border px-3 py-2.5 transition-colors", on ? "border-accent/50 bg-accent-soft/40" : "border-line hover:border-accent/30")}>
+              <label key={ev.type} className={cn("flex cursor-pointer items-start gap-3 rounded-md border px-3 py-2.5 transition-colors", on ? "border-accent/50 bg-accent-soft/40" : "border-line hover:border-accent/30")}>
                 <input type="checkbox" className="mt-1 accent-[var(--accent)]" checked={on} onChange={(e) => setEvents(e.target.checked ? [...events, ev.type] : events.filter((x) => x !== ev.type))} />
                 <span className="min-w-0">
                   <span className="flex flex-wrap items-baseline gap-x-2 text-sm font-medium text-fg">
-                    {ev.label} <code className="font-mono text-[11px] font-normal text-muted">{ev.type}</code>
+                    {ev.label} <code className="font-mono text-xs font-normal text-muted">{ev.type}</code>
                   </span>
                   <span className="block text-xs text-muted">{ev.description}</span>
                 </span>
@@ -139,7 +139,7 @@ function WebhookDialog({ hook, onClose }: { hook: WebhookDTO | "new"; onClose: (
           ) : null}
         </fieldset>
         {editing ? (
-          <div className="space-y-4 rounded-xl border border-line p-4">
+          <div className="space-y-4 rounded-md border border-line p-4">
             <Switch id="hook-active" label="Active" description="While paused, nothing is sent and new events aren't queued for it." checked={active} onCheckedChange={setActive} />
             <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line pt-4">
               <div>
@@ -208,8 +208,8 @@ function DeliveryRow({ d }: { d: WebhookDeliveryDTO }) {
               {d.status === "pending" && d.nextAt ? ` Next try ${ago(d.nextAt)}.` : d.status === "failed" ? " Given up." : ""}
             </p>
           ) : null}
-          <p className="font-mono text-[11px] text-muted">{d.id}</p>
-          <pre className="max-h-64 overflow-auto rounded-lg border border-line bg-surface p-3 text-[11px] leading-relaxed text-fg">{pretty}</pre>
+          <p className="font-mono text-xs text-muted">{d.id}</p>
+          <pre className="max-h-64 overflow-auto rounded-lg border border-line bg-surface p-3 text-xs leading-relaxed text-fg">{pretty}</pre>
           <Button type="button" variant="outline" size="sm" onClick={() => again.mutate()} loading={again.isPending}>
             <Send /> Send again
           </Button>
@@ -294,7 +294,7 @@ export function Webhooks() {
           <Spinner />
         </div>
       ) : q.isError ? (
-        <p className="px-5 pb-5 text-sm text-danger">{q.error.message}</p>
+        <p className="px-4 pb-4 text-sm text-danger">{q.error.message}</p>
       ) : hooks.length === 0 ? (
         <Empty icon={<WebhookIcon />} title="No webhooks yet">
           <p>Get a POST when links are created, changed or deleted, when a destination goes down, or when a link passes a click milestone.</p>

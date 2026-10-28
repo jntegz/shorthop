@@ -152,6 +152,44 @@ describe("forgot password, without email to people", () => {
   });
 });
 
+describe("reset links and other changes", () => {
+  it("stops a reset link once an admin sends a new invite", async () => {
+    await addUser(ANNA, "user", [], { password: PASSWORD });
+    const mail = mailbox();
+    const extra = { PEOPLE_MAIL: mail.binding } as Partial<Env>;
+    await open("/_admin/forgot", ANNA, extra, {});
+    const token = resetToken(mail.sent[0]!.text)!;
+    expect((await adminCall("", `/users/${encodeURIComponent(ANNA)}/invite`, { body: { sendEmail: false } })).status).toBe(200);
+    expect((await open(`/_admin/reset/${token}`, ANNA)).status).toBe(410);
+    expect((await open(`/_admin/reset/${token}`, ANNA, extra, { password: NEW_PASSWORD, confirm: NEW_PASSWORD })).status).toBe(410);
+  });
+
+  it("doesn't clear the network's wrong-password count when a reset link is used", async () => {
+    await addUser(ANNA, "user", [], { password: PASSWORD });
+    expect((await login(ANNA, "not-the-password-at-all")).status).toBe(401);
+    const counted = await env.DB.prepare("SELECT key, fails FROM auth_failures WHERE key NOT LIKE 'reset%' AND key NOT LIKE 'token:%' AND key NOT LIKE '*%'").all<{ key: string; fails: number }>();
+    expect(counted.results).toHaveLength(1);
+
+    const mail = mailbox();
+    const extra = { PEOPLE_MAIL: mail.binding } as Partial<Env>;
+    await open("/_admin/forgot", ANNA, extra, {});
+    const token = resetToken(mail.sent[0]!.text)!;
+    expect((await open(`/_admin/reset/${token}`, ANNA, extra, { password: NEW_PASSWORD, confirm: NEW_PASSWORD })).status).toBe(303);
+    const after = await env.DB.prepare("SELECT fails FROM auth_failures WHERE key = ?").bind(counted.results[0]!.key).first<{ fails: number }>();
+    expect(after?.fails).toBe(counted.results[0]!.fails);
+  });
+
+  it("lets them ask again straight away when the email couldn't be sent", async () => {
+    await addUser(ANNA, "user", [], { password: PASSWORD });
+    const broken = { send: async () => Promise.reject(new Error("mail down")) } as unknown as SendEmail;
+    expect((await open("/_admin/forgot", ANNA, { PEOPLE_MAIL: broken } as Partial<Env>, {})).status).toBe(502);
+    expect((await env.DB.prepare("SELECT reset_hash FROM users WHERE email = ?").bind(ANNA).first<{ reset_hash: string | null }>())?.reset_hash).toBeNull();
+    const mail = mailbox();
+    expect((await open("/_admin/forgot", ANNA, { PEOPLE_MAIL: mail.binding } as Partial<Env>, {})).status).toBe(200);
+    expect(mail.sent).toHaveLength(1);
+  });
+});
+
 describe("wrong links", () => {
   it("locks a network out of invite and reset pages after five links that don't work", async () => {
     await addUser(ANNA, "user", [], { inviteToken: "i".repeat(43) });

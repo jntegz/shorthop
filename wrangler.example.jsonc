@@ -33,7 +33,11 @@
       "migrations_dir": "migrations"
     }
   ],
-  "analytics_engine_datasets": [{ "binding": "CLICKS", "dataset": "shorthop_clicks" }],
+  "analytics_engine_datasets": [
+    { "binding": "CLICKS", "dataset": "shorthop_clicks" },
+    // Website analytics events from /_t/script.js (src/worker/web/collect.ts).
+    { "binding": "WEB", "dataset": "shorthop_web" }
+  ],
   "ratelimits": [
     // Failed API-token attempts per client IP.
     { "name": "AUTH_LIMITER", "namespace_id": "1001", "simple": { "limit": 10, "period": 60 } },
@@ -41,7 +45,12 @@
     // that counts is kept in D1).
     { "name": "LOGIN_LIMITER", "namespace_id": "1002", "simple": { "limit": 5, "period": 60 } },
     // Password attempts on a protected short link, per client network and link.
-    { "name": "LINK_PASSWORD_LIMITER", "namespace_id": "1003", "simple": { "limit": 10, "period": 60 } }
+    { "name": "LINK_PASSWORD_LIMITER", "namespace_id": "1003", "simple": { "limit": 10, "period": 60 } },
+    // Shared statistics pages and payment webhooks, per client network.
+    { "name": "PUBLIC_LIMITER", "namespace_id": "1004", "simple": { "limit": 120, "period": 60 } },
+    // Website analytics events per client network, all sites together (a page sends a
+    // few per view; this only stops floods of made-up traffic).
+    { "name": "COLLECT_LIMITER", "namespace_id": "1005", "simple": { "limit": 300, "period": 60 } }
   ],
 
   // Exact click limits: one counter per capped link, used only by links with a
@@ -65,9 +74,11 @@
   ],
 
   "triggers": {
-    // Daily rollup at 01:15 UTC, weekly digest Mondays 07:00 UTC, destination
-    // checks every 30 minutes (src/shared/schedule.ts).
-    "crons": ["15 1 * * *", "0 7 * * 1", "*/30 * * * *"]
+    // Hourly at :15 (daily rollups at 01:15 UTC, website alerts the other hours),
+    // weekly digest Mondays 07:00 UTC, destination checks every 30 minutes; the
+    // 02:00 and 03:00 UTC ones do the cleanup and the revenue work instead
+    // (src/shared/schedule.ts).
+    "crons": ["15 * * * *", "0 7 * * 1", "*/30 * * * *"]
   },
 
   "vars": {
@@ -92,6 +103,7 @@
     "KV_CACHE_TTL": "60",
     // The Analytics Engine dataset above (letters, digits and _ only).
     "AE_DATASET": "shorthop_clicks",
+    "AE_WEB_DATASET": "shorthop_web",
     // "free" or "paid". Sizes bulk work (republish pages, import batches, checks
     // per run) to the plan's subrequest limit, and System status checks the
     // password hash cost against it. Say "free" unless you pay for Workers.

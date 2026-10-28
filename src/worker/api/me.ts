@@ -41,6 +41,7 @@ export const meApi = new Hono<AppEnv>()
         demo,
         importRows: planLimits(c.env).importRows,
         checkScope: checks.scope,
+        fallbackUrl: c.env.FALLBACK_URL,
       },
     };
     return c.json(me);

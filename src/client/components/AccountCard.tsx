@@ -19,7 +19,7 @@ export function AccountCard({ me }: { me: MeDTO }) {
   return (
     <Card id="account" className="scroll-mt-6 lg:col-span-2">
       <CardHeader title="My account" description="Who you're signed in as and what you may do here." />
-      <div className="grid gap-6 px-5 pb-5 text-sm md:grid-cols-2">
+      <div className="grid gap-6 px-4 pb-4 text-sm md:grid-cols-2">
         <div className="space-y-3">
           <div className="flex items-center gap-3">
             <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-accent-soft text-accent">

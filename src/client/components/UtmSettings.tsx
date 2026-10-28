@@ -112,7 +112,7 @@ export function UtmSettings({ defaultUtm, onSaveDefault, saving }: { defaultUtm:
   return (
     <Card id="utm" className="scroll-mt-6 lg:col-span-2">
       <CardHeader title="UTM parameters" description="Tags added to the destination when someone clicks, so analytics tools know where visits come from." info={SETTINGS_HELP.defaultUtm} />
-      <div className="grid gap-6 px-5 pb-5 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+      <div className="grid gap-6 px-4 pb-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
         <div className="space-y-3">
           <div>
             <h3 className="text-sm font-semibold text-fg">Default template</h3>
@@ -151,7 +151,7 @@ export function UtmSettings({ defaultUtm, onSaveDefault, saving }: { defaultUtm:
             </Button>
           </div>
           {presets.isPending ? null : list.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-line">
+            <div className="rounded-md border border-dashed border-line">
               <Empty icon={<Bookmark />} title="No presets yet">
                 <p>Start with a common one:</p>
                 <div className="mt-3 flex flex-wrap justify-center gap-1.5">
@@ -160,7 +160,7 @@ export function UtmSettings({ defaultUtm, onSaveDefault, saving }: { defaultUtm:
               </Empty>
             </div>
           ) : (
-            <ul className="divide-y divide-line rounded-xl border border-line">
+            <ul className="divide-y divide-line rounded-md border border-line">
               {list.map((p) => (
                 <li key={p.id} className="flex items-start gap-2 px-3 py-2.5">
                   <div className="min-w-0 flex-1 space-y-1">

@@ -45,7 +45,7 @@ export function RoutingResults({ routing, rows, period, from, onPeriod }: { rout
         description={total ? `Where ${num(total)} human ${total === 1 ? "click" : "clicks"} went in this period. Bots and previews always get the default destination.` : "No routed clicks in this period yet."}
       />
       {mixed ? (
-        <div className="px-5 pb-3">
+        <div className="px-4 pb-4">
           <Notice tone="accent">
             The destinations or shares changed on {whenFull(routing.changedAt)}, so this period mixes two setups.{" "}
             {period.range !== "custom" || period.from !== changedDay ? (

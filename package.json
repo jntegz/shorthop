@@ -27,6 +27,9 @@
       "CLICKS": {
         "description": "Analytics Engine dataset with one data point per click. To read it, add `CF_ACCOUNT_ID` and a `CF_ANALYTICS_TOKEN` secret later ([docs/SETUP.md](https://github.com/jntegz/shorthop/blob/main/docs/SETUP.md#analytics))."
       },
+      "WEB": {
+        "description": "Analytics Engine dataset for website visits (Websites in the admin). Read with the same `CF_ACCOUNT_ID` and `CF_ANALYTICS_TOKEN` as the click dataset."
+      },
       "CLICK_CAPS": {
         "description": "Durable Object counting clicks exactly, used only by links with a click limit."
       },
@@ -59,6 +62,9 @@
       },
       "AE_DATASET": {
         "description": "Leave it as it is: the name of the click dataset above."
+      },
+      "AE_WEB_DATASET": {
+        "description": "Leave it as it is: the name of the website dataset above."
       },
       "WORKERS_PLAN": {
         "description": "`free`, unless you pay for Workers ($5/month): then `paid`. It sizes bulk jobs to your plan's limits."

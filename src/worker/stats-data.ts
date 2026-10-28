@@ -22,7 +22,7 @@ import {
 } from "../shared/types";
 import { aeAvailable, queryTotalsByLink, type LinkFilter } from "./ae";
 import { getSetting, jsonChunks, nowSec } from "./db";
-import { getMissPolicy, isCleared, isProbeCleared, keptByPolicy, missesCleared, missKind } from "./misses";
+import { getMissPolicy, ignoredMisses, isCleared, isProbeCleared, keptByPolicy, missesCleared, missKind } from "./misses";
 import { collectFromAE } from "./rollup";
 
 const TOP_N = 50;
@@ -308,8 +308,8 @@ export async function missReport(
   env: Env,
   period: Period,
   now = new Date(),
-): Promise<{ aeAvailable: boolean; policy: MissPolicy; rows: MissRow[] }> {
-  const [w, cleared, policy] = await Promise.all([windows(env, period, now), missesCleared(env.DB, now), getMissPolicy(env.DB, true)]);
+): Promise<{ aeAvailable: boolean; policy: MissPolicy; rows: MissRow[]; ignored: number }> {
+  const [w, cleared, policy, ignored] = await Promise.all([windows(env, period, now), missesCleared(env.DB, now), getMissPolicy(env.DB, true), ignoredMisses(env.DB)]);
   type Total = Link & { hits: number; bots: number; last: string };
   const totals = new Map<string, Total>();
   // Probe-looking paths on days "Clear scanner probes" hides, until the link check below says whether they're probes.
@@ -322,8 +322,11 @@ export async function missReport(
     if (last > t.last) t.last = last;
     into.set(key, t);
   };
-  const add = (domain: string, slug: string, hits: number, bots: number, last: string) =>
+  const add = (domain: string, slug: string, hits: number, bots: number, last: string) => {
+    // Ignored paths' rows are deleted, but today's visits still come from Analytics Engine.
+    if (linkKey(domain, slug) in ignored) return;
     addTo(isProbeCleared(cleared, slug, last) ? held : totals, domain, slug, hits, bots, last);
+  };
   const d1From = w.d1 && cleared.all !== null && cleared.all >= w.d1.from ? addDays(cleared.all, 1) : w.d1?.from;
   if (w.d1 && d1From && d1From <= w.d1.to) {
     const { results } = await env.DB.prepare(
@@ -385,7 +388,7 @@ export async function missReport(
     .map(({ last: _, ...r }) => r as MissRow)
     .sort((a, b) => b.hits - a.hits || b.bots - a.bots)
     .slice(0, MAX_REPORT_ROWS);
-  return { aeAvailable: w.aeAvailable && aeOk, policy, rows: shown };
+  return { aeAvailable: w.aeAvailable && aeOk, policy, rows: shown, ignored: Object.keys(ignored).length };
 }
 
 /** How long this isolate reuses the all-time rollup sums (they change only when a rollup runs). */

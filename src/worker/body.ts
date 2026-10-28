@@ -13,7 +13,7 @@ export async function readCapped(req: Request, max: number): Promise<Uint8Array 
     if (done) break;
     size += value.byteLength;
     if (size > max) {
-      await reader.cancel();
+      await reader.cancel().catch(() => undefined);
       return null;
     }
     chunks.push(value);
@@ -25,4 +25,10 @@ export async function readCapped(req: Request, max: number): Promise<Uint8Array 
     offset += c.byteLength;
   }
   return out;
+}
+
+/** The body as UTF-8 text, or null when it's larger than `max` bytes. */
+export async function readTextCapped(req: Request, max: number): Promise<string | null> {
+  const bytes = await readCapped(req, max);
+  return bytes && new TextDecoder().decode(bytes);
 }

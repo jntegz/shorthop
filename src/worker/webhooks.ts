@@ -90,6 +90,7 @@ const FIELD_NAMES: Record<HistoryField, string> = {
   expires_at: "expires_at",
   broken: "no_longer_working",
   replacement: "replacement",
+  off_redirect: "off_redirect",
   utm: "utm",
   utm_template: "utm_template",
   pass_query: "pass_query",
@@ -329,10 +330,21 @@ export async function checkMilestones(env: Env): Promise<number> {
   }
   if (!started) writes.push(setSettingStmt(env.DB, "milestones_started", "1"));
   if (writes.length) await env.DB.batch(writes);
-  for (const p of passed) {
-    const row = await env.DB.prepare("SELECT * FROM links WHERE domain = ? AND slug = ?").bind(p.domain, p.slug).first<LinkRow>();
-    if (row) await emit(env, "link.milestone", { link: linkPayload(row), milestone: p.milestone, clicks_total: p.clicks });
-  }
+  if (!passed.length) return 0;
+  // One read for every link and one write for every event, however many passed a milestone.
+  const { results: rows } = await env.DB.prepare(
+    `SELECT l.* FROM json_each(?1) j JOIN links l ON l.domain = json_extract(j.value, '$[0]') AND l.slug = json_extract(j.value, '$[1]')`,
+  )
+    .bind(JSON.stringify(passed.map((p) => [p.domain, p.slug])))
+    .all<LinkRow>();
+  const byKey = new Map(rows.map((r) => [`${r.domain}/${r.slug}`, r]));
+  await emitAll(
+    env,
+    passed.flatMap((p) => {
+      const row = byKey.get(`${p.domain}/${p.slug}`);
+      return row ? [{ type: "link.milestone" as const, data: { link: linkPayload(row), milestone: p.milestone, clicks_total: p.clicks } }] : [];
+    }),
+  );
   return passed.length;
 }
 

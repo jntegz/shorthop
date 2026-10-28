@@ -2,7 +2,7 @@
 // The SQL API has no bound parameters: the only values ever interpolated are
 // a slug that passed the slug regex, a domain that passed the hostname regex,
 // a hit type, device or country code from a fixed list or pattern, integer
-// timestamps and the AE_DATASET name, which must be an identifier.
+// timestamps and the AE_DATASET and AE_WEB_DATASET names, which must be identifiers.
 // blob17 holds the short domain of each hit.
 
 import { HOSTNAME_RE } from "../shared/domains";
@@ -10,13 +10,20 @@ import { IMPORT_SLUG_RE } from "../shared/slug";
 import { SCANNER_PATHS_PER_DAY } from "../shared/types";
 import { domainsOf } from "./domains";
 
-const ROW_LIMIT = 10000;
+export const ROW_LIMIT = 10000;
 const DATASET_RE = /^\w{1,64}$/;
 
 /** The dataset the CLICKS binding writes to (AE_DATASET). It goes into SQL, so it must be a plain identifier. */
 export function dataset(env: Env): string {
   const name = env.AE_DATASET ?? "";
   if (!DATASET_RE.test(name)) throw new Error("AE_DATASET must be 1-64 letters, digits or underscores");
+  return name;
+}
+
+/** The dataset the WEB binding writes website visits to (AE_WEB_DATASET), held to the same rule. */
+export function webDataset(env: Env): string {
+  const name = env.AE_WEB_DATASET ?? "";
+  if (!DATASET_RE.test(name)) throw new Error("AE_WEB_DATASET must be 1-64 letters, digits or underscores");
   return name;
 }
 
@@ -33,7 +40,7 @@ export class AeRowLimitError extends Error {
 }
 
 /** `strict` throws AeRowLimitError on a truncated result (the rollup can't store a partial day); otherwise it is logged. */
-async function aeQuery<T extends Record<string, unknown>>(env: Env, sql: string, strict = false): Promise<T[]> {
+export async function aeQuery<T extends Record<string, unknown>>(env: Env, sql: string, strict = false): Promise<T[]> {
   const res = await fetch(`https://api.cloudflare.com/client/v4/accounts/${env.CF_ACCOUNT_ID}/analytics_engine/sql`, {
     method: "POST",
     headers: { Authorization: `Bearer ${env.CF_ANALYTICS_TOKEN}`, "Content-Type": "text/plain" },
@@ -91,6 +98,8 @@ export const AE_DIMS = {
   browser: ["blob10"],
   referrer: ["blob11"],
   language: ["blob13"],
+  // Who runs the visitor's network (Cloudflare's asOrganization).
+  org: ["blob6"],
   bot: ["blob14"],
   // Smart-routed links only: "rule" or "rule.variant", "-" for the fallback.
   route: ["blob18"],

@@ -38,6 +38,10 @@ migrations_dir = "migrations"
 binding = "CLICKS"
 dataset = "shorthop_clicks"
 
+[[analytics_engine_datasets]]
+binding = "WEB"
+dataset = "shorthop_web"
+
 [[ratelimits]]
 name = "AUTH_LIMITER"
 namespace_id = "1001"
@@ -53,6 +57,16 @@ name = "LINK_PASSWORD_LIMITER"
 namespace_id = "1003"
 simple = { limit = 10, period = 60 }
 
+[[ratelimits]]
+name = "PUBLIC_LIMITER"
+namespace_id = "1004"
+simple = { limit = 120, period = 60 }
+
+[[ratelimits]]
+name = "COLLECT_LIMITER"
+namespace_id = "1005"
+simple = { limit = 300, period = 60 }
+
 [durable_objects]
 bindings = [{ name = "CLICK_CAPS", class_name = "ClickCap" }]
 
@@ -61,7 +75,7 @@ tag = "v1"
 new_sqlite_classes = ["ClickCap"]
 
 [triggers]
-crons = ["15 1 * * *", "0 7 * * 1", "*/30 * * * *"]
+crons = ["15 * * * *", "0 7 * * 1", "*/30 * * * *"]
 
 [vars]
 # "password": the ADMIN_PASSWORD secret alone. Cloudflare Access can come later (docs/SETUP.md#access).
@@ -78,6 +92,7 @@ ADMIN_HOST = ""
 FALLBACK_URL = "https://example.com"
 KV_CACHE_TTL = "60"
 AE_DATASET = "shorthop_clicks"
+AE_WEB_DATASET = "shorthop_web"
 # "free" or "paid": sizes republish pages, import batches and checks per run to the plan's limit. Say "free" unless you pay for Workers.
 WORKERS_PLAN = "free"
 API_TOKEN_SCOPE = "create"

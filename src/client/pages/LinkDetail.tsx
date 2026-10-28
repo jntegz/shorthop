@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ArrowUpRight, Copy, ExternalLink, Gauge, History, Lock, Pencil, QrCode, Trash2 } from "lucide-react";
+import { ArrowLeft, ArrowUpRight, Copy, Ellipsis, ExternalLink, Gauge, History, Lock, Pencil, Power, QrCode, Share2, Trash2 } from "lucide-react";
 import { lazy, Suspense, useEffect, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router";
 import { toast } from "sonner";
@@ -14,12 +14,15 @@ import { RoutingResults } from "../components/RoutingResults";
 import { LinkForm } from "../components/LinkForm";
 import { includesToday, liveInterval, StatsFreshness } from "../components/StatsFreshness";
 import { PeriodPicker, periodQuery } from "../components/PeriodPicker";
-import { Badge, Button, Card, CardHeader, Dialog, Empty, Notice, PageHeader, Spinner } from "../components/ui";
+import { Badge, Button, Card, CardHeader, Dialog, Empty, Menu, MenuItem, Notice, PageHeader, Spinner } from "../components/ui";
 import { countryName, date, flag, num, sourceLabel, when } from "../lib/format";
 import { linkPath, useLinkLabel } from "../lib/links";
 import { useCan } from "../lib/me";
 import { copy } from "../lib/utils";
 import { StateBadge } from "./Links";
+import { LinkRevenue } from "../components/LinkRevenue";
+import { LinkPower } from "../components/LinkPower";
+import { ShareStats, useShares } from "../components/ShareStats";
 
 /** "37 of 100 visits used", red once the limit is reached. */
 function CapBadge({ domain, slug, limit }: { domain: string; slug: string; limit: number }) {
@@ -48,6 +51,8 @@ export function LinkDetail() {
   const [markBroken, setMarkBroken] = useState(false);
   const [qr, setQr] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [power, setPower] = useState(false);
+  const [sharing, setSharing] = useState(false);
   const navigate = useNavigate();
   const qc = useQueryClient();
 
@@ -59,6 +64,9 @@ export function LinkDetail() {
   const can = useCan();
   const edits = can("links.edit");
   const showStats = can("stats.view");
+  const canShare = showStats && edits;
+  const shares = useShares(domain, slug, canShare);
+  const activeShares = shares.data?.shares.filter((x) => x.status === "active").length ?? 0;
   const { hash } = useLocation();
   const loaded = Boolean(linkQ.data);
   // "Statistics" on the links list opens this page at #stats; Link health's "Fix" at #edit.
@@ -86,16 +94,6 @@ export function LinkDetail() {
     queryFn: () => call(api.stats.recent.$get({ query: { domain, slug, limit: "25" } })),
     refetchInterval: liveInterval({ range: "7d" }),
     enabled: showStats,
-  });
-
-  const toggle = useMutation({
-    mutationFn: (active: boolean) => call(api.links[":domain"][":slug"].$patch({ param: { domain, slug }, json: { active } })),
-    onSuccess: (data) => {
-      qc.setQueryData(keys.link(domain, slug), data);
-      void qc.invalidateQueries({ queryKey: keys.allLinks });
-      toast.success(data.link.active ? "Link enabled" : "Link disabled", { description: "Takes effect worldwide within about a minute." });
-    },
-    onError: (e) => toast.error(e.message),
   });
 
   const undelete = useRestoreDeleted();
@@ -147,6 +145,11 @@ export function LinkDetail() {
             {label}
             <StateBadge link={link} />
             {link.source === "import" ? <Badge>Imported</Badge> : null}
+            {activeShares ? (
+              <Badge tone="accent">
+                <Share2 className="size-3" aria-hidden /> Shared{activeShares > 1 ? ` · ${activeShares}` : ""}
+              </Badge>
+            ) : null}
           </span>
         }
         description={
@@ -171,6 +174,25 @@ export function LinkDetail() {
                 )}
               </span>
             ) : null}
+            {!link.active ? (
+              <span>
+                Turned off.{" "}
+                {link.offRedirect === "home" ? (
+                  "Visitors are sent to the main site."
+                ) : link.offRedirect ? (
+                  <>
+                    Visitors are sent to{" "}
+                    <Link to={linkPath(link.offRedirect)} className="font-medium text-accent hover:underline">
+                      {labelOf(link.offRedirect)}
+                    </Link>
+                    .
+                  </>
+                ) : (
+                  "Visitors see the “not found” page."
+                )}{" "}
+                Automatic checks are paused.
+              </span>
+            ) : null}
           </span>
         }
         actions={
@@ -186,18 +208,35 @@ export function LinkDetail() {
                 <Button variant="outline" onClick={() => setEditing(true)}>
                   <Pencil /> Edit
                 </Button>
-                <Button variant="outline" onClick={() => toggle.mutate(!link.active)} loading={toggle.isPending}>
-                  {link.active ? "Disable" : "Enable"}
+                <Button
+                  variant="outline"
+                  onClick={() => setPower(true)}
+                  title={link.active ? "Stop redirecting visitors, and pause automatic checks" : "Redirect visitors again"}
+                >
+                  <Power /> {link.active ? "Disable…" : "Enable…"}
                 </Button>
               </>
+            ) : null}
+            {canShare ? (
+              <Button variant="outline" onClick={() => setSharing(true)} title="A read-only statistics page for someone without an account">
+                <Share2 /> Share
+              </Button>
             ) : null}
             <Button variant="outline" onClick={() => document.getElementById("history")?.scrollIntoView({ behavior: "smooth" })}>
               <History /> History
             </Button>
             {can("links.delete") ? (
-              <Button variant="ghost" size="icon" aria-label="Delete link" onClick={() => setConfirmDelete(true)}>
-                <Trash2 />
-              </Button>
+              <Menu
+                trigger={
+                  <Button variant="ghost" size="icon" aria-label="More actions">
+                    <Ellipsis />
+                  </Button>
+                }
+              >
+                <MenuItem icon={<Trash2 />} tone="danger" onSelect={() => setConfirmDelete(true)}>
+                  Delete link…
+                </MenuItem>
+              </Menu>
             ) : null}
           </>
         }
@@ -280,6 +319,7 @@ export function LinkDetail() {
             <Breakdown title="Operating systems" rows={s.dims.os} />
             <Breakdown title="Browsers" rows={s.dims.browser} />
             <Breakdown title="Languages" rows={s.dims.language} kind="language" />
+            <Breakdown title="Networks" description="Who runs the visitor's network: usually an internet provider, sometimes a company" rows={s.dims.org} />
             <Breakdown title="Bots & link previews" description="Still redirected, never counted as clicks" rows={s.dims.bot} metric="bots" />
           </div>
         </div>
@@ -300,7 +340,7 @@ export function LinkDetail() {
             <Spinner />
           </div>
         ) : recent.isError || recent.data.error ? (
-          <div className="px-5 pb-5">
+          <div className="px-4 pb-4">
             <Notice tone="danger">Couldn’t load recent hits: {recent.isError ? recent.error.message : recent.data.error}</Notice>
           </div>
         ) : !recent.data.aeAvailable ? (
@@ -324,7 +364,7 @@ export function LinkDetail() {
                 {recent.data.hits.map((h, i) => (
                   <tr key={`${h.time}-${i}`} className="border-t border-line">
                     <td className="py-1.5 whitespace-nowrap text-muted">{when(h.time)}</td>
-                    <td className="py-1.5">{h.event === "bot" ? <Badge tone="warn">{h.botName || "Bot"}</Badge> : <Badge tone="good">Click</Badge>}</td>
+                    <td className="py-1.5">{h.event === "bot" ? <Badge tone="warn">{h.botName || "Bot"}</Badge> : <span className="text-xs text-muted">Click</span>}</td>
                     <td className="py-1.5">
                       {flag(h.country)} {h.city ? `${h.city}, ` : ""}
                       {countryName(h.country)}
@@ -345,6 +385,8 @@ export function LinkDetail() {
         </>
       ) : null}
 
+      {can("revenue.view") ? <LinkRevenue domain={link.domain} slug={link.slug} /> : null}
+
       <LinkHistory link={link} />
 
       {edits ? <LinkForm
@@ -356,12 +398,14 @@ export function LinkDetail() {
         link={link}
         markBroken={markBroken}
       /> : null}
+      {edits && power ? <LinkPower link={link} open={power} onOpenChange={setPower} /> : null}
+      {canShare && sharing ? <ShareStats link={link} label={label} open={sharing} onOpenChange={setSharing} /> : null}
       {qr ? (
         <Suspense fallback={null}>
           <QrStudio open onOpenChange={setQr} link={link} label={label} />
         </Suspense>
       ) : null}
-      <Dialog open={confirmDelete} onOpenChange={setConfirmDelete} title={`Delete ${label}?`} description="The short link stops working and its slug becomes free. Stats already collected stay in the rollups. You can restore it from Recently deleted for 90 days; to stop a link temporarily, disable it instead.">
+      <Dialog open={confirmDelete} onOpenChange={setConfirmDelete} title={`Delete ${label}?`} description="The short link stops working and its slug becomes free. Stats already collected stay in the rollups. You can restore it from Recently deleted for 90 days; to stop a link for a while, disable it instead.">
         {dependents.data?.links.length ? (
           <div className="mb-4">
             <Notice tone="warn">

@@ -8,6 +8,8 @@ export const WEBHOOK_EVENTS = [
   { type: "link.deleted", label: "Link deleted", description: "The link as it was when it was deleted." },
   { type: "link.health_changed", label: "Destination down or back", description: "A destination failed its checks, or works again." },
   { type: "link.milestone", label: "Click milestone", description: "A link passed 100, 1,000, 10,000… human clicks (checked daily)." },
+  { type: "site.payment", label: "Website payment", description: "A payment, renewal, refund or dispute on a tracked website, with the visit it's credited to." },
+  { type: "site.traffic_spike", label: "Website traffic spike", description: "A source sent at least 4x its usual hourly visits to a tracked website (checked hourly)." },
 ] as const;
 export type WebhookEvent = (typeof WEBHOOK_EVENTS)[number]["type"] | "webhook.test";
 export const EVENT_TYPES = WEBHOOK_EVENTS.map((e) => e.type) as readonly string[];

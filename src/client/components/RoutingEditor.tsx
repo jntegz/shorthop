@@ -228,7 +228,7 @@ function RuleCard({
 }) {
   const id = `rule-${rule.id}`;
   return (
-    <li className={cn("rounded-xl border bg-surface", errors.length ? "border-danger/40" : "border-line", !rule.enabled && "opacity-70")}>
+    <li className={cn("rounded-md border bg-surface", errors.length ? "border-danger/40" : "border-line", !rule.enabled && "opacity-70")}>
       <div className="flex flex-wrap items-center gap-2 border-b border-line px-3 py-2">
         <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-accent-soft text-xs font-semibold text-accent tabular" aria-hidden>
           {index + 1}
@@ -296,7 +296,7 @@ function Simulator({ rules, fallback }: { rules: RouteRule[]; fallback: string }
   const countries = useMemo(() => countryOptions(), []);
   const hit = matchingRule({ rules, changedAt: 0 }, { device, country });
   return (
-    <div className="rounded-xl border border-dashed border-line bg-surface p-3 sm:p-4">
+    <div className="rounded-md border border-dashed border-line bg-surface p-3 sm:p-4">
       <p className="text-xs font-medium text-fg">Try it</p>
       <p className="mt-0.5 text-xs text-muted">Pick a visitor to see where they'd go. Nothing is opened or counted.</p>
       <div className="mt-3 flex flex-wrap gap-2">
@@ -324,7 +324,7 @@ function Simulator({ rules, fallback }: { rules: RouteRule[]; fallback: string }
             </p>
             <ul className="mt-1 space-y-0.5 text-muted">
               {hit.rule.variants.map((v) => (
-                <li key={v.id} className="truncate font-mono text-[11px]" title={v.url}>
+                <li key={v.id} className="truncate font-mono text-xs" title={v.url}>
                   {hit.rule.variants.length > 1 ? <span className="font-sans font-medium text-fg">{v.weight}% {v.label} · </span> : "→ "}
                   {v.url || "(no URL yet)"}
                 </li>
@@ -334,13 +334,13 @@ function Simulator({ rules, fallback }: { rules: RouteRule[]; fallback: string }
         ) : (
           <>
             <p className="font-medium text-fg">No rule matches: the default destination</p>
-            <p className="mt-1 truncate font-mono text-[11px] text-muted" title={fallback}>
+            <p className="mt-1 truncate font-mono text-xs text-muted" title={fallback}>
               → {fallback || "(enter the destination URL above)"}
             </p>
           </>
         )}
       </div>
-      <p className="mt-2 text-[11px] text-subtle">Bots and link previews always get the default destination, so previews stay stable and tests count people only.</p>
+      <p className="mt-2 text-xs text-subtle">Bots and link previews always get the default destination, so previews stay stable and tests count people only.</p>
     </div>
   );
 }
@@ -366,7 +366,7 @@ export function RoutingEditor({ rules, onChange, fallback, errors }: { rules: Ro
         <p className="text-xs text-muted">Start from a common setup, or a blank rule. You can change everything afterwards.</p>
         <div className="grid gap-2 sm:grid-cols-3">
           {PRESETS.map(({ id, icon: Icon, title, detail, rules: make }) => (
-            <button key={id} type="button" onClick={() => onChange(make())} className="flex flex-col items-start gap-2 rounded-xl border border-line bg-surface p-3 text-left transition-colors hover:border-accent/50 hover:bg-accent-soft/40">
+            <button key={id} type="button" onClick={() => onChange(make())} className="flex flex-col items-start gap-2 rounded-md border border-line bg-surface p-3 text-left transition-colors hover:border-accent/50 hover:bg-accent-soft/40">
               <span className="flex size-8 items-center justify-center rounded-lg bg-accent-soft text-accent">
                 <Icon className="size-4" />
               </span>
@@ -405,9 +405,9 @@ export function RoutingEditor({ rules, onChange, fallback, errors }: { rules: Ro
           {e}
         </p>
       ))}
-      <div className="flex flex-wrap items-center gap-3 rounded-xl border border-line bg-surface px-3 py-2.5 text-xs">
+      <div className="flex flex-wrap items-center gap-3 rounded-md border border-line bg-surface px-3 py-2.5 text-xs">
         <span className="font-medium text-fg">Everyone else</span>
-        <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted" title={fallback}>
+        <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted" title={fallback}>
           → {fallback || "the destination URL above"}
         </span>
       </div>

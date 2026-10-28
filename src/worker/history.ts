@@ -8,7 +8,7 @@ import { nowSec, type LinkRow } from "./db";
 
 /** SQL for a version's snapshot, built from a `links` row (keep in step with snapshotOf). */
 export const SNAPSHOT_SQL = `json_object('target', target, 'active', active, 'expires_at', expires_at, 'utm', utm, 'utm_template', utm_template,
-  'pass_query', pass_query, 'title', title, 'tags', tags, 'notes', notes, 'broken', broken, 'replacement', replacement,
+  'pass_query', pass_query, 'title', title, 'tags', tags, 'notes', notes, 'broken', broken, 'replacement', replacement, 'off_redirect', off_redirect,
   'monitor', monitor, 'routing', routing, 'preview', preview, 'qr', qr, 'password_hash', password_hash, 'max_clicks', max_clicks, 'source', source, 'imported_clicks', imported_clicks, 'created_at', created_at)`;
 
 /** Most versions returned for one link. */

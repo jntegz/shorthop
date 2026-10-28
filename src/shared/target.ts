@@ -63,6 +63,9 @@ export function renderUtm(template: string, vars: { slug: string; source: string
     .replaceAll("{variant}", encodeURIComponent(vars.variant ?? "default"));
 }
 
+/** The signed short-link click token's query parameter (src/worker/web/token.ts). */
+export const CLICK_PARAM = "sh_c";
+
 export interface OwnParams {
   /** Raw value of ?s= (unsanitized), if present. */
   sourceTag: string | null;
@@ -90,6 +93,8 @@ export function splitOwnParams(search: string): OwnParams {
       result.qr = true;
       continue;
     }
+    // Only this Worker hands out click tokens: a visitor's own would replace the real one.
+    if (key === CLICK_PARAM) continue;
     result.passthrough.push(pair);
   }
   return result;

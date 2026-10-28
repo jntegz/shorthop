@@ -55,11 +55,11 @@ export function BotCheckCard() {
           <Spinner />
         </div>
       ) : q.isError ? (
-        <div className="px-5 pb-5">
+        <div className="px-4 pb-4">
           <Notice tone="danger">{q.error.message}</Notice>
         </div>
       ) : (
-        <div className="grid gap-6 px-5 pb-5 text-sm md:grid-cols-2">
+        <div className="grid gap-6 px-4 pb-4 text-sm md:grid-cols-2">
           <div className="space-y-3">
             <p className="flex items-start gap-2 text-muted">
               <Bot className="mt-0.5 size-4 shrink-0 text-accent" aria-hidden />

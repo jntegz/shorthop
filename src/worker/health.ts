@@ -3,6 +3,7 @@
 // appears (and once it's resolved), so a silent failure doesn't go unnoticed.
 
 import { APP_NAME } from "../shared/brand";
+import { rollupWebEvents } from "./web/rollup";
 import { addDays, daysBetween, isoWeek, utcDate } from "../shared/dates";
 import { isPlaceholderHost } from "../shared/domains";
 import { escapeHtml } from "../shared/html";
@@ -17,12 +18,16 @@ import { domainsOf } from "./domains";
 import { runDigest } from "./digest";
 import { pruneHistory } from "./history";
 import { MailerError, mailerStatus, providerName, sendMail, withMailSettings } from "./mailer";
+import { planLimits } from "./plan";
 import { prunePreviewImages } from "./preview";
 import { runRollup, type RollupResult } from "./rollup";
 import { getCheckSettings, runLinkChecks } from "./link-check";
 import { pruneApiKeys } from "./users";
 import { checkMilestones, deliver, pruneDeliveries } from "./webhooks";
 import { loginConfig, plainAdminPassword, pruneLoginState } from "./session";
+import { refreshFx } from "./revenue/fx";
+import { rematchAll } from "./revenue/match";
+import { listSites } from "./web/sites";
 
 type Job = "rollup" | "digest" | "alert" | "links";
 const JOBS_KEY = "job_runs";
@@ -86,20 +91,25 @@ export function isCleanupRun(now: Date): boolean {
 }
 
 /**
- * The daily cleanup, in the half-hourly cron's 02:00 UTC slot: due webhook
- * deliveries, then each prune in turn. It has that invocation to itself, so
- * the deletes (one KV and one D1 call per unused upload) can't crowd out the
- * rollup's Analytics Engine queries or a run's destination checks on the
- * Free plan's 50 subrequests. One job failing doesn't stop the others.
+ * The daily cleanup, in the half-hourly cron's 02:00 UTC slot, after the
+ * 01:15 rollup: due webhook deliveries, milestone events from the fresh
+ * rollup, each prune in turn, then the health alert. It has that invocation
+ * to itself, so the deletes (one KV and one D1 call per unused upload) can't
+ * crowd out the rollups' Analytics Engine queries or a run's destination
+ * checks on the Free plan's 50 subrequests. One job failing doesn't stop the others.
  */
 export async function scheduledCleanup(env: Env, now = new Date()): Promise<void> {
   const jobs: [string, () => Promise<unknown>][] = [
     ["webhook deliveries", () => deliver(env)],
+    ["webhook milestones", () => checkMilestones(env)],
+    ["webhook delivery prune", () => pruneDeliveries(env)],
     ["login state prune", () => pruneLoginState(env.DB, nowSec())],
     ["day salt prune", () => pruneDaySalts(env.DB, utcDate(now))],
     ["api key prune", () => pruneApiKeys(env.DB, nowSec())],
     ["history prune", () => pruneHistory(env.DB)],
     ["upload prune", () => prunePreviewImages(env)],
+    ["health alert", () => checkAndAlert(env, now)],
+    ["payment events prune", () => prunePaymentEvents(env.DB, nowSec())],
   ];
   for (const [name, run] of jobs) {
     try {
@@ -148,7 +158,8 @@ export async function scheduledDigest(env: Env, now = new Date()): Promise<void>
     console.error(JSON.stringify({ message: "digest failed", error: String(err) }));
     await recordJob(env.DB, "digest", false, String(err));
   }
-  await checkAndAlert(env, now);
+  // No health alert here: with the rollup and the email this run has no room left on
+  // the Free plan. The 02:00 cleanup checks every day, a failed digest included.
 }
 
 const when = (sec: number) => `${new Date(sec * 1000).toISOString().slice(0, 16).replace("T", " ")} UTC`;
@@ -429,11 +440,61 @@ export async function scheduledDaily(env: Env, now = new Date()): Promise<void> 
   } catch (err) {
     console.error(JSON.stringify({ message: "demo cleanup failed", error: String(err) }));
   }
+}
+
+/** The half-hourly cron's 02:30 UTC slot copies website totals to D1 instead of checking destinations. */
+export function isWebRollupRun(now: Date): boolean {
+  return now.getUTCHours() === 2 && now.getUTCMinutes() >= 30;
+}
+
+/**
+ * Website page, goal and outbound totals from Analytics Engine to D1, in an
+ * invocation of its own: after a catch-up the link rollup leaves no room for
+ * it on the Free plan. Up to webRollupDays a run (src/worker/plan.ts).
+ */
+export async function scheduledWebRollup(env: Env, now = new Date()): Promise<void> {
   try {
-    await checkMilestones(env);
-    await pruneDeliveries(env);
+    const days = await rollupWebEvents(env, now);
+    if (days.length) console.log(JSON.stringify({ message: "website rollup complete", from: days[0], to: days.at(-1) }));
   } catch (err) {
-    console.error(JSON.stringify({ message: "webhook milestones failed", error: String(err) }));
+    console.error(JSON.stringify({ message: "website rollup failed", error: String(err) }));
   }
-  await checkAndAlert(env, now);
+}
+
+/** The half-hourly cron's 03:00 UTC slot does the revenue work instead of destination checks. */
+export function isRevenueRun(now: Date): boolean {
+  return now.getUTCHours() === 3 && now.getUTCMinutes() < 30;
+}
+
+/**
+ * Exchange rates for revenue, then another go at payments no visit was found
+ * for yet, in an invocation of its own and sized to the plan (src/worker/plan.ts).
+ */
+export async function scheduledRevenue(env: Env): Promise<void> {
+  const sites = await listSites(env.DB);
+  if (!sites.length) return;
+  const limits = planLimits(env);
+  try {
+    await refreshFx(env.DB, limits.fxDays, undefined, limits.fxPending);
+  } catch (err) {
+    console.error(JSON.stringify({ message: "fx refresh failed", error: String(err) }));
+  }
+  try {
+    const r = await rematchAll(env.DB, sites, limits.rematchPayments);
+    if (r.tried) console.log(JSON.stringify({ message: "payment rematch", ...r }));
+  } catch (err) {
+    console.error(JSON.stringify({ message: "payment rematch failed", error: String(err) }));
+  }
+}
+
+/**
+ * Accepted webhook events are remembered 400 days: providers retry for 3 at
+ * most, but some sign without a timestamp, so a delivery captured earlier must
+ * still be known when it's sent again. Return-page claims are kept 90.
+ */
+async function prunePaymentEvents(db: D1Database, now: number): Promise<void> {
+  await db.batch([
+    db.prepare("DELETE FROM payment_events WHERE received_at < ?1").bind(now - 400 * 86400),
+    db.prepare("DELETE FROM payment_claims WHERE claimed_at < ?1").bind(now - 90 * 86400),
+  ]);
 }

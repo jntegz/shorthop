@@ -19,7 +19,7 @@ export function CloudflareFeatures() {
     <div className="grid gap-px overflow-hidden border-y border-line bg-line sm:grid-cols-2 lg:grid-cols-3">
       {features.map(({ icon: Icon, name, detail, benefit, href }) => <a key={name} href={href} target="_blank" rel="noreferrer" className="group bg-surface p-5 transition-colors hover:bg-bg">
         <div className="mb-3 flex items-center justify-between"><Icon className="size-5 text-accent" /><ArrowUpRight className="size-3.5 text-subtle group-hover:text-accent" /></div>
-        <h3 className="text-sm font-semibold">{name}</h3><p className="mt-1 text-[11px] font-medium text-accent">{detail}</p><p className="mt-2 text-xs leading-relaxed text-muted">{benefit}</p>
+        <h3 className="text-sm font-semibold">{name}</h3><p className="mt-1 text-xs font-medium text-accent">{detail}</p><p className="mt-2 text-xs leading-relaxed text-muted">{benefit}</p>
       </a>)}
     </div>
     <p className="px-5 py-4 text-xs leading-relaxed text-muted">Free allowances have usage limits and are shared across your account. This is a capability guide, not a live usage or billing report. Review usage in your Cloudflare dashboard before changing plans.</p>

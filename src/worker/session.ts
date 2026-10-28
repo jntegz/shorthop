@@ -35,6 +35,8 @@ export interface LoginConfig {
 const MIN_SECRET_LENGTH = 32;
 const VERSION = "v2";
 const GLOBAL_KEY = "*";
+/** The people's own brake: their failures pause only their logins, so no one can lock the owners out. */
+const PEOPLE_GLOBAL_KEY = "*people";
 
 /** The ADMIN_PASSWORD secret (Deploy to Cloudflare installs), read loosely: it's optional. */
 export function plainAdminPassword(env: Env): string {
@@ -254,20 +256,29 @@ export function clearFailuresStmt(db: D1Database, key: string): D1PreparedStatem
   return db.prepare("DELETE FROM auth_failures WHERE key = ?").bind(key);
 }
 
-/** When the global brake is on, the time it lifts; otherwise 0. */
-export async function globalLockedUntil(db: D1Database, now: number): Promise<number> {
-  const row = await db.prepare("SELECT locked_until FROM auth_failures WHERE key = ?").bind(GLOBAL_KEY).first<{ locked_until: number }>();
-  return row && row.locked_until > now ? row.locked_until : 0;
+/**
+ * When the global brake is on for this kind of login, the time it lifts;
+ * otherwise 0. Failures at the owners' password pause everyone; the people's
+ * failures pause only the people.
+ */
+export async function globalLockedUntil(db: D1Database, now: number, owner: boolean): Promise<number> {
+  const { results } = await db
+    .prepare("SELECT locked_until FROM auth_failures WHERE key IN (?1, ?2)")
+    .bind(GLOBAL_KEY, owner ? GLOBAL_KEY : PEOPLE_GLOBAL_KEY)
+    .all<{ locked_until: number }>();
+  const until = Math.max(0, ...results.map((r) => r.locked_until));
+  return until > now ? until : 0;
 }
 
 /**
- * Counts a failure towards the global brake and applies it at the threshold.
- * Only failures from several networks count: one network is already held back
- * by its own lockout, and must not be able to lock the owner out everywhere.
- * Call it after the failure's login event is written.
+ * Counts a failure towards its global brake (the owners' or the people's) and
+ * applies it at the threshold. Only failures from several networks count: one
+ * network is already held back by its own lockout, and must not be able to
+ * lock the owner out everywhere. Call it after the failure's login event is written.
  */
-export async function recordGlobalFailure(db: D1Database, now: number): Promise<void> {
-  const state = await chargeAttempt(db, GLOBAL_KEY, now, GLOBAL_WINDOW_SEC);
+export async function recordGlobalFailure(db: D1Database, now: number, owner: boolean): Promise<void> {
+  const key = owner ? GLOBAL_KEY : PEOPLE_GLOBAL_KEY;
+  const state = await chargeAttempt(db, key, now, GLOBAL_WINDOW_SEC);
   if (state.lockedUntil > now || state.fails < GLOBAL_MAX_FAILS) return;
   const networks = await db
     .prepare("SELECT COUNT(DISTINCT ip_hash) AS n FROM login_events WHERE ok = 0 AND ts > ?")
@@ -276,9 +287,9 @@ export async function recordGlobalFailure(db: D1Database, now: number): Promise<
   if ((networks?.n ?? 0) >= GLOBAL_MIN_NETWORKS) {
     await db
       .prepare("UPDATE auth_failures SET locked_until = ?2, fails = 0, window_start = ?3, updated_at = ?3 WHERE key = ?1")
-      .bind(GLOBAL_KEY, now + GLOBAL_LOCK_SEC, now)
+      .bind(key, now + GLOBAL_LOCK_SEC, now)
       .run();
-    console.warn(JSON.stringify({ message: "admin login paused", reason: "global failure limit", until: now + GLOBAL_LOCK_SEC }));
+    console.warn(JSON.stringify({ message: "admin login paused", reason: owner ? "global failure limit" : "people's failure limit", until: now + GLOBAL_LOCK_SEC }));
   }
 }
 
@@ -306,7 +317,7 @@ export interface SecuritySummary {
 export async function securitySummary(db: D1Database, now: number): Promise<SecuritySummary> {
   const [failed, locked, global, recent] = await db.batch<Record<string, number | string>>([
     db.prepare("SELECT COUNT(*) AS n FROM login_events WHERE ok = 0 AND ts >= ?").bind(now - 86400),
-    db.prepare("SELECT COUNT(*) AS n FROM auth_failures WHERE key != ?1 AND key NOT LIKE 'api:%' AND key NOT LIKE 'pw:%' AND locked_until > ?2").bind(GLOBAL_KEY, now),
+    db.prepare("SELECT COUNT(*) AS n FROM auth_failures WHERE key NOT LIKE '*%' AND key NOT LIKE 'api:%' AND key NOT LIKE 'pw:%' AND key NOT LIKE 'link:%' AND locked_until > ?1").bind(now),
     db.prepare("SELECT locked_until FROM auth_failures WHERE key = ?1 AND locked_until > ?2").bind(GLOBAL_KEY, now),
     db.prepare("SELECT ts, ok, country, email FROM login_events ORDER BY ts DESC LIMIT 10"),
   ]);

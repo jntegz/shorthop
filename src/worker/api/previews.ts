@@ -1,14 +1,16 @@
 import { Hono } from "hono";
 import { PREVIEW_IMAGE_MAX_BYTES } from "../../shared/preview";
 import { fetchPreviewSchema } from "../../shared/schemas";
+import { readCapped } from "../body";
 import { validate, type AppEnv } from "../hono";
 import { fetchDestinationPreview, savePreviewImage } from "../preview";
 
 export const previewsApi = new Hono<AppEnv>()
   /** Uploads a preview image: the raw bytes as the body. The link refers to it once saved. */
   .post("/images", async (c) => {
-    if (Number(c.req.header("Content-Length") ?? 0) > PREVIEW_IMAGE_MAX_BYTES) return c.json({ error: "The image must be 5 MB or smaller." }, 413);
-    const result = await savePreviewImage(c.env, await c.req.arrayBuffer());
+    const body = await readCapped(c.req.raw, PREVIEW_IMAGE_MAX_BYTES);
+    if (!body) return c.json({ error: "The image must be 5 MB or smaller." }, 413);
+    const result = await savePreviewImage(c.env, body.buffer as ArrayBuffer);
     if (!result.ok) return c.json({ error: result.error }, result.status);
     const { key, width, height, type, bytes } = result;
     return c.json({ image: { kind: "upload" as const, key, width, height }, type, bytes }, 201);

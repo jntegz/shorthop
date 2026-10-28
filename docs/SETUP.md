@@ -88,7 +88,7 @@ Cloudflare's setup page lists about 20 fields. **Only the admin password needs y
 | `CF_ACCOUNT_ID` | Leave empty, or paste your account ID | Needed later to read click statistics |
 | `ADMIN_AUTH` | **Leave `password`** | Anything else locks the admin until Cloudflare Access is set up |
 | `SHORT_DOMAINS` | Leave empty | You add your domain after the deploy, together with a route (below) |
-| Everything else (`ACCESS_…`, `ADMIN_EMAIL`, `ADMIN_HOST`, `KV_CACHE_TTL`, `AE_DATASET`, `API_TOKEN_SCOPE`, `DIGEST_…`, `DEV_AUTH_…`) | Leave as it is | For features you turn on later (Access, email) or for local development |
+| Everything else (`ACCESS_…`, `ADMIN_EMAIL`, `ADMIN_HOST`, `KV_CACHE_TTL`, `AE_DATASET`, `AE_WEB_DATASET`, `API_TOKEN_SCOPE`, `DIGEST_…`, `DEV_AUTH_…`) | Leave as it is | For features you turn on later (Access, email) or for local development |
 | Build and deploy commands | Leave as they are | They come from Shorthop's `package.json` |
 
 So for a typical first install you type one thing, the password, and press the deploy button at the bottom of the page.
@@ -309,9 +309,10 @@ The setup creates these for you:
 | Workers KV namespace | `<worker>-links` | The read copy of every link, used by redirects |
 | D1 database | `<worker>` | Links (the source of truth), daily stats, settings, login state |
 | Analytics Engine dataset | `AE_DATASET` (default `<worker>_clicks`) | One data point per click; created on the first write |
+| Analytics Engine dataset | `AE_WEB_DATASET` (default `<worker>_web`) | One data point per website pageview or event (Websites); created on the first write |
 | Durable Object `ClickCap` | (none) | Exact click counts for links with a click limit; created on the first deploy, used only by those links |
 
-Three cron triggers run the Worker's jobs: the daily rollup (01:15 UTC), the weekly digest (Mondays 07:00 UTC) and the destination checks with webhook retries (every 30 minutes; the 02:00 UTC run does the daily cleanup of old login events, salts, expired keys, history and unused uploads instead). Each run is one invocation, sized to the plan ([Free or Paid](#plan)). Workers Free allows 5 triggers per account.
+Three cron triggers run the Worker's jobs: an hourly one at :15 (the daily rollup at 01:15 UTC, website alerts the other hours), the weekly digest (Mondays 07:00 UTC) and the destination checks with webhook retries (every 30 minutes). Three of the half-hourly runs do other work instead: 02:00 UTC the daily cleanup of old login events, salts, expired keys, history and unused uploads, with milestone events and the health alert; 02:30 the copy of website totals to D1; 03:00 exchange rates and payment matching. Each run is one invocation, sized to the plan ([Free or Paid](#plan)). Workers Free allows 5 triggers per account.
 
 It reads the KV and D1 ids back from Wrangler's list commands and writes them into `wrangler.jsonc`. A config without them can't be deployed: `npm run deploy` refuses it, because Wrangler would otherwise create new, empty resources.
 

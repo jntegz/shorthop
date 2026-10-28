@@ -130,6 +130,13 @@ function runSql(points: StoredPoint[], sql: string): Record<string, unknown>[] {
       const distinct = /^count\(DISTINCT (\w+)\)$/.exec(expr);
       if (sumIf) r[alias] = String(members.filter((p) => cond(p, sumIf[1]!)).length);
       else if (distinct) r[alias] = String(new Set(members.map((p) => col(p, distinct[1]!))).size);
+      else if (expr === "min(toUnixTimestamp(timestamp))") r[alias] = String(Math.min(...members.map((p) => p.ts)));
+      else if (expr === "sum(_sample_interval)") r[alias] = String(members.length);
+      else if (/^(sum|max)\(double\d+\)$/.test(expr)) {
+        const [, fn, name] = /^(sum|max)\((double\d+)\)$/.exec(expr)!;
+        const values = members.map((p) => Number(col(p, name!)));
+        r[alias] = String(fn === "sum" ? values.reduce((a, b) => a + b, 0) : Math.max(...values));
+      }
       else throw new Error(`mock AE: unknown aggregate ${expr}`);
     }
     return r;

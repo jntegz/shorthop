@@ -23,10 +23,18 @@ export interface PlanLimits {
   cronDeliveries: number;
   /** Analytics Engine query sets (about 14 fetches each) one rollup run may make; the rest waits for the next run. */
   rollupCollects: number;
+  /** Days of website page and goal totals one 02:30 run copies to D1 (three Analytics Engine queries and a D1 batch each). */
+  webRollupDays: number;
   /** Unused uploads removed per cleanup run: one KV delete and one D1 delete each. */
   prunedUploads: number;
   /** KV operations the purge's final sweep of leftover keys may spend. */
   purgeSweep: number;
+  /** Days of exchange rates one revenue run may fetch. */
+  fxDays: number;
+  /** Payments one revenue run converts (up to two rate lookups each). */
+  fxPending: number;
+  /** Unmatched payments one revenue run tries again (up to about eight D1 calls each). */
+  rematchPayments: number;
 }
 
 export const PAID: PlanLimits = {
@@ -37,8 +45,12 @@ export const PAID: PlanLimits = {
   checkLimit: 25,
   cronDeliveries: 6,
   rollupCollects: Number.POSITIVE_INFINITY,
+  webRollupDays: 30,
   prunedUploads: 200,
   purgeSweep: 900,
+  fxDays: 10,
+  fxPending: 500,
+  rematchPayments: 300,
 };
 
 // Each figure leaves room for the D1 reads and writes around it, so a run
@@ -51,8 +63,13 @@ export const FREE: PlanLimits = {
   checkLimit: 10,
   cronDeliveries: 2,
   rollupCollects: 2,
+  // The run has its invocation to itself: a week of days, so it catches up after a missed run.
+  webRollupDays: 7,
   prunedUploads: 15,
   purgeSweep: 40,
+  fxDays: 1,
+  fxPending: 5,
+  rematchPayments: 2,
 };
 
 export function isPaidPlan(env: Pick<Env, "WORKERS_PLAN">): boolean {

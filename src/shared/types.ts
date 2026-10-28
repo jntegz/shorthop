@@ -31,6 +31,8 @@ export interface LinkDTO {
   broken: boolean;
   /** The link that notice points to; null sends visitors to the site set in Settings. */
   replacement: { domain: string; slug: string } | null;
+  /** Where visitors go while the link is off: null shows the not-found page, "home" the main site (FALLBACK_URL). */
+  offRedirect: "home" | { domain: string; slug: string } | null;
   /** "Check that the destination works" is switched on (Link health). */
   monitor: boolean;
   /** Never checked, even when Link health checks every link. */
@@ -60,6 +62,8 @@ export interface LinkListItem extends LinkDTO {
   clicksTotal: number;
   /** The destination's last check; null when it was never checked. */
   check: { state: CheckState; problem: CheckProblem | null; httpStatus: number | null; checkedAt: number } | null;
+  /** Shared statistics pages that work right now (Link page → Share). */
+  shares: number;
 }
 
 /** Link health → destination checks. */
@@ -227,6 +231,7 @@ export const DIMS = [
   "browser",
   "referrer",
   "language",
+  "org",
   "bot",
   "route",
 ] as const;
@@ -452,6 +457,8 @@ export interface MeDTO {
     importRows: number;
     /** Which links Link health checks (the link form explains its switches by it). */
     checkScope: CheckScope;
+    /** Where "the main site" sends visitors (FALLBACK_URL). */
+    fallbackUrl: string;
   };
 }
 
@@ -630,4 +637,27 @@ export interface SystemHealthDTO {
   /** Where alerts go, or null when email can't be sent. */
   alertsTo: string | null;
   lastAlert: JobRun | null;
+}
+
+/** Periods a shared statistics page offers, shortest first. */
+export const SHARE_RANGES = ["7d", "30d", "90d", "365d", "all"] as const;
+export type ShareRange = (typeof SHARE_RANGES)[number];
+
+/** A read-only statistics page for one link (Link page → Share). */
+export interface ShareDTO {
+  id: string;
+  /** The page's address; null when it can't be decrypted (SESSION_SECRET changed). */
+  url: string | null;
+  status: "active" | "expired" | "revoked";
+  /** Unix seconds, or null until revoked. */
+  expiresAt: number | null;
+  protected: boolean;
+  /** Longest period viewers can pick; null for any. */
+  rangeLimit: ShareRange | null;
+  showRecent: boolean;
+  createdBy: string;
+  createdAt: number;
+  revokedAt: number | null;
+  views: number;
+  lastViewedAt: number | null;
 }

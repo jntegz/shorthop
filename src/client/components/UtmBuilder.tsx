@@ -16,8 +16,8 @@ export function UtmPreview({ target, template, slug }: { target: string; templat
   const cut = url.length > target.length && url.startsWith(target.split("#")[0]!) ? target.split("#")[0]!.length : -1;
   return (
     <div className="space-y-1.5 rounded-lg bg-bg px-3 py-2.5">
-      <p className="text-[11px] font-medium text-muted">Where a visitor from LinkedIn lands</p>
-      <p className="font-mono text-[11px] leading-relaxed break-all text-fg">
+      <p className="text-xs font-medium text-muted">Where a visitor from LinkedIn lands</p>
+      <p className="font-mono text-xs leading-relaxed break-all text-fg">
         {cut > 0 ? (
           <>
             <span className="text-muted">{url.slice(0, cut)}</span>
@@ -29,7 +29,7 @@ export function UtmPreview({ target, template, slug }: { target: string; templat
         )}
       </p>
       {kept.length ? (
-        <p className="text-[11px] text-warn">
+        <p className="text-xs text-warn">
           The destination already sets {kept.join(", ")}, so its own {kept.length === 1 ? "value is" : "values are"} kept and this one is skipped.
         </p>
       ) : null}
@@ -111,7 +111,7 @@ export function UtmBuilder({
             title={p.description}
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => insert(p.token)}
-            className="rounded-md border border-line bg-surface px-1.5 py-0.5 font-mono text-[11px] text-accent hover:border-accent/50"
+            className="rounded-md border border-line bg-surface px-1.5 py-0.5 font-mono text-xs text-accent hover:border-accent/50"
           >
             {p.token}
           </button>
@@ -122,7 +122,7 @@ export function UtmBuilder({
           <div key={f.key} className="space-y-1">
             <label htmlFor={`${id}-${f.key}`} className="flex items-baseline justify-between gap-2 text-xs">
               <span className="font-medium text-fg">{f.label}</span>
-              <span className="font-mono text-[10px] text-subtle">{f.key}</span>
+              <span className="font-mono text-xs text-subtle">{f.key}</span>
             </label>
             <Input
               id={`${id}-${f.key}`}
@@ -132,7 +132,7 @@ export function UtmBuilder({
               onChange={(e) => setField(f.key, e.target.value)}
               {...track((v) => setField(f.key, v))}
             />
-            <p className="text-[11px] text-muted">{f.hint}</p>
+            <p className="text-xs text-muted">{f.hint}</p>
           </div>
         ))}
       </div>
@@ -163,7 +163,7 @@ export function UtmBuilder({
           <Plus className="size-3.5" /> Add another parameter
         </button>
         {template ? (
-          <button type="button" onClick={() => void copy(template, "Template copied")} className={cn("inline-flex min-w-0 items-center gap-1 text-[11px] text-muted hover:text-fg")} title="Copy the template">
+          <button type="button" onClick={() => void copy(template, "Template copied")} className={cn("inline-flex min-w-0 items-center gap-1 text-xs text-muted hover:text-fg")} title="Copy the template">
             <Copy className="size-3 shrink-0" />
             <span className="max-w-72 truncate font-mono">{template}</span>
           </button>

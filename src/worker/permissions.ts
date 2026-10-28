@@ -12,6 +12,7 @@ type Need =
   | "signed-in"
   | Permission
   | { any: Permission[] }
+  | { all: Permission[] }
   /** Admins only. */
   | "admin"
   /** Admins and managers (who are limited further in src/worker/api/users.ts). */
@@ -48,6 +49,11 @@ export const RULES: Record<string, Rule> = {
   "POST /import": need("links.create"),
   "POST /resync": need({ any: ["links.edit", "settings.manage"] }),
   "GET /export/links.csv": signedIn,
+  // Shared statistics pages: they publish a link's stats, so both are needed.
+  "GET /links/:domain/:slug/shares": need({ all: ["stats.view", "links.edit"] }),
+  "POST /links/:domain/:slug/shares": need({ all: ["stats.view", "links.edit"] }),
+  "PATCH /shares/:id": need({ all: ["stats.view", "links.edit"] }),
+  "DELETE /shares/:id": need({ all: ["stats.view", "links.edit"] }),
 
   // Statistics, and missed visits (which belong to Link health).
   "GET /stats/overview": need("stats.view"),
@@ -57,6 +63,11 @@ export const RULES: Record<string, Rule> = {
   "GET /stats/export.csv": need("stats.view"),
   "GET /stats/misses": need("health.manage"),
   "POST /stats/misses/clear": need("health.manage"),
+  "POST /stats/misses/ignore": need("health.manage"),
+  "POST /stats/misses/unignore": need("health.manage"),
+  "GET /stats/misses/ignored": need("health.manage"),
+  "GET /stats/misses/ignored.csv": need("health.manage"),
+  "POST /stats/misses/ignored/clear": need("health.manage"),
   "GET /stats/misses/export.csv": need("health.manage"),
   "PUT /stats/misses/policy": need("settings.manage"),
 
@@ -100,7 +111,8 @@ export const RULES: Record<string, Rule> = {
   "POST /settings/rollup": need("settings.manage"),
   "GET /settings/health": need("settings.manage"),
   "POST /settings/health/test-alert": need("settings.manage"),
-  "GET /settings/digest/preview": need("settings.manage"),
+  // The digest shows click statistics.
+  "GET /settings/digest/preview": need({ all: ["settings.manage", "stats.view"] }),
   "POST /settings/digest/test": need("settings.manage"),
   // Which email secrets are set: never for a key or token that may sit in a script.
   "GET /settings/mail": session("settings.manage"),
@@ -129,6 +141,42 @@ export const RULES: Record<string, Rule> = {
   "GET /keys": session("api.use"),
   "POST /keys": session("api.use"),
   "DELETE /keys/:id": session("api.use"),
+
+  // Tracked websites and their revenue. Traffic is statistics; money needs revenue.view.
+  "GET /sites": need("stats.view"),
+  "POST /sites": need("sites.manage"),
+  "GET /sites/by-link/:domain/:slug": need("revenue.view"),
+  "GET /sites/:id": need("stats.view"),
+  "PATCH /sites/:id": need("sites.manage"),
+  "DELETE /sites/:id": need("sites.manage"),
+  "GET /sites/:id/overview": need("stats.view"),
+  "GET /sites/:id/breakdown": need("stats.view"),
+  "GET /sites/:id/events": need("stats.view"),
+  "GET /sites/:id/goal-props": need("stats.view"),
+  "GET /sites/:id/live": need("stats.view"),
+  "GET /sites/:id/peak-hours": need("stats.view"),
+  "GET /sites/:id/engagement": need("stats.view"),
+  "GET /sites/:id/page-speed": need("stats.view"),
+  "GET /sites/:id/purchase-paths": need("revenue.view"),
+  "GET /sites/:id/customer-value": need("revenue.view"),
+  "GET /sites/:id/install-status": need("stats.view"),
+  "GET /sites/:id/payments": need("revenue.view"),
+  "GET /sites/:id/payments.csv": need("revenue.view"),
+  "GET /sites/:id/subscriptions": need("revenue.view"),
+  "GET /sites/:id/visitors/:visitor": need("revenue.view"),
+  "POST /sites/:id/rematch": need("sites.manage"),
+  "GET /sites/:id/funnels": need("stats.view"),
+  "POST /sites/:id/funnels": need("sites.manage"),
+  "DELETE /sites/:id/funnels/:funnel": need("sites.manage"),
+  "GET /sites/:id/funnels/:funnel/report": need("stats.view"),
+  "GET /sites/:id/connections": need("sites.manage"),
+  "POST /sites/:id/connections": need("sites.manage"),
+  "PATCH /sites/:id/connections/:conn": need("sites.manage"),
+  "DELETE /sites/:id/connections/:conn": need("sites.manage"),
+  "POST /sites/:id/connections/:conn/import": need("sites.manage"),
+  "POST /sites/:id/connections/:conn/check": need("sites.manage"),
+  "POST /sites/:id/payments": need("sites.manage"),
+  "POST /sites/:id/identify": need("sites.manage"),
 };
 
 export function allowed(actor: Actor, rule: Rule): boolean {
@@ -138,7 +186,7 @@ export function allowed(actor: Actor, rule: Rule): boolean {
   if (n === "admin") return actor.role === "admin";
   if (n === "people") return actor.role === "admin" || actor.role === "manager";
   if (n === "self-non-owner") return !actor.owner;
-  if (typeof n === "object") return n.any.some((p) => actor.permissions.includes(p));
+  if (typeof n === "object") return "any" in n ? n.any.some((p) => actor.permissions.includes(p)) : n.all.every((p) => actor.permissions.includes(p));
   return actor.permissions.includes(n);
 }
 

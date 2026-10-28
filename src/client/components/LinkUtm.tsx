@@ -17,7 +17,7 @@ export function TemplateChips({ template }: { template: string }) {
   return (
     <span className="flex flex-wrap gap-1">
       {pairs.map(([k, v]) => (
-        <span key={k} className="rounded-md bg-surface-2 px-1.5 py-0.5 text-[11px]">
+        <span key={k} className="rounded-md bg-surface-2 px-1.5 py-0.5 text-xs">
           <span className="text-muted">{k}</span> <span className="font-medium text-fg">{v}</span>
         </span>
       ))}
@@ -112,7 +112,7 @@ export function LinkUtm({
         <>
           <UtmBuilder id="link-utm" value={template} onChange={onTemplate} target={target} slug={slug} />
           {matching ? (
-            <p className="text-[11px] text-muted">Uses a copy of “{matching.name}”: editing the preset later won't change this link.</p>
+            <p className="text-xs text-muted">Uses a copy of “{matching.name}”: editing the preset later won't change this link.</p>
           ) : template && manage ? (
             naming === null ? (
               <button type="button" className="inline-flex items-center gap-1 text-xs font-medium text-accent hover:underline" onClick={() => setNaming("")}>

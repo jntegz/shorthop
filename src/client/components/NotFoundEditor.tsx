@@ -129,7 +129,7 @@ export function NotFoundEditor({ domain }: { domain: string }) {
         title="Not-found page"
         description="What visitors see when a link doesn't exist, is disabled or has expired. One page for every short domain."
       />
-      <div className="grid gap-6 px-5 pb-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+      <div className="grid gap-6 px-4 pb-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         <div className="space-y-4">
           <Field label="Heading" htmlFor="nf-heading" error={draft.heading.trim() ? null : "Add a heading"}>
             <Input id="nf-heading" maxLength={120} value={draft.heading} onChange={(e) => set("heading", e.target.value)} />
@@ -207,7 +207,7 @@ export function NotFoundEditor({ domain }: { domain: string }) {
               Open the live page
             </a>
           </div>
-          <iframe title="Not-found page preview" sandbox="" srcDoc={html} className="h-[520px] w-full rounded-xl border border-line bg-white" />
+          <iframe title="Not-found page preview" sandbox="" srcDoc={html} className="h-[520px] w-full rounded-md border border-line bg-white" />
         </div>
       </div>
     </Card>

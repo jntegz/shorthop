@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Copy, Eye, EyeOff, KeyRound, RotateCcw, Wand2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
-import { LINK_ACCESS_HOURS, LINK_PASSWORD_MAX, MAX_CLICK_LIMIT } from "../../shared/protection";
+import { LINK_ACCESS_HOURS, LINK_PASSWORD_MAX, LINK_PASSWORD_MIN, MAX_CLICK_LIMIT } from "../../shared/protection";
 import { api, call, keys } from "../api";
 import { num } from "../lib/format";
 import { cn, copy } from "../lib/utils";
@@ -81,7 +81,7 @@ export function LinkProtection({
   const editingPassword = mode === "set";
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       <div className="space-y-3">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="space-y-0.5">
@@ -138,7 +138,7 @@ export function LinkProtection({
                   maxLength={LINK_PASSWORD_MAX}
                   className="pr-10"
                   value={password}
-                  placeholder={hasPassword ? "New password" : "At least 4 characters"}
+                  placeholder={hasPassword ? "New password" : `At least ${LINK_PASSWORD_MIN} characters`}
                   onChange={(e) => onPassword(e.target.value)}
                   autoFocus
                 />

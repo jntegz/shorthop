@@ -3,7 +3,7 @@
 // same definitions to show only what someone can do.
 
 /** Everything someone can be allowed to do beyond viewing and copying links. */
-export const PERMISSIONS = ["links.create", "links.edit", "links.delete", "stats.view", "health.manage", "settings.manage", "api.use"] as const;
+export const PERMISSIONS = ["links.create", "links.edit", "links.delete", "stats.view", "revenue.view", "sites.manage", "health.manage", "settings.manage", "api.use"] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 
 export const ROLES = ["admin", "manager", "user"] as const;
@@ -14,6 +14,8 @@ export const PERMISSION_INFO: Record<Permission, { label: string; description: s
   "links.edit": { label: "Edit links", description: "Change any setting, turn links on or off, retire them and restore older versions." },
   "links.delete": { label: "Delete links", description: "Delete links and bring deleted ones back." },
   "stats.view": { label: "See statistics", description: "Overview, Full statistics and each link's statistics." },
+  "revenue.view": { label: "See revenue", description: "Payments, revenue and customers of tracked websites, and revenue per short link." },
+  "sites.manage": { label: "Manage websites", description: "Add tracked websites, change their settings and connect payment providers." },
   "health.manage": { label: "Link health & misses", description: "Check destinations and see and clear missed visits." },
   "settings.manage": { label: "Workspace settings", description: "Every setting except people and security: domains, UTM, pages, email, webhooks." },
   "api.use": { label: "Personal API keys", description: "Create API keys for scripts and tools. A key can only do what its owner can." },

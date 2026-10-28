@@ -14,6 +14,7 @@ export const HISTORY_FIELDS = [
   "expires_at",
   "broken",
   "replacement",
+  "off_redirect",
   "utm",
   "utm_template",
   "pass_query",
@@ -37,6 +38,8 @@ export interface Snapshot {
   broken: number;
   /** "domain/slug" or null. */
   replacement: string | null;
+  /** "home", "domain/slug" or null. Versions saved before it existed lack it. */
+  off_redirect?: string | null;
   monitor: number;
   /** Smart routing JSON, or null. Versions saved before routing existed lack it. */
   routing?: string | null;
@@ -112,6 +115,7 @@ export function snapshotOf<T extends StoredSnapshot>(row: T): StoredSnapshot {
     notes: row.notes,
     broken: row.broken,
     replacement: row.replacement,
+    off_redirect: row.off_redirect ?? null,
     monitor: row.monitor ?? 1,
     routing: row.routing ?? null,
     preview: row.preview ?? null,
@@ -136,6 +140,7 @@ export const FIELD_LABEL: Record<HistoryField, string> = {
   expires_at: "Expires",
   broken: "No longer working",
   replacement: "Replacement link",
+  off_redirect: "While off, visitors go to",
   utm: "UTM parameters",
   utm_template: "UTM template",
   pass_query: "Pass query parameters",

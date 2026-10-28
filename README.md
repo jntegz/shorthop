@@ -29,6 +29,8 @@ A personal URL shortener that runs on one Cloudflare Worker. Short links on your
 - **Password-protected links and click limits:** visitors enter a password first, or a link stops after a set number of clicks, counted exactly by a Durable Object. Bots and previews don't count.
 - **Links that no longer work:** mark one as retired and pick a replacement. Visitors get a page with a button to it, or are sent on to your site after a few seconds. Unknown slugs get your own 404 page.
 - **Link history:** every change is saved as a version with who made it, and any earlier version can be restored. Deleted links can be brought back for 90 days.
+- **Turning a link off:** Disable asks where visitors go meanwhile: the 404 page, your site, or another of your links. Automatic checks pause while it's off.
+- **Shared statistics:** a read-only statistics page for one link at `/_share/<id>.<secret>`, with an optional end date, password, period limit and light or dark theme. It never shows the destination, history or revenue.
 - **Import and export:** CSV import with column mapping, for moving from another shortener (old click counts are kept), and CSV export of links and daily stats.
 
 ### Analytics
@@ -41,9 +43,17 @@ A personal URL shortener that runs on one Cloudflare Worker. Short links on your
 ### Keeping links working
 
 - **Link health:** destination checks for the links you pick (**Check that the destination works**, off by default) or for all links, once you turn automatic checking on and choose how often. **Never check this link** keeps a link out either way. A destination that fails 3 times in a row sends one email and gets a Fix dialog. Sites that refuse automated checks show as "can't check" and never alert.
-- **Missed visits:** a report of slugs people tried that don't exist, with scanners and bots kept apart, so you can create the link someone mistyped.
+- **Missed visits:** a report of slugs people tried that don't exist, with scanners and bots kept apart, so you can create the link someone mistyped, send the path to an existing link, or ignore it for good (the ignored list exports and imports as CSV).
 - **System status:** setup checks for storage, analytics, email, domains and sign-in, with an alert email when something breaks.
 - **Weekly digest and alerts:** by Cloudflare Email Service, Resend, Emailit, Postmark, SendGrid, Mailgun, any other JSON email API, or a signed webhook.
+
+### Websites and revenue
+
+- **Website analytics:** a small script for your own sites (`/_t/script.js`, about 8 KB compressed) records visits, sources and channels, pages, goals, scroll goals and outbound clicks, plus page speed (LCP, CLS, INP). Cookieless by default (a daily hash, nothing stored in the browser), or recognising returning visitors with a first-party ID after consent, with an optional built-in consent banner. A site can respect Global Privacy Control and Do Not Track.
+- **Revenue from your payment provider:** payments from Stripe, Paddle, Lemon Squeezy, Dodo Payments, Creem, Gumroad, FastSpring and PayPal arrive as verified webhooks, are converted to the site's currency at the day's ECB rate, and are matched to the visit that led to them. Revenue by channel, campaign, landing page, country or device adds up to the total. Refunds and disputes follow their charge; subscriptions give MRR, churn and new against renewal revenue. Past payments can be imported through each provider's API except PayPal's.
+- **Revenue per short link:** short links to a tracked site carry a signed click token (`?sh_c=`), so each link shows the visits and revenue it brought.
+- **Site dashboard:** the path to money (visits, goals, checkouts, payments), funnels, peak hours, reading time and scroll depth, path to purchase, customer value by first source, AI-assistant landing pages, and location, device and network breakdowns. "Direct" is split into in-app browsers, checkout returns, shared links and typed visits. Page, goal and outbound totals are copied to D1 daily, so they outlast Analytics Engine's 90 days.
+- **Alerts:** an email for each payment, hourly traffic-spike alerts, a daily summary, and `site.payment` / `site.traffic_spike` webhooks; the weekly digest lists each site's visitors and revenue. Seeing revenue needs its own permission.
 
 ### People and automation
 
@@ -179,6 +189,7 @@ npm run types            # then regenerate worker-configuration.d.ts
 | `ADMIN_EMAIL` | var | The Access identities allowed in (comma-separated) |
 | `CF_ACCOUNT_ID` | var | For Analytics Engine SQL queries |
 | `AE_DATASET` | var | The Analytics Engine dataset name (letters, digits, `_`) |
+| `AE_WEB_DATASET` | var | The Analytics Engine dataset for website visits (the `WEB` binding; letters, digits, `_`) |
 | `WORKERS_PLAN` | var | `free` or `paid`. Sizes bulk work (republish pages, import batches, destination checks per run) to the plan's 50 or 10,000 calls per invocation, and System status checks the password hash cost against it |
 | `API_TOKEN_SCOPE` | var | `create` (default): the API token reads, creates links and imports new ones. `full`: it can also change and delete links and settings. Anything else means `create` |
 | `KV_CACHE_TTL` | var | Edge cache for slug lookups in seconds (default 60; values under 30 fall back to 60) |
@@ -205,6 +216,10 @@ npm run types            # then regenerate worker-configuration.d.ts
 |---|---|
 | `/{slug}` | KV lookup of `<domain>/<slug>`, then a 302 (to the destination smart routing picks), or the 404 page (logged as a miss). A password-protected link shows its password form first (POST to the same path); a link at its click limit shows a "limit reached" page; preview crawlers get the link's social preview. A link marked "no longer working" gets a 410 page: a button to its replacement link, or, without a usable one, a redirect after a few seconds to the site set in Settings |
 | `/_og/<key>` | An uploaded social-preview image. Also served on `ADMIN_HOST`, for the editor |
+| `/_t/script.js` | The website analytics script, on every host (CORS `*`, cached an hour) |
+| `/_t/e` | Its collector: one event per POST. The Origin and page must belong to the site, bots are dropped, and `COLLECT_LIMITER` brakes floods per network |
+| `/_pay/<provider>/<connection>` | Payment webhooks, checked with the connection's secret; each event is processed once. `PUBLIC_LIMITER` per network before any lookup |
+| `/_share/<id>.<secret>` | A shared statistics page, on the admin host only. Read-only, optionally password-protected, `PUBLIC_LIMITER` per network |
 | `/` | 302 to `FALLBACK_URL` (or to `/_admin/` on a separate admin host) |
 | `/_admin` | 301 to `/_admin/` |
 | `/_admin/login`, `/_admin/logout` | The password step: a server-rendered form, lockouts, signed session cookie |

@@ -37,15 +37,19 @@ export function DestinationCheck({ link, onMarkBroken }: { link: LinkDTO; onMark
     },
     onError: (e) => toast.error(e.message),
   });
-  const turnOn = useMutation({
-    mutationFn: () => call(api.links[":domain"][":slug"].$patch({ param: { domain, slug }, json: { monitor: true } })),
-    onSuccess: (data) => {
+  const setChecks = useMutation({
+    mutationFn: (on: boolean) => call(api.links[":domain"][":slug"].$patch({ param: { domain, slug }, json: on ? { monitor: true } : { monitor: false } })),
+    onSuccess: (data, on) => {
       qc.setQueryData(keys.link(domain, slug), data);
       void qc.invalidateQueries({ queryKey: keys.allLinks });
       void qc.invalidateQueries({ queryKey: keys.checks, exact: true });
-      toast.success("Destination checks turned on", {
-        description: q.data?.automatic ? "It's checked within 30 minutes, or press Check now." : "Automatic checking is off, so press Check now, or turn it on under Link health.",
-      });
+      if (on) {
+        toast.success("Automatic checks turned on", {
+          description: q.data?.automatic ? "It's checked within 30 minutes, or press Check now." : "Automatic checking is off under Link health, so press Check now, or turn it on there.",
+        });
+      } else {
+        toast.success("Automatic checks turned off", { description: "The link keeps redirecting visitors as before." });
+      }
     },
     onError: (e) => toast.error(e.message),
   });
@@ -59,7 +63,7 @@ export function DestinationCheck({ link, onMarkBroken }: { link: LinkDTO; onMark
   return (
     <Card className="mb-5">
       <div className="flex flex-wrap items-start gap-4 p-5">
-        <span className={cn("flex size-10 shrink-0 items-center justify-center rounded-xl", state ? CHECK_STYLE[state].soft : "bg-surface-2", state ? CHECK_STYLE[state].text : "text-muted")}>
+        <span className={cn("flex size-10 shrink-0 items-center justify-center rounded-md", state ? CHECK_STYLE[state].soft : "bg-surface-2", state ? CHECK_STYLE[state].text : "text-muted")}>
           {state ? (() => {
             const Icon = CHECK_STYLE[state].icon;
             return <Icon className="size-5" aria-hidden />;
@@ -71,6 +75,7 @@ export function DestinationCheck({ link, onMarkBroken }: { link: LinkDTO; onMark
             <InfoTip help={LINK_HELP.monitor} />
             {state && data?.monitored ? <CheckBadge state={state} /> : null}
           </div>
+          <p className="text-xs text-subtle">Automatic checks only look at the destination. Turning them on or off never changes where visitors go.</p>
           {q.isPending ? (
             <div className="mt-2">
               <Spinner className="size-4" />
@@ -129,8 +134,13 @@ export function DestinationCheck({ link, onMarkBroken }: { link: LinkDTO; onMark
         </div>
         <div className="flex flex-wrap gap-2">
           {data && (link.neverCheck || (data.scope === "selected" && !link.monitor)) && can("links.edit") ? (
-            <Button variant="outline" size="sm" onClick={() => turnOn.mutate()} loading={turnOn.isPending}>
-              <BellRing /> Turn checks on
+            <Button variant="outline" size="sm" onClick={() => setChecks.mutate(true)} loading={setChecks.isPending}>
+              <BellRing /> Turn automatic checks on
+            </Button>
+          ) : null}
+          {data && link.active && link.monitor && data.scope === "selected" && can("links.edit") ? (
+            <Button variant="ghost" size="sm" onClick={() => setChecks.mutate(false)} loading={setChecks.isPending}>
+              Turn automatic checks off
             </Button>
           ) : null}
           {data?.monitored && failing && !link.broken && can("links.edit") ? (

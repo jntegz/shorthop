@@ -43,7 +43,7 @@ export function Stats() {
         <div className="flex items-center gap-2 text-xs text-muted">
           <CalendarDays className="size-4" />
           {s ? `${day(s.from)} – ${day(s.to)}` : "All your links"}
-          <span className="rounded-md border border-line bg-surface px-1.5 py-0.5 text-[10px]">UTC</span>
+          <span className="rounded-md border border-line bg-surface px-1.5 py-0.5 text-xs">UTC</span>
         </div>
         <PeriodPicker value={period} onChange={setPeriod} />
         {s?.aeAvailable && includesToday(period) ? (
@@ -80,11 +80,11 @@ export function Stats() {
             {!s.topLinks.length ? (
               <Empty icon={<Link2 />} title="No clicks in this period" />
             ) : (
-              <ul className="px-5 pb-3">
+              <ul className="px-4 pb-4">
                 {s.topLinks.map((l, i) => (
                   <li key={linkKey(l.domain, l.slug)} className="border-b border-line last:border-0">
                     <Link to={linkPath(l)} className="group flex items-center gap-3 rounded-lg py-3 hover:bg-bg">
-                      <span className="w-5 text-[11px] text-subtle">{i + 1}</span>
+                      <span className="w-5 text-xs text-subtle">{i + 1}</span>
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-sm font-semibold text-fg">{label(l)}</p>
                         <p className="mt-0.5 truncate text-xs text-muted">{l.target ? hostOf(l.target) : "Deleted link"}</p>
@@ -112,6 +112,7 @@ export function Stats() {
             <Breakdown title="Operating systems" rows={s.dims.os} />
             <Breakdown title="Browsers" rows={s.dims.browser} />
             <Breakdown title="Languages" rows={s.dims.language} kind="language" />
+            <Breakdown title="Networks" description="Who runs the visitor's network: usually an internet provider, sometimes a company" rows={s.dims.org} />
             <Breakdown title="Bots & link previews" description="Still redirected, never counted as clicks" rows={s.dims.bot} metric="bots" />
           </div>
         </div>
@@ -132,7 +133,7 @@ export function Stats() {
             <Spinner />
           </div>
         ) : recent.isError || recent.data.error ? (
-          <div className="px-5 pb-5">
+          <div className="px-4 pb-4">
             <Notice tone="danger">Couldn’t load recent hits: {recent.isError ? recent.error.message : recent.data.error}</Notice>
           </div>
         ) : !recent.data.aeAvailable ? (
@@ -166,7 +167,7 @@ export function Stats() {
                       )}
                     </td>
                     <td className="py-1.5">
-                      {h.event === "bot" ? <Badge tone="warn">{h.botName || "Bot"}</Badge> : h.event === "miss" ? <Badge>Miss</Badge> : <Badge tone="good">Click</Badge>}
+                      {h.event === "bot" ? <Badge tone="warn">{h.botName || "Bot"}</Badge> : h.event === "miss" ? <span className="text-xs text-muted">Miss</span> : <span className="text-xs text-muted">Click</span>}
                     </td>
                     <td className="py-1.5">
                       {flag(h.country)} {h.city ? `${h.city}, ` : ""}

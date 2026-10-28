@@ -171,11 +171,11 @@ async function deleteProbesThrough(db: D1Database, day: string): Promise<void> {
 }
 
 /**
- * Applies the clears to the stored rollups (so a hidden miss can't take a
- * visible path's place), and, once the owner has saved a policy, enforces it:
- * drops misses older than the retention, all noise when it isn't tracked, and
- * the oldest paths beyond each limit. Returns how many paths were removed
- * entirely by the policy.
+ * Deletes the stored misses that clears hide, and those of ignored paths (so they can't take a visible
+ * path's place, and a rollup of the clearing day can't bring them back). With
+ * a policy, also enforces it: drops misses older than the retention, all noise
+ * when it isn't tracked, and the oldest paths beyond each limit. Returns how
+ * many paths were removed entirely by the policy.
  */
 export async function pruneMisses(env: Env, policy: MissPolicy | null, now = new Date()): Promise<number> {
   const db = env.DB;
@@ -192,6 +192,11 @@ export async function pruneMisses(env: Env, policy: MissPolicy | null, now = new
       .bind(JSON.stringify(cleared.links)),
   ]);
   if (cleared.probes !== null) await deleteProbesThrough(db, cleared.probes);
+  const ignored = Object.keys(await ignoredMisses(db)).map((key) => {
+    const i = key.indexOf("/");
+    return { domain: key.slice(0, i), slug: key.slice(i + 1) };
+  });
+  if (ignored.length) await db.batch(deleteMissStmts(db, ignored));
   if (!policy) return 0;
   const { dropped: drop } = keptByPolicy(policy, await storedMissPaths(db), (r) => missKind(r.slug, r.hits, r.has_link === 1));
   if (drop.length) await db.batch(deleteMissStmts(db, drop));
@@ -326,4 +331,38 @@ export async function clearMisses(env: Env, target: "all" | "probes" | { domain:
     ...(links ? deleteMissStmts(env.DB, links) : [env.DB.prepare("DELETE FROM daily_dims WHERE dim = 'miss'")]),
     setSettingStmt(env.DB, MISSES_CLEARED, JSON.stringify(next)),
   ]);
+}
+
+const MISSES_IGNORED = "misses_ignored";
+
+/** Paths the owner ignored: linkKey → the UTC day they did. Hidden from the report and digest, and their counts aren't kept. */
+export async function ignoredMisses(db: D1Database): Promise<Record<string, string>> {
+  try {
+    const v = JSON.parse((await getSetting(db, MISSES_IGNORED)) ?? "{}") as unknown;
+    return v && typeof v === "object" ? Object.fromEntries(Object.entries(v).filter(([, d]) => isDay(d))) : {};
+  } catch {
+    return {};
+  }
+}
+
+/** Ignores these paths from now on and deletes their stored counts. */
+export async function ignoreMisses(env: Env, links: { domain: string; slug: string; since?: string }[], now = new Date()): Promise<void> {
+  const next = await ignoredMisses(env.DB);
+  const today = utcDate(now);
+  for (const l of links) next[linkKey(l.domain, l.slug)] ??= l.since && l.since <= today ? l.since : today;
+  await env.DB.batch([...deleteMissStmts(env.DB, links), setSettingStmt(env.DB, MISSES_IGNORED, JSON.stringify(next))]);
+}
+
+/** Shows every ignored path again. */
+export async function unignoreAllMisses(env: Env): Promise<number> {
+  const count = Object.keys(await ignoredMisses(env.DB)).length;
+  await setSettingStmt(env.DB, MISSES_IGNORED, "{}").run();
+  return count;
+}
+
+/** Shows these paths again; their visits count from now on. */
+export async function unignoreMisses(env: Env, links: { domain: string; slug: string }[]): Promise<void> {
+  const next = await ignoredMisses(env.DB);
+  for (const l of links) delete next[linkKey(l.domain, l.slug)];
+  await setSettingStmt(env.DB, MISSES_IGNORED, JSON.stringify(next)).run();
 }

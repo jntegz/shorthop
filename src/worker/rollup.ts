@@ -178,12 +178,7 @@ SELECT ?1, json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extrac
 FROM json_each(?2)`;
 
 /** Replaces one day's rollup rows in a single transaction. */
-async function writeDay(
-  db: D1Database,
-  date: string,
-  stats: StatsRow[],
-  dims: DimRow[],
-): Promise<void> {
+function dayStmts(db: D1Database, date: string, stats: StatsRow[], dims: DimRow[]): D1PreparedStatement[] {
   const stmts: D1PreparedStatement[] = [
     db.prepare("DELETE FROM daily_stats WHERE date = ?").bind(date),
     db.prepare("DELETE FROM daily_dims WHERE date = ?").bind(date),
@@ -194,8 +189,20 @@ async function writeDay(
   for (const chunk of jsonChunks(dims.map((r) => [r.domain, r.slug, r.dim, r.value, r.clicks, r.uniques, r.bots]))) {
     stmts.push(db.prepare(INSERT_DIMS).bind(date, chunk));
   }
-  stmts.push(setSettingStmt(db, "last_rolled", date));
+  return stmts;
+}
+
+/** Replaces the days start…end in one batch (one D1 call a window, not one a day), then moves last_rolled to end. */
+async function writeDays(db: D1Database, start: string, end: string, stats: StatsRow[], dims: DimRow[]): Promise<string[]> {
+  const days: string[] = [];
+  const stmts: D1PreparedStatement[] = [];
+  for (let d = start; d <= end; d = addDays(d, 1)) {
+    days.push(d);
+    stmts.push(...dayStmts(db, d, stats.filter((r) => r.date === d), dims.filter((r) => r.date === d)));
+  }
+  stmts.push(setSettingStmt(db, "last_rolled", end));
   await db.batch(stmts);
+  return days;
 }
 
 export interface RollupResult {
@@ -251,16 +258,7 @@ export async function runRollup(env: Env, now: Date = new Date()): Promise<Rollu
         collects++;
         chunk = await collect(start, end);
       }
-      const { stats, dims } = chunk;
-      for (let d = start; d <= end; d = addDays(d, 1)) {
-        await writeDay(
-          env.DB,
-          d,
-          stats.filter((r) => r.date === d),
-          dims.filter((r) => r.date === d),
-        );
-        rolled.push(d);
-      }
+      rolled.push(...(await writeDays(env.DB, start, end, chunk.stats, chunk.dims)));
       start = addDays(end, 1);
     }
   }

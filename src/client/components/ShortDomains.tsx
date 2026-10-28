@@ -166,7 +166,7 @@ export function ShortDomains({
             </Notice>
           </div>
         ) : null}
-        <ul className={domains.length || retired.length ? "divide-y divide-line rounded-xl border border-line" : "hidden"}>
+        <ul className={domains.length || retired.length ? "divide-y divide-line rounded-md border border-line" : "hidden"}>
           {[...domains, ...retired].map((d) => (
             <li key={d} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 text-sm">
               <Globe2 className="size-4 shrink-0 text-accent" />

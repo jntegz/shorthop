@@ -92,7 +92,7 @@ function SystemStatusCard() {
           <Spinner />
         </div>
       ) : q.isError ? (
-        <p className="px-5 pb-5 text-sm text-danger">The status check itself failed: {q.error.message}</p>
+        <p className="px-4 pb-4 text-sm text-danger">The status check itself failed: {q.error.message}</p>
       ) : (
         <ul className="divide-y divide-line border-t border-line">
           {h!.checks.map((c) => {
@@ -145,7 +145,7 @@ export function SystemStatusBanner() {
     }
   };
   return (
-    <div role="status" className={cn("mb-5 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border px-4 py-3 text-sm", data.status === "error" ? "border-danger/30 bg-danger-soft" : "border-warn/30 bg-warn-soft")}>
+    <div role="status" className={cn("mb-5 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border px-4 py-3 text-sm", data.status === "error" ? "border-danger/30 bg-danger-soft" : "border-warn/30 bg-warn-soft")}>
       {data.status === "error" ? <XCircle className="size-4 text-danger" /> : <AlertTriangle className="size-4 text-warn" />}
       <span className="font-medium text-fg">{problems.length === 1 ? `${problems[0]!.label} needs attention.` : `${problems.length} system checks need attention.`}</span>
       <Link to="/#status" className="text-accent underline underline-offset-2">

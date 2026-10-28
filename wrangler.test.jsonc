@@ -15,11 +15,16 @@
   },
   "kv_namespaces": [{ "binding": "LINKS" }],
   "d1_databases": [{ "binding": "DB", "database_name": "shorthop-test", "migrations_dir": "migrations" }],
-  "analytics_engine_datasets": [{ "binding": "CLICKS", "dataset": "shorthop_test_clicks" }],
+  "analytics_engine_datasets": [
+    { "binding": "CLICKS", "dataset": "shorthop_test_clicks" },
+    { "binding": "WEB", "dataset": "shorthop_test_web" }
+  ],
   "ratelimits": [
     { "name": "AUTH_LIMITER", "namespace_id": "1001", "simple": { "limit": 10, "period": 60 } },
     { "name": "LOGIN_LIMITER", "namespace_id": "1002", "simple": { "limit": 5, "period": 60 } },
-    { "name": "LINK_PASSWORD_LIMITER", "namespace_id": "1003", "simple": { "limit": 10, "period": 60 } }
+    { "name": "LINK_PASSWORD_LIMITER", "namespace_id": "1003", "simple": { "limit": 10, "period": 60 } },
+    { "name": "PUBLIC_LIMITER", "namespace_id": "1004", "simple": { "limit": 120, "period": 60 } },
+    { "name": "COLLECT_LIMITER", "namespace_id": "1005", "simple": { "limit": 300, "period": 60 } }
   ],
   "durable_objects": { "bindings": [{ "name": "CLICK_CAPS", "class_name": "ClickCap" }] },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ClickCap"] }],
@@ -37,6 +42,7 @@
     "FALLBACK_URL": "https://example.com",
     "KV_CACHE_TTL": "60",
     "AE_DATASET": "shorthop_test_clicks",
+    "AE_WEB_DATASET": "shorthop_test_web",
     // Paid: the large pages most tests expect. Free-plan sizing has its own tests (links-api.test.ts).
     "WORKERS_PLAN": "paid",
     // Most API tests change links with the token; auth.test.ts covers the default scope.

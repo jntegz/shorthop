@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BellOff, CornerDownRight, ExternalLink, Globe2, Power, RefreshCw, Search, Settings2, Wrench, X } from "lucide-react";
+import { BellOff, CornerDownRight, ExternalLink, Globe2, Pencil, Power, RefreshCw, Search, Settings2, Wrench, X } from "lucide-react";
 import { useDeferredValue, useMemo, useState } from "react";
-import { Link, useSearchParams } from "react-router";
+import { Link, useNavigate, useSearchParams } from "react-router";
 import { toast } from "sonner";
 import {
   CHECK_EVERY_PRESETS,
@@ -23,7 +23,8 @@ import { CHECK_STYLE, CheckBadge, STATE_ORDER } from "../components/CheckBadge";
 import { HealthTabs } from "../components/HealthTabs";
 import { StatsFreshness } from "../components/StatsFreshness";
 import { useSystemHealth } from "../components/SystemStatus";
-import { Button, buttonClass, Card, CardHeader, Dialog, Empty, Field, InfoTip, Input, Notice, PageHeader, Pagination, Segmented, Select, SortHeader, Spinner, Switch } from "../components/ui";
+import { LinkPicker } from "../components/LinkPicker";
+import { Button, buttonClass, Card, CardHeader, Dialog, Empty, Field, InfoTip, Input, Menu, MenuItem, Notice, PageHeader, Pagination, Segmented, Select, SortHeader, Spinner, Switch } from "../components/ui";
 import { ago, hostOf, num } from "../lib/format";
 import { CHECKS_HELP } from "../lib/help";
 import { linkKey, linkPath, useLinkLabel } from "../lib/links";
@@ -74,7 +75,8 @@ function Finding({ item, automatic }: { item: TargetCheckDTO; automatic: boolean
 
 function LinkChips({ links }: { links: TargetCheckDTO["links"] }) {
   const label = useLinkLabel();
-  const shown = links.slice(0, 3);
+  const [all, setAll] = useState(false);
+  const shown = all ? links : links.slice(0, 3);
   return (
     <div className="flex min-w-0 flex-wrap gap-1">
       {shown.map((l) => (
@@ -87,7 +89,11 @@ function LinkChips({ links }: { links: TargetCheckDTO["links"] }) {
           {label(l)}
         </Link>
       ))}
-      {links.length > shown.length ? <span className="px-1 py-0.5 text-xs text-muted">+{links.length - shown.length} more</span> : null}
+      {links.length > shown.length ? (
+        <button type="button" className="px-1 py-0.5 text-xs text-muted hover:text-fg hover:underline" onClick={() => setAll(true)}>
+          +{links.length - shown.length} more
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -161,8 +167,8 @@ function SettingsDialog({
     draft.enabled !== settings.enabled || draft.notify !== settings.notify || draft.scope !== settings.scope || (draft.enabled && everyHours !== settings.everyHours);
   return (
     <Dialog open={open} onOpenChange={onOpenChange} title="Destination checks" description="Choose which links are checked, whether on a schedule and how often, and whether you hear about problems.">
-      <div className="space-y-5">
-        <div className="space-y-4 rounded-xl border border-line p-4">
+      <div className="space-y-4">
+        <div className="space-y-4 rounded-md border border-line p-4">
           <Switch
             id="checks-enabled"
             label="Check destinations automatically"
@@ -239,11 +245,12 @@ function SettingsDialog({
 
 /** Ways out for a failing destination: fix the link, mark it, or stop checking. */
 function FixDialog({ item, onClose }: { item: TargetCheckDTO; onClose: () => void }) {
+  const [redirectTo, setRedirectTo] = useState<{ key: string; target: string } | null>(null);
   const qc = useQueryClient();
   const label = useLinkLabel();
   const many = item.links.length > 1;
   const patchAll = useMutation({
-    mutationFn: async (json: { broken: true } | { neverCheck: true }) => {
+    mutationFn: async (json: { broken: true } | { neverCheck: true } | { target: string }) => {
       for (const l of item.links) await call(api.links[":domain"][":slug"].$patch({ param: { domain: l.domain, slug: l.slug }, json }));
       return json;
     },
@@ -252,7 +259,9 @@ function FixDialog({ item, onClose }: { item: TargetCheckDTO; onClose: () => voi
       void qc.invalidateQueries({ queryKey: keys.allLinks });
       for (const l of item.links) void qc.invalidateQueries({ queryKey: keys.link(l.domain, l.slug) });
       const who = many ? `${item.links.length} links` : label(item.links[0]!);
-      if ("broken" in json) {
+      if ("target" in json) {
+        toast.success(`${who} now ${many ? "go" : "goes"} to ${json.target}`, { description: "Live worldwide within about a minute." });
+      } else if ("broken" in json) {
         toast.success(`${who} marked as no longer working`, {
           description: "Visitors now see the notice page. Choose a replacement link on the link's page to point them somewhere useful.",
         });
@@ -269,8 +278,8 @@ function FixDialog({ item, onClose }: { item: TargetCheckDTO; onClose: () => voi
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()} title={`Fix ${hostOf(item.target)}`} description={problemText(item.problem, item.httpStatus) || STATE_LABEL[item.state]} wide>
-      <div className="space-y-5">
-        <div className="rounded-xl border border-line bg-bg px-4 py-3">
+      <div className="space-y-4">
+        <div className="rounded-md border border-line bg-bg px-4 py-3">
           <p className="text-xs font-medium text-muted">Destination</p>
           <a href={item.target} target="_blank" rel="noreferrer noopener" className="mt-1 inline-flex max-w-full items-center gap-1 text-sm break-all hover:underline">
             {item.target} <ExternalLink className="size-3 shrink-0" />
@@ -286,7 +295,7 @@ function FixDialog({ item, onClose }: { item: TargetCheckDTO; onClose: () => voi
         </div>
 
         <ol className="space-y-3">
-          <li className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line p-4">
+          <li className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-line p-4">
             <div className="min-w-0 flex-1">
               <p className="text-sm font-medium text-fg">The page moved</p>
               <p className="mt-0.5 text-xs leading-relaxed text-muted">Open the link and change its destination. The short link and its stats stay the same.</p>
@@ -299,7 +308,23 @@ function FixDialog({ item, onClose }: { item: TargetCheckDTO; onClose: () => voi
               ))}
             </div>
           </li>
-          <li className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line p-4">
+          <li className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-line p-4">
+            <div className="min-w-0 flex-1 basis-60">
+              <p className="text-sm font-medium text-fg">Redirect to another of my links</p>
+              <p className="mt-0.5 text-xs leading-relaxed text-muted">
+                {many ? "These links take" : "The link takes"} the destination of the link you choose. The short {many ? "links" : "link"} and stats stay the same.
+              </p>
+            </div>
+            <div className="flex w-full flex-wrap gap-2 sm:w-auto">
+              <div className="min-w-0 flex-1 sm:w-64">
+                <LinkPicker id="fix-redirect" value={redirectTo?.key ?? ""} onChange={(key, l) => setRedirectTo(l ? { key, target: l.target } : null)} exclude={item.links.map((l) => linkKey(l.domain, l.slug))} />
+              </div>
+              <Button size="sm" variant="outline" onClick={() => redirectTo && patchAll.mutate({ target: redirectTo.target })} loading={patchAll.isPending && "target" in (patchAll.variables ?? {})} disabled={!redirectTo || patchAll.isPending}>
+                Redirect
+              </Button>
+            </div>
+          </li>
+          <li className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-line p-4">
             <div className="min-w-0 flex-1">
               <p className="text-sm font-medium text-fg">The page is gone for good</p>
               <p className="mt-0.5 text-xs leading-relaxed text-muted">
@@ -310,7 +335,7 @@ function FixDialog({ item, onClose }: { item: TargetCheckDTO; onClose: () => voi
               Mark as no longer working
             </Button>
           </li>
-          <li className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line p-4">
+          <li className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-line p-4">
             <div className="min-w-0 flex-1">
               <p className="text-sm font-medium text-fg">It works for people</p>
               <p className="mt-0.5 text-xs leading-relaxed text-muted">Some pages need a login or block automated visitors. Stop checking {many ? "these links" : "this link"} so they don't alert again.</p>
@@ -338,6 +363,7 @@ export function Health() {
   const [settingsOpen, setSettingsOpen] = useState<"settings" | "activate" | null>(null);
   const [fixing, setFixing] = useState<TargetCheckDTO | null>(null);
   const label = useLinkLabel();
+  const navigate = useNavigate();
   const can = useCan();
   const manage = can("settings.manage");
 
@@ -405,11 +431,11 @@ export function Health() {
   return (
     <>
       <PageHeader
-        title="Make sure every link still lands"
+        title="Link health"
         description={
           data?.settings.enabled
-            ? `Shorthop visits every destination ${everyText(data.settings.everyHours)}, confirms a problem before calling it, and tells you before your audience hits a dead end.`
-            : "Turn on automatic checking and Shorthop visits every destination as often as you choose, confirms a problem before calling it, and tells you before your audience hits a dead end."
+            ? `Checked ${everyText(data.settings.everyHours)}. Problems are confirmed before you're alerted.`
+            : "Automatic checking is off. Problems are confirmed before you're alerted."
         }
         actions={
           <>
@@ -474,7 +500,7 @@ export function Health() {
                   aria-pressed={active}
                   onClick={() => setFilter(s)}
                   className={cn(
-                    "card group flex flex-col items-start gap-3 rounded-2xl border bg-surface p-4 text-left transition-colors hover:border-accent/40",
+                    "card group flex flex-col items-start gap-3 rounded-lg border bg-surface p-4 text-left transition-colors hover:border-accent/40",
                     active ? "border-accent ring-2 ring-accent/20" : "border-line",
                     counts[s] === 0 && !active && "opacity-70",
                   )}
@@ -574,7 +600,7 @@ export function Health() {
               </Empty>
             ) : (
               <table className="w-full table-fixed border-t border-line text-sm">
-                <thead className="hidden bg-bg text-left text-[11px] text-muted md:table-header-group">
+                <thead className="hidden bg-bg text-left text-xs text-muted md:table-header-group">
                   <tr>
                     <SortHeader label="Destination" active={sort === "target"} dir={dir} onSort={() => sortBy("target")} />
                     <SortHeader label="State" className="w-52" active={sort === "status"} dir={dir} onSort={() => sortBy("status")} />
@@ -591,7 +617,13 @@ export function Health() {
                     return (
                       <tr key={item.target} className={cn("flex flex-wrap items-start gap-x-3 gap-y-2 border-b border-line px-4 py-4 last:border-0 md:table-row md:p-0", item.state === "down" && "bg-danger-soft/40")}>
                         <td className="min-w-0 basis-full md:basis-auto md:px-4 md:py-4">
-                          <UrlText url={item.target} className="text-sm" />
+                          {item.links.length === 1 ? (
+                            <Link to={linkPath(item.links[0]!)} className="block hover:underline" title={`Open ${label(item.links[0]!)}`}>
+                              <UrlText url={item.target} className="text-sm" />
+                            </Link>
+                          ) : (
+                            <UrlText url={item.target} className="text-sm" />
+                          )}
                           {item.finalUrl ? (
                             <span className="mt-0.5 flex min-w-0 items-center gap-1 text-xs text-muted" title={item.finalUrl}>
                               <CornerDownRight className="size-3 shrink-0" aria-hidden />
@@ -624,6 +656,25 @@ export function Health() {
                               <Button size="sm" variant="outline" onClick={() => setFixing(item)}>
                                 <Wrench /> Fix
                               </Button>
+                            ) : null}
+                            {can("links.edit") && item.links.length === 1 ? (
+                              <Link to={`${linkPath(item.links[0]!)}#edit`} className={buttonClass({ variant: "ghost", size: "sm" })} title={`Edit ${label(item.links[0]!)}`}>
+                                <Pencil /> Edit
+                              </Link>
+                            ) : can("links.edit") && item.links.length > 1 ? (
+                              <Menu
+                                trigger={
+                                  <Button size="sm" variant="ghost">
+                                    <Pencil /> Edit
+                                  </Button>
+                                }
+                              >
+                                {item.links.map((l) => (
+                                  <MenuItem key={linkKey(l.domain, l.slug)} onSelect={() => navigate(`${linkPath(l)}#edit`)}>
+                                    {label(l)}
+                                  </MenuItem>
+                                ))}
+                              </Menu>
                             ) : null}
                             <Button size="sm" variant="ghost" onClick={() => checkOne.mutate(item)} loading={busy} disabled={checkOne.isPending && !busy}>
                               {busy ? null : <RefreshCw />} Check now

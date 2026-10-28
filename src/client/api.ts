@@ -127,4 +127,9 @@ export const keys = {
   cap: (domain: string, slug: string) => ["cap", domain, slug] as const,
   webhooks: ["webhooks"] as const,
   linkCheck: (domain: string, slug: string) => ["checks", domain, slug] as const,
+  sites: ["sites"] as const,
+  site: (id: string) => ["sites", id] as const,
+  siteData: (id: string, what: string, params: object) => ["sites", id, what, params] as const,
+  connections: (id: string) => ["sites", id, "connections"] as const,
+  linkRevenue: (domain: string, slug: string) => ["sites", "by-link", domain, slug] as const,
 };

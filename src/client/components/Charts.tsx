@@ -142,10 +142,10 @@ export function ClicksChart({
               {[...data].reverse().map((d) => (
                 <tr key={d.title} className="border-t border-line">
                   <td className="py-1.5">{d.title}</td>
-                  <td className="py-1.5 text-right">{fullNum(d.clicks)}</td>
-                  <td className="py-1.5 text-right">{fullNum(d.uniques)}</td>
-                  <td className="py-1.5 text-right text-muted">{fullNum(d.bots)}</td>
-                  {comparing ? <td className="py-1.5 text-right text-muted">{d.prev === undefined ? "–" : fullNum(d.prev)}</td> : null}
+                  <td className="tabular py-1.5 text-right">{fullNum(d.clicks)}</td>
+                  <td className="tabular py-1.5 text-right">{fullNum(d.uniques)}</td>
+                  <td className="tabular py-1.5 text-right text-muted">{fullNum(d.bots)}</td>
+                  {comparing ? <td className="tabular py-1.5 text-right text-muted">{d.prev === undefined ? "–" : fullNum(d.prev)}</td> : null}
                 </tr>
               ))}
             </tbody>
@@ -195,7 +195,7 @@ function ChangeChip({ current, previous, good }: { current: number; previous: nu
   const Icon = c.dir === "down" ? ArrowDownRight : ArrowUpRight;
   const tone = !good || c.dir === "flat" ? "bg-surface-2 text-muted" : c.dir === "up" ? "bg-good-soft text-good" : "bg-danger-soft text-danger";
   return (
-    <span className={cn("inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[11px] font-medium tabular", tone)} title={`${c.title} in the previous period`}>
+    <span className={cn("inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-xs font-medium tabular", tone)} title={`${c.title} in the previous period`}>
       {c.dir === "flat" ? null : <Icon className="size-3" aria-hidden />}
       {c.text}
     </span>
@@ -220,11 +220,11 @@ export function StatTiles({ totals, extra, comparison }: { totals: Totals; extra
             <span className="tabular text-[36px] font-semibold tracking-[-0.04em] text-fg">{t.value}</span>
             {t.chip}
           </div>
-          {t.note ? <div className="mt-1 text-[11px] text-muted">{t.note}</div> : null}
+          {t.note ? <div className="mt-1 text-xs text-muted">{t.note}</div> : null}
         </Card>
       ))}
       {cmp ? (
-        <p className="col-span-full -mt-1 text-[11px] text-muted">
+        <p className="col-span-full -mt-1 text-xs text-muted">
           Changes compare {cmp.current.from === cmp.current.to ? day(cmp.current.from) : `${day(cmp.current.from)} – ${day(cmp.current.to)}`} with{" "}
           {cmp.previous.from === cmp.previous.to ? day(cmp.previous.from) : `${day(cmp.previous.from)} – ${day(cmp.previous.to)}`}: completed days only, so today doesn't count until it's over.
         </p>
@@ -280,7 +280,7 @@ export function Breakdown({
       {shown.length === 0 ? (
         <Empty title="No data yet" />
       ) : (
-        <ul className="space-y-2 px-5 pb-5">
+        <ul className="space-y-2 px-4 pb-4">
           {shown.map((r) => (
             <li key={r.value} className="group relative">
               <div
@@ -288,7 +288,7 @@ export function Breakdown({
                 style={{ width: `${(r[metric] / max) * 100}%` }}
                 aria-hidden
               />
-              <div className="relative flex items-center gap-2 px-3 py-2.5 text-[13px]">
+              <div className="relative flex items-center gap-2 px-3 py-2.5 text-sm">
                 <span className="min-w-0 flex-1 truncate text-fg" title={r.value}>
                   {labelFor(kind, r.value)}
                 </span>

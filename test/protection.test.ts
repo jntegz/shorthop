@@ -79,6 +79,16 @@ describe("passwords", () => {
     expect(last!.headers.get("Retry-After")).toBe("60");
   });
 
+  it("locks the link after many wrong passwords, however many networks they come from", async () => {
+    await create({ password: "open sesame" });
+    for (let i = 0; i < 20; i++) expect((await submit("wrong guess", "secret", `192.0.2.${i + 1}`)).status).toBe(401);
+    // Locked for everyone, even with the right password from a new network.
+    expect((await submit("open sesame", "secret", "198.51.100.200")).status).toBe(429);
+    await env.DB.prepare("UPDATE auth_failures SET locked_until = 0 WHERE key = 'link:sh.example/secret'").run();
+    expect((await submit("open sesame", "secret", "198.51.100.200")).status).toBe(200);
+    expect(await env.DB.prepare("SELECT 1 FROM auth_failures WHERE key = 'link:sh.example/secret'").first()).toBeNull();
+  });
+
   it("shows a custom preview to crawlers without the destination, and refuses POST on other links", async () => {
     await create({ password: "open sesame", preview: { title: "A private document", description: "", image: null } });
     const res = await visit("secret", { "User-Agent": LINKEDIN });
@@ -118,6 +128,28 @@ describe("click limits", () => {
     expect(points.every((p) => p.blobs?.[0] === "bot")).toBe(true);
     expect((await cap()).count).toBe(0);
     expect((await visit()).status).toBe(302);
+    expect((await visit()).status).toBe(410);
+  });
+
+  it("never sends previews, prefetches or HEAD requests on, so they can't get past the limit", async () => {
+    await create({ maxClicks: 1 });
+    const lookers = [
+      new Request(`${ORIGIN}/secret`, { headers: { "User-Agent": LINKEDIN } }),
+      new Request(`${ORIGIN}/secret`, { method: "HEAD", headers: { "User-Agent": PERSON } }),
+      new Request(`${ORIGIN}/secret`, { headers: { "User-Agent": PERSON, "Sec-Purpose": "prefetch" } }),
+    ];
+    for (const req of lookers) {
+      const res = await call(req);
+      expect(res.status).toBe(204);
+      expect(res.headers.get("Location")).toBeNull();
+    }
+    expect((await cap()).count).toBe(0);
+  });
+
+  it("counts a click for any other client that is sent on, whatever it calls itself", async () => {
+    await create({ maxClicks: 1 });
+    const scripted = await call(new Request(`${ORIGIN}/secret`, { headers: { "User-Agent": "python-requests/2.32" } }));
+    expect(scripted.status).toBe(302);
     expect((await visit()).status).toBe(410);
   });
 

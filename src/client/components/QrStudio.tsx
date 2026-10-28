@@ -199,7 +199,7 @@ export function QrStudio({
         {/* Preview and checks */}
         <div className="space-y-3 md:sticky md:top-0 md:self-start">
           <div
-            className={cn("flex aspect-square items-center justify-center overflow-hidden rounded-xl border border-line p-3", style.transparent ? "bg-[length:16px_16px] bg-[linear-gradient(45deg,#eee_25%,transparent_25%,transparent_75%,#eee_75%),linear-gradient(45deg,#eee_25%,#fff_25%,#fff_75%,#eee_75%)] bg-[position:0_0,8px_8px]" : "bg-surface-2")}
+            className={cn("flex aspect-square items-center justify-center overflow-hidden rounded-md border border-line p-3", style.transparent ? "bg-[length:16px_16px] bg-[linear-gradient(45deg,#eee_25%,transparent_25%,transparent_75%,#eee_75%),linear-gradient(45deg,#eee_25%,#fff_25%,#fff_75%,#eee_75%)] bg-[position:0_0,8px_8px]" : "bg-surface-2")}
           >
             {rendered ? (
               <img src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(rendered.svg)}`} alt={`QR code for ${text}`} className="max-h-full max-w-full" />
@@ -232,8 +232,8 @@ export function QrStudio({
               <AlertTriangle className="mt-px size-3.5 shrink-0" /> {w.message}
             </p>
           ))}
-          <p className="font-mono text-[11px] break-all text-muted">{text}</p>
-          <p className="text-[11px] leading-relaxed text-subtle">Test it with a phone before printing a large run, at the size you'll print.</p>
+          <p className="font-mono text-xs break-all text-muted">{text}</p>
+          <p className="text-xs leading-relaxed text-subtle">Test it with a phone before printing a large run, at the size you'll print.</p>
         </div>
 
         {/* Controls */}

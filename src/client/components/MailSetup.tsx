@@ -248,7 +248,7 @@ export function MailSetup({ open, onOpenChange }: { open: boolean; onOpenChange:
       {!data || !draft ? (
         <div className="flex justify-center py-12">{q.isError ? <Notice tone="danger">{q.error.message}</Notice> : <Spinner />}</div>
       ) : (
-        <div className="space-y-5 text-sm">
+        <div className="space-y-4 text-sm">
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3" role="radiogroup" aria-label="Email service" onKeyDown={(e) => moveChoice(e, data.providers, draft.provider, (id) => setDraft({ ...draft, provider: id }))}>
             {data.providers.map((p) => (
               <button
@@ -260,7 +260,7 @@ export function MailSetup({ open, onOpenChange }: { open: boolean; onOpenChange:
                 data-provider={p.id}
                 onClick={() => setDraft({ ...draft, provider: p.id })}
                 className={cn(
-                  "flex min-h-16 min-w-0 flex-col items-start justify-between gap-1.5 rounded-xl border p-3 text-left transition-colors",
+                  "flex min-h-16 min-w-0 flex-col items-start justify-between gap-1.5 rounded-md border p-3 text-left transition-colors",
                   draft.provider === p.id ? "border-accent bg-accent-soft" : "border-line hover:bg-bg",
                 )}
               >
@@ -271,7 +271,7 @@ export function MailSetup({ open, onOpenChange }: { open: boolean; onOpenChange:
           </div>
 
           {selected && guide ? (
-            <div className="space-y-4 rounded-xl border border-line p-4">
+            <div className="space-y-4 rounded-md border border-line p-4">
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <p className="text-muted">{guide.blurb}</p>
                 {guide.docs ? (

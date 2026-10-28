@@ -3,16 +3,17 @@
 
 import { APP_NAME } from "../shared/brand";
 import { addDays, isoWeek, utcDate } from "../shared/dates";
-import { linkLabel } from "../shared/domains";
+import { linkKey, linkLabel } from "../shared/domains";
 import { escapeHtml } from "../shared/html";
+import { formatMoney } from "../shared/sites";
 import { isCheckProblem, problemText } from "../shared/link-check";
 import { isProbePath } from "../shared/slug";
 import { getSetting, setSettingStmt } from "./db";
 import { domainsOf } from "./domains";
 import { MailerError, mailerStatus, sendMail, withMailSettings } from "./mailer";
 import { runRollup } from "./rollup";
-import { missesCleared } from "./misses";
 import { checkedSql, getCheckSettings } from "./link-check";
+import { ignoredMisses, missesCleared } from "./misses";
 
 export interface DigestData {
   week: string;
@@ -27,6 +28,51 @@ export interface DigestData {
   misses: { domain: string; slug: string; hits: number }[];
   /** Live links whose destination failed its checks (Link health). */
   notWorking: { domain: string; slug: string; target: string; problem: string }[];
+  /** Tracked websites: visitors and revenue of the week, in each site's currency. */
+  websites: DigestWebsite[];
+}
+
+export interface DigestWebsite {
+  id: string;
+  name: string;
+  currency: string;
+  visitors: number;
+  revenue: number;
+  previousRevenue: number;
+  payments: number;
+  /** The channel or short link credited with the most revenue. */
+  topSource: string | null;
+}
+
+/** Per tracked site, the week's visitors and revenue (net, tests left out) against the week before. */
+async function websitesOfWeek(db: D1Database, from: string, to: string): Promise<DigestWebsite[]> {
+  const start = Date.parse(`${from}T00:00:00Z`) / 1000;
+  const end = Date.parse(`${to}T00:00:00Z`) / 1000 + 86400;
+  const prevStart = start - 7 * 86400;
+  const { results } = await db
+    .prepare(
+      `SELECT st.id, st.name, st.currency,
+         (SELECT COUNT(DISTINCT visitor_id) FROM web_sessions WHERE site_id = st.id AND started_at >= ?1 AND started_at < ?2) AS visitors,
+         (SELECT SUM(COALESCE(amount_site_minor, 0)) FROM payments WHERE site_id = st.id AND test_mode = 0 AND occurred_at >= ?1 AND occurred_at < ?2) AS revenue,
+         (SELECT SUM(COALESCE(amount_site_minor, 0)) FROM payments WHERE site_id = st.id AND test_mode = 0 AND occurred_at >= ?3 AND occurred_at < ?1) AS previous,
+         (SELECT COUNT(*) FROM payments WHERE site_id = st.id AND test_mode = 0 AND kind = 'charge' AND occurred_at >= ?1 AND occurred_at < ?2) AS payments,
+         (SELECT CASE WHEN s.link_slug != '' THEN s.link_domain || '/' || s.link_slug ELSE s.source END FROM payments p JOIN web_sessions s ON s.id = p.credited_session_id
+            WHERE p.site_id = st.id AND p.test_mode = 0 AND p.occurred_at >= ?1 AND p.occurred_at < ?2
+            GROUP BY 1 ORDER BY SUM(COALESCE(p.amount_site_minor, 0)) DESC LIMIT 1) AS top_source
+       FROM sites st ORDER BY st.name`,
+    )
+    .bind(start, end, prevStart)
+    .all<{ id: string; name: string; currency: string; visitors: number; revenue: number | null; previous: number | null; payments: number; top_source: string | null }>();
+  return results.map((r) => ({
+    id: r.id,
+    name: r.name,
+    currency: r.currency,
+    visitors: r.visitors,
+    revenue: r.revenue ?? 0,
+    previousRevenue: r.previous ?? 0,
+    payments: r.payments,
+    topSource: r.top_source,
+  }));
 }
 
 type Num = number | null;
@@ -38,7 +84,7 @@ export async function digestData(env: Env, now: Date = new Date()): Promise<Dige
   const prevTo = addDays(from, -1);
   const prevFrom = addDays(prevTo, -6);
   const db = env.DB;
-  const [cleared, checks] = await Promise.all([missesCleared(db), getCheckSettings(db)]);
+  const [cleared, checks, ignored] = await Promise.all([missesCleared(db), getCheckSettings(db), ignoredMisses(db)]);
   const missFrom = cleared.all !== null && cleared.all >= from ? addDays(cleared.all, 1) : from;
   const sumTotals = `SELECT SUM(clicks) AS clicks, SUM(uniques) AS uniques, SUM(bots) AS bots FROM daily_dims
                      WHERE dim = 'total' AND date BETWEEN ?1 AND ?2`;
@@ -87,7 +133,14 @@ export async function digestData(env: Env, now: Date = new Date()): Promise<Dige
     uniques: Number(r?.uniques ?? 0),
     bots: Number(r?.bots ?? 0),
   });
+  let websites: DigestWebsite[] = [];
+  try {
+    websites = await websitesOfWeek(db, from, to);
+  } catch (err) {
+    console.error(JSON.stringify({ message: "digest websites failed", error: String(err) }));
+  }
   return {
+    websites,
     week: isoWeek(to),
     from,
     to,
@@ -105,7 +158,7 @@ export async function digestData(env: Env, now: Date = new Date()): Promise<Dige
     newLinks: (newLinks?.results ?? []).map((r) => ({ domain: String(r.domain), slug: String(r.slug), target: String(r.target) })),
     misses: (misses?.results ?? [])
       .map((r) => ({ domain: String(r.domain), slug: String(r.slug), hits: Number(r.hits) }))
-      .filter((m) => !isProbePath(m.slug))
+      .filter((m) => !isProbePath(m.slug) && !(linkKey(m.domain, m.slug) in ignored))
       .slice(0, 5),
     notWorking: (notWorking?.results ?? []).map((r) => ({
       domain: String(r.domain),
@@ -153,6 +206,16 @@ export function renderDigest(
     d.misses.length ? `Most-hit missing slugs: ${d.misses.map((m) => `${label(m)} (${fmt(m.hits)})`).join(", ")}` : "",
     d.notWorking.length ? `Destinations not working: ${d.notWorking.map((n) => `${label(n)} (${n.problem})`).join(", ")}` : "",
     "",
+    ...(d.websites.length
+      ? [
+          "Websites:",
+          ...d.websites.map(
+            (w) =>
+              `- ${w.name}: ${fmt(w.visitors)} visitors, ${formatMoney(w.revenue, w.currency, { locale: "en-US" })} (${delta(w.revenue, w.previousRevenue)}) from ${fmt(w.payments)} payment${w.payments === 1 ? "" : "s"}${w.topSource ? `; most from ${w.topSource}` : ""}`,
+          ),
+          "",
+        ]
+      : []),
     `Dashboard: ${adminUrl}`,
   ]
     .filter((l, i, a) => !(l === "" && a[i - 1] === ""))
@@ -218,6 +281,24 @@ export function renderDigest(
       ? `<p style="font-size:14px;margin:0 0 8px;"><strong>Destinations not working:</strong> ${d.notWorking
           .map((n) => `<a href="${escapeHtml(adminUrl)}health" style="color:#6554c0;text-decoration:none;">${escapeHtml(label(n))}</a> (${escapeHtml(n.problem)})`)
           .join(", ")}</p>`
+      : ""
+  }
+  ${
+    d.websites.length
+      ? `<h2 style="font-size:15px;margin:20px 0 8px;">Websites</h2>
+  <table style="width:100%;border-collapse:collapse;font-size:14px;">
+    ${row(["Site", "Visitors", "Revenue", "Change"], true)}
+    ${d.websites
+      .map((w) =>
+        row([
+          `<a href="${escapeHtml(adminUrl)}sites/${encodeURIComponent(w.id)}" style="color:#6554c0;text-decoration:none;">${escapeHtml(w.name)}</a>${w.topSource ? `<div style="font-size:12px;color:#57534e;">Most revenue from ${escapeHtml(w.topSource)}</div>` : ""}`,
+          fmt(w.visitors),
+          escapeHtml(formatMoney(w.revenue, w.currency, { locale: "en-US" })),
+          delta(w.revenue, w.previousRevenue),
+        ]),
+      )
+      .join("")}
+  </table>`
       : ""
   }
   <p style="margin:20px 0 0;"><a href="${escapeHtml(adminUrl)}" style="display:inline-block;background:#6554c0;color:#fff;text-decoration:none;padding:10px 16px;border-radius:8px;font-weight:600;font-size:14px;">Open dashboard</a></p>

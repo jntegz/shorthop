@@ -43,7 +43,8 @@ export function whenFull(sec: number): string {
   return dateTimeYear.format(new Date(sec * 1000));
 }
 
-const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+// The words match the admin's English; dates and numbers above follow the browser's locale.
+const rtf = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
 
 export function ago(sec: number): string {
   const diff = sec - Date.now() / 1000;
@@ -94,30 +95,7 @@ export function flag(code: string): string {
   return String.fromCodePoint(...[...code].map((c) => 0x1f1a5 + c.charCodeAt(0)));
 }
 
-const SOURCE_LABELS: Record<string, string> = {
-  li: "LinkedIn",
-  nl: "Newsletter",
-  qr: "QR code",
-  x: "X / Twitter",
-  fb: "Facebook",
-  ig: "Instagram",
-  yt: "YouTube",
-  bsky: "Bluesky",
-  threads: "Threads",
-  reddit: "Reddit",
-  hn: "Hacker News",
-  email: "Webmail",
-  google: "Google",
-  bing: "Bing",
-  ddg: "DuckDuckGo",
-  site: "Your website",
-  referral: "Other websites",
-  direct: "Direct / unknown",
-};
-
-export function sourceLabel(s: string): string {
-  return SOURCE_LABELS[s] ?? s;
-}
+export { SOURCE_LABELS, sourceLabel } from "../../shared/labels";
 
 export function hostOf(url: string): string {
   try {

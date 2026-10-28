@@ -72,7 +72,7 @@ ${p.d ? `<p>${e(p.d)}</p>` : ""}
       "Content-Type": "text/html; charset=utf-8",
       "Cache-Control": "private, max-age=0",
       "X-Robots-Tag": "noindex",
-      "Content-Security-Policy": "default-src 'none'; img-src https:; style-src 'unsafe-inline'",
+      "Content-Security-Policy": "default-src 'none'; img-src https:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
       "X-Content-Type-Options": "nosniff",
       "Strict-Transport-Security": HSTS,
     },
@@ -135,11 +135,11 @@ export async function prunePreviewImages(env: Env, now = nowSec()): Promise<numb
   )
     .bind(now - ORPHAN_AFTER_SEC, planLimits(env).prunedUploads)
     .all<{ key: string }>();
-  for (const { key } of results) {
-    await env.LINKS.delete(kvImageKey(key));
-    await env.DB.prepare("DELETE FROM preview_images WHERE key = ?").bind(key).run();
-  }
-  return results.length;
+  // A row goes only once its blob has; one that failed is tried again tomorrow.
+  const settled = await Promise.allSettled(results.map(({ key }) => env.LINKS.delete(kvImageKey(key))));
+  const gone = results.filter((_, i) => settled[i]?.status === "fulfilled").map((r) => r.key);
+  if (gone.length) await env.DB.prepare("DELETE FROM preview_images WHERE key IN (SELECT value FROM json_each(?))").bind(JSON.stringify(gone)).run();
+  return gone.length;
 }
 
 export interface FetchedPreview {

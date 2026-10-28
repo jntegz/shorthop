@@ -40,6 +40,7 @@ export function snapshotOfLink(l: LinkDTO): Snapshot {
     notes: l.notes,
     broken: l.broken ? 1 : 0,
     replacement: l.replacement ? `${l.replacement.domain}/${l.replacement.slug}` : null,
+    off_redirect: l.offRedirect === "home" ? "home" : l.offRedirect ? `${l.offRedirect.domain}/${l.offRedirect.slug}` : null,
     monitor: l.neverCheck ? 2 : l.monitor ? 1 : 0,
     routing: l.routing ? JSON.stringify(l.routing) : null,
     preview: l.preview ? JSON.stringify(l.preview) : null,
@@ -61,7 +62,7 @@ function Value({ field, value, old }: { field: HistoryField; value: Snapshot[His
   if (BOOLEAN_FIELDS.has(field)) return <span className={cls}>{value ? "On" : "Off"}</span>;
   if (field === "monitor") return <span className={cls}>{MONITOR_LABEL[Number(value ?? 1)] ?? "On"}</span>;
   if (value === null || value === "") {
-    const none = field === "expires_at" ? "Never" : field === "routing" || field === "preview" ? "Off" : field === "password_hash" ? "None" : field === "max_clicks" ? "No limit" : field === "replacement" ? "None" : field === "utm_template" ? "Default" : "Empty";
+    const none = field === "expires_at" ? "Never" : field === "routing" || field === "preview" ? "Off" : field === "password_hash" ? "None" : field === "max_clicks" ? "No limit" : field === "replacement" ? "None" : field === "off_redirect" ? "Not-found page" : field === "utm_template" ? "Default" : "Empty";
     return <span className={cn(cls, "italic")}>{none}</span>;
   }
   if (field === "password_hash") return <span className={cls}>{value ? "Set" : "None"}</span>;
@@ -72,13 +73,14 @@ function Value({ field, value, old }: { field: HistoryField; value: Snapshot[His
   }
   if (field === "routing") return <span className={cls}>{describeRouting(parseRouting(String(value)))}</span>;
   if (field === "expires_at") return <span className={cls}>{whenFull(Number(value))}</span>;
-  if (field === "replacement") {
+  if (field === "off_redirect" && value === "home") return <span className={cls}>Main site</span>;
+  if (field === "replacement" || field === "off_redirect") {
     const r = splitKey(String(value));
     return <span className={cls}>{r ? label(r) : String(value)}</span>;
   }
   const text = String(value);
   return (
-    <span className={cn(cls, field === "notes" ? "line-clamp-3 whitespace-pre-wrap" : "line-clamp-2", (field === "target" || field === "utm_template") && "font-mono text-[11px]")} title={text}>
+    <span className={cn(cls, field === "notes" ? "line-clamp-3 whitespace-pre-wrap" : "line-clamp-2", (field === "target" || field === "utm_template") && "font-mono text-xs")} title={text}>
       {text}
     </span>
   );
@@ -150,7 +152,7 @@ function RestoreDialog({ link, current, version, onClose }: { link: LinkDTO; cur
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()} title={`Restore the version from ${whenFull(version.at)}?`} description="These settings change back. Stats aren't affected, and the current state stays in the history so you can undo this." wide>
       {changes.length ? (
-        <div className="rounded-xl border border-line bg-bg px-4 py-3">
+        <div className="rounded-md border border-line bg-bg px-4 py-3">
           <p className="text-xs font-medium text-fg">What changes</p>
           <ChangeList changes={changes} />
         </div>
@@ -194,7 +196,7 @@ export function LinkHistory({ link }: { link: LinkDTO }) {
           <Spinner />
         </div>
       ) : q.isError ? (
-        <p className="px-5 pb-5 text-sm text-danger">{q.error.message}</p>
+        <p className="px-4 pb-4 text-sm text-danger">{q.error.message}</p>
       ) : versions.length === 0 ? (
         <Empty icon={<History />} title="No history yet">
           <p>Changes are recorded from now on.</p>
@@ -236,7 +238,7 @@ export function LinkHistory({ link }: { link: LinkDTO }) {
                     ) : v.action === "create" || v.action === "import" || v.action === "baseline" ? (
                       <p className="mt-1 truncate text-xs text-muted" title={v.snapshot.target}>
                         {v.action === "baseline" ? "As it was when history began: " : "Pointing to "}
-                        <span className="font-mono text-[11px]">{v.snapshot.target}</span>
+                        <span className="font-mono text-xs">{v.snapshot.target}</span>
                       </p>
                     ) : v.action === "delete" ? (
                       <p className="mt-1 text-xs text-muted">The link was removed; it was brought back later.</p>

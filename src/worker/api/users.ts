@@ -226,7 +226,7 @@ export const usersApi = new Hono<AppEnv>()
   })
 
   // A new invite link: clears their password and ends their sessions, so it
-  // doubles as "reset password". Older links stop working.
+  // doubles as "reset password". Older links stop working, reset links too.
   .post("/:email/invite", validate("param", personParamSchema), validate("json", reinviteSchema), async (c) => {
     const actor = c.get("actor");
     const { email } = c.req.valid("param");
@@ -239,7 +239,7 @@ export const usersApi = new Hono<AppEnv>()
     const now = nowSec();
     const invite = await newInvite(c, now);
     const res = await c.env.DB.prepare(
-      `UPDATE users SET password_hash = NULL, invite_hash = ?1, invite_expires = ?2, session_epoch = ?3, updated_at = ?4
+      `UPDATE users SET password_hash = NULL, invite_hash = ?1, invite_expires = ?2, reset_hash = NULL, reset_expires = NULL, session_epoch = ?3, updated_at = ?4
        WHERE email = ?5${actor.role === "admin" ? "" : " AND role = 'user'"}`,
     )
       .bind(invite.hash, invite.expires, crypto.randomUUID(), now, email)
@@ -258,7 +258,8 @@ export const usersApi = new Hono<AppEnv>()
 
   // Pause: they can't sign in, their sessions end and their API keys stop
   // working, until the time given or until someone resumes them. Nothing is
-  // deleted. The new session epoch keeps old sessions dead after a resume.
+  // deleted. The new session epoch keeps old sessions dead after a resume, and
+  // a reset link they'd asked for stops working.
   .post("/:email/pause", validate("param", personParamSchema), validate("json", pauseSchema), async (c) => {
     const actor = c.get("actor");
     const { email } = c.req.valid("param");
@@ -269,7 +270,7 @@ export const usersApi = new Hono<AppEnv>()
     if (until !== null && until <= now) return c.json({ error: "Choose a time in the future." }, 400);
 
     const res = await c.env.DB.prepare(
-      `UPDATE users SET paused_at = ?1, paused_until = ?2, paused_by = ?3, session_epoch = ?4, updated_at = ?1
+      `UPDATE users SET paused_at = ?1, paused_until = ?2, paused_by = ?3, session_epoch = ?4, reset_hash = NULL, reset_expires = NULL, updated_at = ?1
        WHERE email = ?5${actor.role === "admin" ? "" : " AND role = 'user'"}`,
     )
       .bind(now, until, actor.email, crypto.randomUUID(), email)

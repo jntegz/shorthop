@@ -5,6 +5,7 @@ import { resetDeadLinkCache } from "../src/worker/dead-link";
 import worker from "../src/worker/index";
 import { resetMissPolicyCache } from "../src/worker/misses";
 import { resetNotFoundCache } from "../src/worker/not-found";
+import { resetSiteCaches } from "../src/worker/web/sites";
 
 export const ORIGIN = "https://sh.example";
 export const API = `${ORIGIN}/api`;
@@ -47,6 +48,7 @@ export async function resetData(): Promise<void> {
   resetNotFoundCache();
   resetDaySaltCache();
   resetDeadLinkCache();
+  resetSiteCaches();
   await env.DB.batch([
     env.DB.prepare("DELETE FROM links"),
     env.DB.prepare("DELETE FROM target_checks"),
@@ -62,6 +64,17 @@ export async function resetData(): Promise<void> {
     env.DB.prepare("DELETE FROM login_events"),
     env.DB.prepare("DELETE FROM api_keys"),
     env.DB.prepare("DELETE FROM users"),
+    env.DB.prepare("DELETE FROM sites"),
+    env.DB.prepare("DELETE FROM web_sessions"),
+    env.DB.prepare("DELETE FROM web_visitors"),
+    env.DB.prepare("DELETE FROM payment_connections"),
+    env.DB.prepare("DELETE FROM payment_events"),
+    env.DB.prepare("DELETE FROM payments"),
+    env.DB.prepare("DELETE FROM payment_claims"),
+    env.DB.prepare("DELETE FROM subscriptions"),
+    env.DB.prepare("DELETE FROM fx_rates"),
+    env.DB.prepare("DELETE FROM funnels"),
+    env.DB.prepare("DELETE FROM stat_shares"),
     env.DB.prepare("DELETE FROM settings WHERE key != 'default_utm'"),
     env.DB.prepare(
       "UPDATE settings SET value = 'utm_source={domain}&utm_medium=shortlink&utm_campaign={slug}' WHERE key = 'default_utm'",

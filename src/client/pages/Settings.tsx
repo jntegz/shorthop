@@ -10,6 +10,7 @@ import { MailSetup } from "../components/MailSetup";
 import { DeadLinkEditor } from "../components/DeadLinkEditor";
 import { NotFoundEditor } from "../components/NotFoundEditor";
 import { AccountCard } from "../components/AccountCard";
+import { AppearanceCard } from "../components/AppearanceCard";
 import { ApiCard } from "../components/ApiCard";
 import { ApiKeys } from "../components/ApiKeys";
 import { BotCheckCard } from "../components/BotCheckCard";
@@ -79,7 +80,7 @@ function SettingsTabs({ tabs, value, onChange }: { tabs: SettingsTab[]; value: S
     document.getElementById(`settings-tab-${value}`)?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }, [value]);
   return (
-    <div role="tablist" aria-label="Settings sections" className="mb-6 flex gap-1 overflow-x-auto border-b border-line">
+    <div role="tablist" aria-label="Settings sections" className="mb-6 flex gap-1 overflow-x-auto overflow-y-hidden shadow-[inset_0_-1px_0_var(--line)]">
       {tabs.map((t, i) => {
         const { label, icon: Icon } = TAB_LABELS[t];
         const on = t === value;
@@ -101,7 +102,7 @@ function SettingsTabs({ tabs, value, onChange }: { tabs: SettingsTab[]; value: S
               requestAnimationFrame(() => document.getElementById(`settings-tab-${tabs[next]}`)?.focus());
             }}
             className={cn(
-              "-mb-px flex shrink-0 items-center gap-2 border-b-2 px-3 py-2.5 text-sm font-medium whitespace-nowrap transition-colors",
+              "flex shrink-0 items-center gap-2 border-b-2 px-3 py-2.5 text-sm font-medium whitespace-nowrap transition-colors",
               on ? "border-accent text-accent" : "border-transparent text-muted hover:text-fg",
             )}
           >
@@ -215,15 +216,15 @@ export function Settings() {
 
   return (
     <>
-      <PageHeader title="Make it yours" description={manage ? "Fine-tune your links, reporting, and workspace." : "Your account and your access."} />
+      <PageHeader title="Settings" />
       <SettingsTabs tabs={tabs} value={tab} onChange={openTab} />
-      <div role="tabpanel" id={`settings-panel-${tab}`} aria-labelledby={`settings-tab-${tab}`} className="grid gap-5 lg:grid-cols-2">
+      <div role="tabpanel" id={`settings-panel-${tab}`} aria-labelledby={`settings-tab-${tab}`} className="grid gap-4 lg:grid-cols-2">
         {tab === "general" && s ? (
           <>
             <ShortDomains domains={s.domains} primary={s.primaryDomain} adminHost={s.adminHost} linksPerDomain={s.linksPerDomain} demo={s.demo} />
             <Card id="publishing" className="scroll-mt-6">
               <CardHeader title="Publishing" description="Refresh your links across the global network if a recent change has not appeared." info={SETTINGS_HELP.publishing} />
-              <div className="px-5 pb-5">
+              <div className="px-4 pb-4">
                 <Button variant="outline" onClick={() => void runResync()} loading={resyncing !== null}>
                   <RefreshCw /> {resyncing !== null ? `Republishing… ${num(resyncing)}` : "Republish all links"}
                 </Button>
@@ -231,7 +232,7 @@ export function Settings() {
             </Card>
             <Card id="exports" className="scroll-mt-6">
               <CardHeader title="Exports" info={SETTINGS_HELP.exports} />
-              <div className="flex flex-wrap gap-2 px-5 pb-5">
+              <div className="flex flex-wrap gap-2 px-4 pb-4">
                 <DownloadButton href="/_admin/api/export/links.csv">Links (CSV)</DownloadButton>
                 <DownloadButton href="/_admin/api/stats/export.csv?range=all">Daily stats per link (CSV)</DownloadButton>
               </div>
@@ -250,7 +251,7 @@ export function Settings() {
           <>
             <Card id="statistics" className="scroll-mt-6">
               <CardHeader title="Statistics" description="Daily summaries preserve your history after individual click records expire." info={SETTINGS_HELP.statistics} />
-              <div className="space-y-3 px-5 pb-5 text-sm">
+              <div className="space-y-3 px-4 pb-4 text-sm">
                 <div className="flex items-center justify-between">
                   <span className="text-muted">Analytics Engine queries</span>
                   {s.aeAvailable ? <Badge tone="good">Configured</Badge> : <Badge tone="warn">Not configured</Badge>}
@@ -274,7 +275,7 @@ export function Settings() {
 
             <Card id="digest" className="scroll-mt-6">
               <CardHeader title="Weekly digest" description="Sent Mondays at 07:00 UTC with last week’s top links." info={SETTINGS_HELP.digest} />
-              <div className="space-y-3 px-5 pb-5 text-sm">
+              <div className="space-y-3 px-4 pb-4 text-sm">
                 <div className="flex items-center justify-between gap-3">
                   <span className="text-muted">Recipient</span>
                   <span className="truncate font-medium text-fg">{s.digestTo}</span>
@@ -295,9 +296,11 @@ export function Settings() {
                   <Button variant={s.digestProblem ? "primary" : "outline"} onClick={() => setMailSetup(true)}>
                     <Settings2 /> Set up email
                   </Button>
-                  <Button variant="outline" onClick={() => loadPreview.mutate()} loading={loadPreview.isPending}>
-                    Preview
-                  </Button>
+                  {can("stats.view") ? (
+                    <Button variant="outline" onClick={() => loadPreview.mutate()} loading={loadPreview.isPending}>
+                      Preview
+                    </Button>
+                  ) : null}
                   <Button variant="outline" onClick={() => sendTest.mutate()} loading={sendTest.isPending} disabled={s.digestProblem !== null}>
                     <Mail /> Send test
                   </Button>
@@ -317,10 +320,11 @@ export function Settings() {
         {tab === "access" ? (
           <>
             <AccountCard me={me} />
+            <AppearanceCard />
             {me.authMode === "password" ? (
               <Card id="people" className="scroll-mt-6 lg:col-span-2">
                 <CardHeader title="People" description="Give others their own sign-in and permissions." info={SETTINGS_HELP.people} />
-                <div className="px-5 pb-5 text-sm text-muted">
+                <div className="px-4 pb-4 text-sm text-muted">
                   <p>
                     Cloudflare Access is off, so everyone who knows the admin password signs in as the owner, and history can't tell people apart. Turn on Cloudflare Access
                     with <span className="font-mono text-xs text-fg">npm run setup -- access</span> to add people with their own passwords and permissions.
@@ -341,7 +345,7 @@ export function Settings() {
                   }
                   info={SETTINGS_HELP.security}
                 />
-                <div className="grid gap-6 px-5 pb-5 text-sm md:grid-cols-2">
+                <div className="grid gap-6 px-4 pb-4 text-sm md:grid-cols-2">
                   <div className="space-y-3">
                     {!me.passwordConfigured ? (
                       <Notice>

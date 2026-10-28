@@ -16,6 +16,8 @@ import { qrApi } from "./api/qr";
 import { utmApi } from "./api/utm";
 import { webhooksApi } from "./api/webhooks";
 import { settingsApi } from "./api/settings";
+import { sharesApi } from "./api/shares";
+import { sitesApi } from "./api/sites";
 import { statsApi } from "./api/stats";
 import { usersApi } from "./api/users";
 import { fullTokenScope, TOKEN_SCOPE_ERROR, verifyAdmin, verifyBearer, type AuthResult, type WaitUntil } from "./auth";
@@ -24,6 +26,7 @@ import { authorize } from "./permissions";
 
 export const api = new Hono<AppEnv>()
   .route("/", linksApi)
+  .route("/", sharesApi)
   .route("/stats", statsApi)
   .route("/settings", settingsApi)
   .route("/checks", checksApi)
@@ -33,7 +36,8 @@ export const api = new Hono<AppEnv>()
   .route("/webhooks", webhooksApi)
   .route("/me", meApi)
   .route("/users", usersApi)
-  .route("/keys", keysApi);
+  .route("/keys", keysApi)
+  .route("/sites", sitesApi);
 
 /** The writes the API token may make by default (import also refuses overwrite mode). */
 const TOKEN_WRITES = new Set(["POST /api/links", "POST /api/import", "POST /api/settings/digest/test"]);

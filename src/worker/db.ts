@@ -8,6 +8,9 @@ import { parseRouting, type RouteDevice } from "../shared/routing";
 import type { KvPreview } from "./preview";
 import type { LinkDTO, LinkSource } from "../shared/types";
 
+/** links.off_redirect for "send visitors to the main site". */
+export const OFF_HOME = "home";
+
 export interface LinkRow {
   domain: string;
   slug: string;
@@ -26,6 +29,8 @@ export interface LinkRow {
   broken: number;
   /** "domain/slug" of the link shown instead, when broken. */
   replacement: string | null;
+  /** While off (active 0): null shows the not-found page, "home" sends visitors to FALLBACK_URL, "domain/slug" to that link. */
+  off_redirect: string | null;
   /** MONITOR_DEFAULT (0): checked only when Link health checks all links; MONITOR_ON (1): checked; MONITOR_NEVER (2): never checked. */
   monitor: number;
   /** Smart routing JSON (src/shared/routing.ts), or null. */
@@ -60,6 +65,8 @@ export interface KvLink {
   b?: 1;
   /** replacement link, "domain/slug", present when b is 1 */
   r?: string;
+  /** where visitors go while the link is off: "home" or "domain/slug"; absent shows the not-found page */
+  o?: string;
   /** enabled routing rules, in order; absent without routing */
   ro?: KvRule[];
   /** custom social preview, for link-preview crawlers */
@@ -96,6 +103,7 @@ export function isKvLink(v: unknown): v is KvLink {
     (r.t === undefined || typeof r.t === "string") &&
     (r.b === undefined || r.b === 1) &&
     (r.r === undefined || typeof r.r === "string") &&
+    (r.o === undefined || typeof r.o === "string") &&
     (r.ro === undefined || Array.isArray(r.ro)) &&
     (r.og === undefined || (typeof r.og === "object" && r.og !== null)) &&
     (r.pw === undefined || typeof r.pw === "string") &&
@@ -116,6 +124,7 @@ function toKv(row: LinkRow, defaultUtm: string): KvLink {
     kv.b = 1;
     if (row.replacement) kv.r = row.replacement;
   }
+  if (!row.active && row.off_redirect) kv.o = row.off_redirect;
   const rules = parseRouting(row.routing)?.rules.filter((r) => r.enabled) ?? [];
   if (rules.length) {
     kv.ro = rules.map((r) => ({
@@ -166,6 +175,7 @@ export function toDTO(row: LinkRow, origin: string): LinkDTO {
     importedClicks: row.imported_clicks,
     broken: row.broken === 1,
     replacement: splitKey(row.replacement),
+    offRedirect: row.off_redirect === OFF_HOME ? "home" : splitKey(row.off_redirect),
     monitor: row.monitor === MONITOR_ON,
     neverCheck: row.monitor === MONITOR_NEVER,
     routing: parseRouting(row.routing),

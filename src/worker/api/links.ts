@@ -13,7 +13,7 @@ import { generateSlug, validateSlug } from "../../shared/slug";
 import { normalizeTarget, validateUtmTemplate } from "../../shared/target";
 import type { CapDTO, ImportResult, ImportRowResult, LinkDTO, LinkListItem } from "../../shared/types";
 import { fullTokenScope, TOKEN_SCOPE_ERROR } from "../auth";
-import { getDefaultUtm, getLink, kvKey, nowSec, publish, toDTO, type LinkRow } from "../db";
+import { getDefaultUtm, getLink, kvKey, nowSec, OFF_HOME, publish, toDTO, type LinkRow } from "../db";
 import { configuredDomains, domainsOf, isConfiguredDomain, NO_DOMAIN_ERROR, selfHosts, shortOrigin } from "../domains";
 import { csv, validate, type AppEnv } from "../hono";
 import { planLimits } from "../plan";
@@ -36,19 +36,19 @@ const notConfigured = (domain: string) => `domain: "${domain}" is not one of you
 function insertStmt(db: D1Database, r: LinkRow): D1PreparedStatement {
   return db
     .prepare(
-      `INSERT INTO links (domain, slug, target, active, expires_at, utm, utm_template, pass_query, title, tags, notes, source, imported_clicks, broken, replacement, monitor, routing, preview, qr, password_hash, max_clicks, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO links (domain, slug, target, active, expires_at, utm, utm_template, pass_query, title, tags, notes, source, imported_clicks, broken, replacement, off_redirect, monitor, routing, preview, qr, password_hash, max_clicks, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .bind(r.domain, r.slug, r.target, r.active, r.expires_at, r.utm, r.utm_template, r.pass_query, r.title, r.tags, r.notes, r.source, r.imported_clicks, r.broken, r.replacement, r.monitor, r.routing, r.preview, r.qr, r.password_hash, r.max_clicks, r.created_at, r.updated_at);
+    .bind(r.domain, r.slug, r.target, r.active, r.expires_at, r.utm, r.utm_template, r.pass_query, r.title, r.tags, r.notes, r.source, r.imported_clicks, r.broken, r.replacement, r.off_redirect, r.monitor, r.routing, r.preview, r.qr, r.password_hash, r.max_clicks, r.created_at, r.updated_at);
 }
 
 function updateStmt(db: D1Database, r: LinkRow): D1PreparedStatement {
   return db
     .prepare(
       `UPDATE links SET target = ?, active = ?, expires_at = ?, utm = ?, utm_template = ?, pass_query = ?,
-       title = ?, tags = ?, notes = ?, broken = ?, replacement = ?, monitor = ?, routing = ?, preview = ?, qr = ?, password_hash = ?, max_clicks = ?, updated_at = ? WHERE domain = ? AND slug = ? RETURNING *`,
+       title = ?, tags = ?, notes = ?, broken = ?, replacement = ?, off_redirect = ?, monitor = ?, routing = ?, preview = ?, qr = ?, password_hash = ?, max_clicks = ?, updated_at = ? WHERE domain = ? AND slug = ? RETURNING *`,
     )
-    .bind(r.target, r.active, r.expires_at, r.utm, r.utm_template, r.pass_query, r.title, r.tags, r.notes, r.broken, r.replacement, r.monitor, r.routing, r.preview, r.qr, r.password_hash, r.max_clicks, r.updated_at, r.domain, r.slug);
+    .bind(r.target, r.active, r.expires_at, r.utm, r.utm_template, r.pass_query, r.title, r.tags, r.notes, r.broken, r.replacement, r.off_redirect, r.monitor, r.routing, r.preview, r.qr, r.password_hash, r.max_clicks, r.updated_at, r.domain, r.slug);
 }
 
 /** Publishes a saved link to KV; false when that failed (it's saved in D1 either way: answer 502 with the link). */
@@ -146,6 +146,7 @@ function withSnapshot(row: LinkRow, s: Snapshot, now = nowSec()): LinkRow {
     notes: s.notes,
     broken: s.broken,
     replacement: s.replacement,
+    off_redirect: s.off_redirect ?? null,
     monitor: s.monitor ?? 1,
     routing: s.routing ?? null,
     preview: s.preview ?? null,
@@ -165,6 +166,7 @@ function restoreProblem(c: Context<AppEnv>, r: LinkRow): string | null {
     if (err) return `This version can't be restored: utmTemplate: ${err}`;
   }
   if (r.replacement === linkKey(r.domain, r.slug)) return "This version can't be restored: a link can't replace itself.";
+  if (r.off_redirect === linkKey(r.domain, r.slug)) return "This version can't be restored: a link can't send visitors to itself.";
   const preview = parsePreview(r.preview);
   if (preview && !validatePreview(preview).ok) return "This version can't be restored: its social preview is no longer valid.";
   const routing = parseRouting(r.routing);
@@ -174,6 +176,9 @@ function restoreProblem(c: Context<AppEnv>, r: LinkRow): string | null {
   }
   return null;
 }
+
+/** stat_shares rows that still work (not revoked, not expired), for the links list. */
+const ACTIVE_SHARE = "revoked_at IS NULL AND (expires_at IS NULL OR expires_at > unixepoch())";
 
 const PUBLISH_FAILED = "Saved, but publishing to KV failed. Save it again in a minute, or use “Republish all links” in Settings → General.";
 
@@ -218,13 +223,18 @@ export const linksApi = new Hono<AppEnv>()
     if (status === "broken") where.push(`active = 1 AND (expires_at IS NULL OR expires_at > ${now}) AND broken = 1`);
     if (status === "disabled") where.push("active = 0");
     if (status === "expired") where.push(`expires_at IS NOT NULL AND expires_at <= ${now}`);
+    if (status === "shared") where.push(`(domain, slug) IN (SELECT domain, slug FROM stat_shares WHERE ${ACTIVE_SHARE})`);
     if (status === "failing") {
       where.push(`active = 1 AND (expires_at IS NULL OR expires_at > ${now}) AND broken = 0 AND ${checkedSql(scope)}`);
       where.push(
         "(domain, slug) IN (SELECT domain, slug FROM link_destinations WHERE url IN (SELECT target FROM target_checks WHERE status IN ('warning', 'down')))",
       );
     }
-    const counts = Promise.all([clicksByLink(c.env, "all"), period === "all" ? null : clicksByLink(c.env, period)]);
+    // Click counts are statistics: only for people who may see those.
+    const seesClicks = can(c.get("actor"), "stats.view");
+    const counts = seesClicks
+      ? Promise.all([clicksByLink(c.env, "all"), period === "all" ? null : clicksByLink(c.env, period)])
+      : Promise.resolve<[Map<string, number>, Map<string, number> | null]>([new Map(), null]);
     let order = sort === "slug" ? "slug COLLATE NOCASE ASC, domain" : sort === "updated" ? "updated_at DESC" : "created_at DESC";
     let join = "";
     if (sort === "clicks") {
@@ -242,7 +252,7 @@ export const linksApi = new Hono<AppEnv>()
       order = "r.key IS NULL, r.key, created_at DESC";
     }
     const sql = `SELECT links.* FROM links${join} ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY ${order} LIMIT ${LIST_LIMIT}`;
-    const [{ results }, [totals, inPeriod], checks] = await Promise.all([
+    const [{ results }, [totals, inPeriod], checks, shared] = await Promise.all([
       c.env.DB.prepare(sql)
         .bind(...params)
         .all<LinkRow>(),
@@ -254,7 +264,9 @@ export const linksApi = new Hono<AppEnv>()
         http_status: number | null;
         checked_at: number;
       }>(),
+      c.env.DB.prepare(`SELECT domain, slug, COUNT(*) AS n FROM stat_shares WHERE ${ACTIVE_SHARE} GROUP BY domain, slug`).all<{ domain: string; slug: string; n: number }>(),
     ]);
+    const shareCount = new Map(shared.results.map((r) => [linkKey(r.domain, r.slug), r.n]));
     const clicks = inPeriod ?? totals;
     const checkOf = new Map(checks.results.map((r) => [r.target, r]));
     let links: LinkListItem[] = results.map((r) => {
@@ -266,6 +278,7 @@ export const linksApi = new Hono<AppEnv>()
         ...dto(c, r),
         clicksPeriod: clicks.get(key) ?? 0,
         clicksTotal: totals.get(key) ?? 0,
+        shares: shareCount.get(key) ?? 0,
         check: ch ? { state: ch.status, problem: isCheckProblem(ch.problem) ? ch.problem : null, httpStatus: ch.http_status, checkedAt: ch.checked_at } : null,
       };
     });
@@ -306,6 +319,7 @@ export const linksApi = new Hono<AppEnv>()
       imported_clicks: null,
       broken: 0,
       replacement: null,
+      off_redirect: null,
       monitor: body.neverCheck ? MONITOR_NEVER : body.monitor ? MONITOR_ON : MONITOR_DEFAULT,
       routing: routing.json,
       preview: preview.json,
@@ -417,6 +431,14 @@ export const linksApi = new Hono<AppEnv>()
       }
       next.replacement = r ? linkKey(r.domain, r.slug) : null;
     }
+    if (body.offRedirect !== undefined) {
+      const o = body.offRedirect;
+      if (o && o !== "home") {
+        if (o.domain === domain && o.slug === slug) return c.json({ error: "offRedirect: A link can't send visitors to itself." }, 400);
+        if (!(await getLink(c.env.DB, o.domain, o.slug))) return c.json({ error: `offRedirect: ${linkKey(o.domain, o.slug)} doesn't exist.` }, 400);
+      }
+      next.off_redirect = o === "home" ? OFF_HOME : o ? linkKey(o.domain, o.slug) : null;
+    }
 
     // A new limit counts from now; changing an existing one keeps the count.
     if (row.max_clicks === null && next.max_clicks !== null) await resetCounter(c.env, next);
@@ -426,21 +448,28 @@ export const linksApi = new Hono<AppEnv>()
     });
   })
 
-  /** Links that point visitors to this one while marked "no longer working". */
+  /** Links that point visitors to this one while marked "no longer working" or turned off. */
   .get("/links/:domain/:slug/dependents", validate("param", linkParamSchema), async (c) => {
     const { domain, slug } = c.req.valid("param");
-    const { results } = await c.env.DB.prepare("SELECT * FROM links WHERE replacement = ? AND broken = 1 ORDER BY domain, slug")
-      .bind(linkKey(domain, slug))
+    const key = linkKey(domain, slug);
+    const { results } = await c.env.DB.prepare("SELECT * FROM links WHERE (replacement = ?1 AND broken = 1) OR (off_redirect = ?1 AND active = 0) ORDER BY domain, slug")
+      .bind(key)
       .all<LinkRow>();
     return c.json({ links: results.map((r) => dto(c, r)) });
   })
 
   .delete("/links/:domain/:slug", validate("param", linkParamSchema), async (c) => {
     const { domain, slug } = c.req.valid("param");
-    if (!(await getLink(c.env.DB, domain, slug))) return c.json({ error: "Link not found" }, 404);
+    const existing = await getLink(c.env.DB, domain, slug);
+    if (!existing) return c.json({ error: "Link not found" }, 404);
     // KV first: if this fails the link still exists in D1 and the delete can be retried;
     // the other way round, a leftover KV record would keep redirecting.
-    await c.env.LINKS.delete(kvKey(domain, slug));
+    try {
+      await c.env.LINKS.delete(kvKey(domain, slug));
+    } catch (err) {
+      console.error(JSON.stringify({ message: "kv delete failed", domain, slug, error: String(err) }));
+      return c.json({ error: "Couldn't remove the link from KV, so it wasn't deleted. Try again in a minute.", link: dto(c, existing) }, 502);
+    }
     // The delete's version keeps the link as D1 holds it, so it can be restored.
     const [, removed] = await c.env.DB.batch<LinkRow>([
       c.env.DB.prepare(
@@ -448,6 +477,8 @@ export const linksApi = new Hono<AppEnv>()
          SELECT domain, slug, ?1, 'delete', ?2, ${SNAPSHOT_SQL} FROM links WHERE domain = ?3 AND slug = ?4`,
       ).bind(nowSec(), c.get("identity"), domain, slug),
       c.env.DB.prepare("DELETE FROM links WHERE domain = ? AND slug = ? RETURNING *").bind(domain, slug),
+      // Its shared statistics pages end for good, even if the link is restored.
+      c.env.DB.prepare("UPDATE stat_shares SET revoked_at = ? WHERE domain = ? AND slug = ? AND revoked_at IS NULL").bind(nowSec(), domain, slug),
     ]);
     // Again, for an edit that published between the two steps above (its own check covers later ones).
     await c.env.LINKS.delete(kvKey(domain, slug));
@@ -619,6 +650,7 @@ export const linksApi = new Hono<AppEnv>()
         imported_clicks: r.clicks ?? null,
         broken: 0,
         replacement: null,
+        off_redirect: null,
         monitor: MONITOR_DEFAULT,
         routing: null,
         preview: null,

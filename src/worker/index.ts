@@ -1,16 +1,21 @@
 import { NOT_FOUND_IMAGE_PATH, NOT_FOUND_PREVIEW_PATH } from "../shared/not-found";
-import { CHECKS_CRON, DIGEST_CRON } from "../shared/schedule";
+import { CHECKS_CRON, DIGEST_CRON, ROLLUP_CRON } from "../shared/schedule";
 import { serveAdmin } from "./admin";
 import { app } from "./app";
 import { SERVED_BY_HEADER } from "./dns-check";
 import { resolveSite } from "./domains";
-import { isCleanupRun, scheduledCleanup, scheduledDaily, scheduledDigest, scheduledLinkChecks } from "./health";
+import { runSiteAlerts } from "./web/alerts";
+import { isCleanupRun, isRevenueRun, isWebRollupRun, scheduledCleanup, scheduledDaily, scheduledDigest, scheduledLinkChecks, scheduledRevenue, scheduledWebRollup } from "./health";
 import { PREVIEW_IMAGE_PATH } from "../shared/preview";
 import { servePreviewImage } from "./preview";
 import { loginApp } from "./login";
 import { notFoundResponse, serveNotFoundImage } from "./not-found";
+import { serveShare, SHARE_PREFIX } from "./share";
 import { handleRedirect, redirectTo } from "./redirect";
+import { handlePaymentWebhook, PAY_PREFIX } from "./revenue/ingest";
 import { withGeneratedSecrets } from "./secrets";
+import { COLLECT_PATH, handleCollect } from "./web/collect";
+import { SCRIPT_PATH, serveScript } from "./web/script";
 
 /** Server-rendered password pages (src/worker/login.ts). */
 const LOGIN_PATHS = new Set(["/_admin/login", "/_admin/logout", "/_admin/forgot", "/_admin/bot-check"]);
@@ -33,6 +38,12 @@ export default {
     if (isAdmin && !site.admin) return notFoundResponse(env, site.domain, null);
     // Preview images also load on the admin host, where the link editor shows them.
     const isPreviewImage = path.startsWith(PREVIEW_IMAGE_PATH);
+    // Website analytics and payment webhooks answer on every host, the admin host included.
+    if (path === SCRIPT_PATH) return serveScript(request);
+    if (path === COLLECT_PATH) return handleCollect(request, env, ctx);
+    if (path.startsWith(PAY_PREFIX)) return handlePaymentWebhook(request, env, ctx, path);
+    // Shared statistics pages: public, on the admin host only (outside /_admin, so Access doesn't cover them).
+    if (path.startsWith(SHARE_PREFIX)) return site.admin ? serveShare(request, env, ctx, url) : notFoundResponse(env, site.domain, null);
     if (site.adminOnly && !isAdmin && path !== "/health" && !isPreviewImage) {
       return path === "/" ? new Response(null, { status: 302, headers: { Location: "/_admin/" } }) : new Response("Not found", { status: 404 });
     }
@@ -54,7 +65,10 @@ export default {
 
   // One job per invocation, so each stays inside the plan's subrequest limit
   // (src/worker/plan.ts). The half-hourly cron's 02:00 UTC slot does the
-  // daily cleanup instead of that run's destination checks.
+  // daily cleanup, its 02:30 slot the website rollup and its 03:00 slot the
+  // revenue work, instead of that run's destination checks. The hourly cron
+  // does the daily run at 01:15 UTC and website alerts (spikes, daily
+  // digests) the other hours.
   async scheduled(controller, env, ctx) {
     env = await withGeneratedSecrets(env);
     const now = new Date(controller.scheduledTime);
@@ -63,7 +77,10 @@ export default {
     if (controller.cron === DIGEST_CRON) run("digest run", scheduledDigest(env, now));
     else if (controller.cron === CHECKS_CRON) {
       if (isCleanupRun(now)) run("cleanup run", scheduledCleanup(env, now));
+      else if (isWebRollupRun(now)) run("website rollup run", scheduledWebRollup(env, now));
+      else if (isRevenueRun(now)) run("revenue run", scheduledRevenue(env));
       else run("link checks run", scheduledLinkChecks(env));
-    } else run("daily run", scheduledDaily(env, now));
+    } else if (controller.cron === ROLLUP_CRON && now.getUTCHours() !== 1) run("site alerts run", runSiteAlerts(env, Math.floor(now.getTime() / 1000)));
+    else run("daily run", scheduledDaily(env, now));
   },
 } satisfies ExportedHandler<Env>;

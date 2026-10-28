@@ -7,3 +7,9 @@ interface ImportMetaEnv {
 interface ImportMeta {
   readonly env: ImportMetaEnv;
 }
+
+// Vite's ?raw imports: a file's text as a string (the tracker script).
+declare module "*?raw" {
+  const text: string;
+  export default text;
+}

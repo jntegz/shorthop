@@ -286,7 +286,7 @@ loginApp.post("/_admin/login", async (c) => {
   turnstile = bot.widget;
   if (bot.error) return render(400, bot.error);
 
-  const globalUntil = await globalLockedUntil(env.DB, now);
+  const globalUntil = await globalLockedUntil(env.DB, now, access.owner);
   if (globalUntil) return render(429, `Logins are paused after many failed attempts. Try again in ${waitText(globalUntil - now)}.`, globalUntil - now);
 
   const state = await chargeAttempt(env.DB, key, now);
@@ -316,7 +316,7 @@ loginApp.post("/_admin/login", async (c) => {
 
   // The event first: the global brake counts the networks failures came from.
   await loginEventStmt(env.DB, false, key, country, now, access.email).run();
-  await recordGlobalFailure(env.DB, now);
+  await recordGlobalFailure(env.DB, now, access.owner);
   console.warn(
     JSON.stringify({
       message: "admin login failed",
@@ -384,11 +384,14 @@ loginApp.post("/_admin/forgot", async (c) => {
   if (limited) return render(429, limited);
 
   const from = { email: mailEnv.DIGEST_FROM, name: "Shorthop" };
+  // Nothing went out, so the cooldown shouldn't make them wait to try again (the other limits stay charged).
+  const refund = (...more: D1PreparedStatement[]) => env.DB.batch([clearFailuresStmt(env.DB, `reset:${access.email}`), ...more]);
   if (mode === "admin") {
     try {
       await sendMail(mailEnv, { from, to: mailEnv.DIGEST_TO, ...adminResetNote(user) });
     } catch (err) {
       console.error(JSON.stringify({ message: "password reset note failed", email: access.email, error: String(err) }));
+      await refund();
       return render(502, { error: "The message to an admin couldn't be sent. Ask an admin or manager directly." });
     }
     console.log(JSON.stringify({ message: "password reset requested", email: access.email, via: "admin", ipHash: key }));
@@ -404,6 +407,7 @@ loginApp.post("/_admin/forgot", async (c) => {
     await sendPersonMail(mailEnv, user, { from, ...resetEmail(access.email, `${new URL(c.req.url).origin}/_admin/reset/${token}`) });
   } catch (err) {
     console.error(JSON.stringify({ message: "password reset email failed", email: access.email, error: String(err) }));
+    await refund(env.DB.prepare("UPDATE users SET reset_hash = NULL, reset_expires = NULL WHERE email = ?").bind(access.email));
     return render(502, { error: "The email couldn't be sent. Try again later, or ask an admin or manager to reset your password." });
   }
   console.log(JSON.stringify({ message: "password reset requested", email: access.email, via: "email", ipHash: key }));
@@ -486,7 +490,7 @@ for (const kind of ["invite", "reset"] as const) {
     const cf = c.req.raw.cf as IncomingRequestCfProperties | undefined;
     const [{ cookie }] = await Promise.all([
       getEpoch(env.DB).then((global) => issueSessionCookie(cfg, access.email, { global, user: epoch }, now)),
-      env.DB.batch([clearFailuresStmt(env.DB, key), loginEventStmt(env.DB, true, key, String(cf?.country ?? ""), now, access.email)]),
+      env.DB.batch([clearFailuresStmt(env.DB, tokenKey(key)), loginEventStmt(env.DB, true, key, String(cf?.country ?? ""), now, access.email)]),
     ]);
     if (kind === "reset") {
       afterResponse(

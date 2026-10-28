@@ -648,9 +648,9 @@ describe("abuse limits", () => {
     const now = nowSec();
     for (let i = 0; i < 40; i++) {
       await loginEventStmt(env.DB, false, "one-network", "", now, "owner@example.com").run();
-      await recordGlobalFailure(env.DB, now);
+      await recordGlobalFailure(env.DB, now, true);
     }
-    expect(await globalLockedUntil(env.DB, now)).toBe(0);
+    expect(await globalLockedUntil(env.DB, now, true)).toBe(0);
   });
 
   it("refuses a locked network before comparing its API token", async () => {

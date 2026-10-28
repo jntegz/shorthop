@@ -4,6 +4,7 @@
 // DNS-over-HTTPS resolver; nothing is stored.
 
 import type { DomainCheckDTO, DomainRecord } from "../shared/types";
+import { isFetchableUrl } from "../shared/link-check";
 import { isConfiguredDomain } from "./domains";
 
 const DOH = "https://cloudflare-dns.com/dns-query";
@@ -64,8 +65,11 @@ async function addressRecords(domain: string): Promise<DomainRecord[]> {
 }
 
 async function serving(domain: string): Promise<Pick<DomainCheckDTO, "serving" | "servingDetail"> & { reached: boolean }> {
+  const url = new URL(`https://${domain}/health`);
+  // The same public-hosts-only rule as destination checks and webhooks.
+  if (!isFetchableUrl(url)) return { serving: "no", servingDetail: `${domain} isn't a public host name.`, reached: false };
   try {
-    const res = await fetch(`https://${domain}/health`, {
+    const res = await fetch(url, {
       redirect: "manual",
       headers: { "User-Agent": "shorthop-check/1 (+setup check)" },
       signal: AbortSignal.timeout(5000),

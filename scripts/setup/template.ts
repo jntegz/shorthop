@@ -39,6 +39,8 @@ export interface SetupConfig {
   d1Name: string;
   d1Id: string | null;
   aeDataset: string;
+  /** The website analytics dataset (the WEB binding). */
+  webDataset: string;
   plan: Plan;
   /** What API_TOKEN may do; only "full" lets it change and delete. */
   tokenScope: TokenScope;
@@ -67,6 +69,7 @@ export const EXAMPLE_CONFIG: SetupConfig = {
   d1Name: "shorthop",
   d1Id: null,
   aeDataset: "shorthop_clicks",
+  webDataset: "shorthop_web",
   plan: "free",
   tokenScope: "create",
   digestProvider: "cloudflare",
@@ -153,7 +156,11 @@ ${routes}
       "migrations_dir": "migrations"
     }
   ],
-  "analytics_engine_datasets": [{ "binding": "CLICKS", "dataset": ${j(c.aeDataset)} }],
+  "analytics_engine_datasets": [
+    { "binding": "CLICKS", "dataset": ${j(c.aeDataset)} },
+    // Website analytics events from /_t/script.js (src/worker/web/collect.ts).
+    { "binding": "WEB", "dataset": ${j(c.webDataset)} }
+  ],
   "ratelimits": [
     // Failed API-token attempts per client IP.
     { "name": "AUTH_LIMITER", "namespace_id": "1001", "simple": { "limit": 10, "period": 60 } },
@@ -161,7 +168,12 @@ ${routes}
     // that counts is kept in D1).
     { "name": "LOGIN_LIMITER", "namespace_id": "1002", "simple": { "limit": 5, "period": 60 } },
     // Password attempts on a protected short link, per client network and link.
-    { "name": "LINK_PASSWORD_LIMITER", "namespace_id": "1003", "simple": { "limit": 10, "period": 60 } }
+    { "name": "LINK_PASSWORD_LIMITER", "namespace_id": "1003", "simple": { "limit": 10, "period": 60 } },
+    // Shared statistics pages and payment webhooks, per client network.
+    { "name": "PUBLIC_LIMITER", "namespace_id": "1004", "simple": { "limit": 120, "period": 60 } },
+    // Website analytics events per client network, all sites together (a page sends a
+    // few per view; this only stops floods of made-up traffic).
+    { "name": "COLLECT_LIMITER", "namespace_id": "1005", "simple": { "limit": 300, "period": 60 } }
   ],
 
   // Exact click limits: one counter per capped link, used only by links with a
@@ -172,8 +184,10 @@ ${routes}
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ClickCap"] }],
 ${sendEmail}
   "triggers": {
-    // Daily rollup at 01:15 UTC, weekly digest Mondays 07:00 UTC, destination
-    // checks every 30 minutes (src/shared/schedule.ts).
+    // Hourly at :15 (daily rollups at 01:15 UTC, website alerts the other hours),
+    // weekly digest Mondays 07:00 UTC, destination checks every 30 minutes; the
+    // 02:00 and 03:00 UTC ones do the cleanup and the revenue work instead
+    // (src/shared/schedule.ts).
     "crons": [${j(ROLLUP_CRON)}, ${j(DIGEST_CRON)}, ${j(CHECKS_CRON)}]
   },
 
@@ -199,6 +213,7 @@ ${sendEmail}
     "KV_CACHE_TTL": "60",
     // The Analytics Engine dataset above (letters, digits and _ only).
     "AE_DATASET": ${j(c.aeDataset)},
+    "AE_WEB_DATASET": ${j(c.webDataset)},
     // "free" or "paid". Sizes bulk work (republish pages, import batches, checks
     // per run) to the plan's subrequest limit, and System status checks the
     // password hash cost against it. Say "free" unless you pay for Workers.
@@ -259,6 +274,7 @@ export function configFromText(text: string, file = CONFIG_FILE): SetupConfig {
   const kv = obj(arr(raw.kv_namespaces).map(obj).find((k) => k.binding === "LINKS"));
   const d1 = obj(arr(raw.d1_databases).map(obj).find((d) => d.binding === "DB"));
   const ae = obj(arr(raw.analytics_engine_datasets).map(obj).find((d) => d.binding === "CLICKS"));
+  const web = obj(arr(raw.analytics_engine_datasets).map(obj).find((d) => d.binding === "WEB"));
   const provider = str(vars.DIGEST_PROVIDER, "cloudflare").trim().toLowerCase();
   const auth = str(vars.ADMIN_AUTH);
   // Rewriting an unknown value as the default would silently unlock a deliberately locked admin.
@@ -280,6 +296,7 @@ export function configFromText(text: string, file = CONFIG_FILE): SetupConfig {
     d1Name: str(d1.database_name, EXAMPLE_CONFIG.d1Name),
     d1Id: str(d1.database_id) || null,
     aeDataset: str(vars.AE_DATASET) || str(ae.dataset, EXAMPLE_CONFIG.aeDataset),
+    webDataset: str(vars.AE_WEB_DATASET) || str(web.dataset, EXAMPLE_CONFIG.webDataset),
     plan: str(vars.WORKERS_PLAN) === "paid" ? "paid" : "free",
     tokenScope: str(vars.API_TOKEN_SCOPE) === "full" ? "full" : "create",
     digestProvider: (PROVIDERS as readonly string[]).includes(provider) ? (provider as Provider) : "off",
@@ -325,9 +342,14 @@ export function outdatedProblems(text: string, file = CONFIG_FILE): string[] {
   const crons = arr(obj(raw.triggers).crons);
   const limiters = arr(raw.ratelimits).map((r) => obj(r).name);
   const objects = arr(obj(raw.durable_objects).bindings).map((b) => obj(b).name);
+  const datasets = arr(raw.analytics_engine_datasets).map((d) => obj(d).binding);
   const problems: string[] = [];
+  if (!crons.includes(ROLLUP_CRON)) problems.push(`The cron "${ROLLUP_CRON}" (hourly: daily rollups and website alerts) is missing from triggers.crons.`);
   if (!crons.includes(CHECKS_CRON)) problems.push(`The cron "${CHECKS_CRON}" (destination checks) is missing from triggers.crons.`);
   if (!limiters.includes("LINK_PASSWORD_LIMITER")) problems.push("The LINK_PASSWORD_LIMITER rate limiter (password-protected links) is missing.");
+  if (!limiters.includes("PUBLIC_LIMITER")) problems.push("The PUBLIC_LIMITER rate limiter (shared statistics pages and payment webhooks) is missing.");
+  if (!limiters.includes("COLLECT_LIMITER")) problems.push("The COLLECT_LIMITER rate limiter (website analytics) is missing.");
+  if (!datasets.includes("WEB")) problems.push("The WEB Analytics Engine dataset (website analytics) is missing.");
   if (!objects.includes("CLICK_CAPS")) problems.push("The CLICK_CAPS Durable Object and its migrations entry (click limits) are missing.");
   return problems;
 }

@@ -8,7 +8,7 @@ import { PERMISSIONS, ROLES } from "./permissions";
 import { LINK_PASSWORD_MAX, LINK_PASSWORD_MIN, MAX_CLICK_LIMIT } from "./protection";
 import { ROUTE_DEVICES } from "./routing";
 import { IMPORT_SLUG_RE } from "./slug";
-import { DIGEST_PROVIDERS, LIST_PERIODS, MISS_RETENTION_DAYS, NOISE_LIMITS, RANGES, REAL_MISS_LIMITS } from "./types";
+import { DIGEST_PROVIDERS, LIST_PERIODS, MISS_RETENTION_DAYS, NOISE_LIMITS, RANGES, REAL_MISS_LIMITS, SHARE_RANGES } from "./types";
 
 /** A short domain as typed: trimmed and lowercased; membership is checked by the API. */
 const domain = z.string().trim().toLowerCase().max(253);
@@ -118,6 +118,8 @@ export const updateLinkSchema = z.object({
   broken: z.boolean().optional(),
   /** The link visitors are pointed to while this one is marked broken; null for none. */
   replacement: z.object({ domain: z.string().regex(HOSTNAME_RE), slug: z.string().regex(IMPORT_SLUG_RE) }).nullish(),
+  /** Where visitors go while the link is off: "home" (the main site), another link, or null for the not-found page. */
+  offRedirect: z.union([z.literal("home"), z.object({ domain: z.string().regex(HOSTNAME_RE), slug: z.string().regex(IMPORT_SLUG_RE) })]).nullish(),
 });
 
 const importRowSchema = z.object({
@@ -142,7 +144,7 @@ export const listQuerySchema = z.object({
   domain: domain.optional(),
   q: z.string().max(200).optional(),
   tag: z.string().max(100).optional(),
-  status: z.enum(["all", "active", "disabled", "expired", "broken", "failing"]).default("all"),
+  status: z.enum(["all", "active", "disabled", "expired", "broken", "failing", "shared"]).default("all"),
   sort: z.enum(["created", "updated", "slug", "clicks"]).default("created"),
   period: z.enum(LIST_PERIODS).default("7d"),
 });
@@ -176,6 +178,20 @@ export const clearMissesSchema = z
     probes: z.literal(true).optional(),
   })
   .refine((v) => !(v.links && v.probes), { message: "Send links or probes, not both" });
+
+export const ignoreMissesSchema = z.object({
+  links: z
+    .array(
+      z.object({
+        domain: z.string().regex(HOSTNAME_RE),
+        slug: z.string().min(1).max(512),
+        /** When it was first ignored (a CSV import keeps the original date); today if left out. */
+        since: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+      }),
+    )
+    .min(1)
+    .max(500),
+});
 
 export const missPolicySchema = z.object({
   trackHumans: z.boolean(),
@@ -335,3 +351,24 @@ export const passwordChangeSchema = z.object({
   current: z.string().min(1, "Enter your current password").max(1024),
   next: z.string().min(12, "Use at least 12 characters").max(1024),
 });
+
+/** Link page → Share: a new read-only statistics page. */
+export const createShareSchema = z.object({
+  /** Unix seconds; null or absent keeps it until revoked. */
+  expiresAt: z.number().int().positive().nullish(),
+  password: z.string().min(LINK_PASSWORD_MIN).max(LINK_PASSWORD_MAX).nullish(),
+  rangeLimit: z.enum(SHARE_RANGES).nullish(),
+  showRecent: z.boolean().optional(),
+});
+
+export const updateShareSchema = z.object({
+  expiresAt: z.number().int().positive().nullable().optional(),
+  /** A new password; null removes it. Either way, everyone who opened it must enter the new one. */
+  password: z.string().min(LINK_PASSWORD_MIN).max(LINK_PASSWORD_MAX).nullable().optional(),
+  rangeLimit: z.enum(SHARE_RANGES).nullable().optional(),
+  showRecent: z.boolean().optional(),
+  /** Ends the share for good. */
+  revoke: z.literal(true).optional(),
+});
+
+export const shareParamSchema = z.object({ id: z.string().regex(/^[a-z0-9]{8}$/) });

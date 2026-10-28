@@ -80,7 +80,7 @@ export function RecentHits() {
         description="The latest visits to your short links, one row each, straight from Cloudflare Analytics Engine. Nothing is saved: Cloudflare keeps raw hits for 90 days."
       />
 
-      <div className="mb-3 flex flex-wrap gap-2 rounded-2xl border border-line bg-surface p-3">
+      <div className="mb-3 flex flex-wrap gap-2 rounded-lg border border-line bg-surface p-3">
         <form onSubmit={applySlug} className="relative min-w-56 flex-1">
           <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-subtle" />
           <Input
@@ -201,9 +201,9 @@ export function RecentHits() {
                       {h.event === "bot" ? (
                         <Badge tone="warn">{h.botName || "Bot"}</Badge>
                       ) : h.event === "miss" ? (
-                        <Badge>{h.scanner ? "Miss · scanner" : "Miss"}</Badge>
+                        <span className="text-xs text-muted">{h.scanner ? "Miss · scanner" : "Miss"}</span>
                       ) : (
-                        <Badge tone="good">Click</Badge>
+                        <span className="text-xs text-muted">Click</span>
                       )}
                     </td>
                     <td className="py-1.5">
