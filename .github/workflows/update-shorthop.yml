@@ -1,0 +1,134 @@
+# Updates a Deploy to Cloudflare copy of shorthop to a new release: Actions →
+# Update Shorthop → Run workflow. It opens a pull request (or commits, with
+# mode "commit"); merging it deploys through Workers Builds, which also applies
+# the database migrations. Your wrangler.toml ids, routes and vars are kept
+# (scripts/setup/update-copy.ts). docs/SETUP.md#deploy-button has the details.
+
+name: Update Shorthop
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to update to, such as 1.2.0, or "latest"'
+        default: latest
+        required: true
+      mode:
+        description: "pull-request: open a pull request to review and merge. commit: push straight to the default branch (deploys at once)."
+        type: choice
+        options: [pull-request, commit]
+        default: pull-request
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: update-shorthop
+  cancel-in-progress: false
+
+jobs:
+  update:
+    # Only in copies: shorthop itself is updated by its own commits.
+    if: github.repository != 'jntegz/shorthop'
+    runs-on: ubuntu-latest
+    env:
+      UPSTREAM: jntegz/shorthop
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      INPUT_VERSION: ${{ inputs.version }}
+      MODE: ${{ inputs.mode }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: copy
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Find the version
+        id: version
+        run: |
+          if [ "$INPUT_VERSION" = "latest" ]; then
+            tag=$(gh api "repos/$UPSTREAM/releases/latest" --jq .tag_name)
+          else
+            tag="v${INPUT_VERSION#v}"
+          fi
+          if ! printf '%s' "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::\"$tag\" isn't a version like 1.2.0."
+            exit 1
+          fi
+          current=$(node -p "require('./copy/package.json').version")
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+          echo "current=$current" >> "$GITHUB_OUTPUT"
+          if [ "$current" = "${tag#v}" ]; then
+            echo "Shorthop $current is already up to date." | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download the release
+        if: steps.version.outputs.skip != 'true'
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          CURRENT: ${{ steps.version.outputs.current }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/new" "$RUNNER_TEMP/old"
+          curl -sSfL "https://github.com/$UPSTREAM/archive/refs/tags/$TAG.tar.gz" | tar -xz -C "$RUNNER_TEMP/new" --strip-components=1
+          # The version the copy is on, to find files the new one removed. Optional.
+          curl -sSfL "https://github.com/$UPSTREAM/archive/refs/tags/v$CURRENT.tar.gz" | tar -xz -C "$RUNNER_TEMP/old" --strip-components=1 \
+            || { echo "::warning::v$CURRENT isn't a release, so files removed since then stay."; rm -rf "$RUNNER_TEMP/old"; }
+          cd "$RUNNER_TEMP/new" && npm ci --no-audit --no-fund
+
+      - name: Update the files
+        if: steps.version.outputs.skip != 'true'
+        working-directory: ${{ runner.temp }}/new
+        run: |
+          previous=()
+          [ -d "$RUNNER_TEMP/old" ] && previous=(--previous "$RUNNER_TEMP/old")
+          npx tsx scripts/setup/update-copy.ts --target "$GITHUB_WORKSPACE/copy" "${previous[@]}" --summary "$RUNNER_TEMP/summary.md"
+          cat "$RUNNER_TEMP/summary.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Commit
+        if: steps.version.outputs.skip != 'true'
+        working-directory: copy
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "Nothing to change." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          branch="shorthop-update-v$VERSION"
+          if [ "$MODE" = "commit" ]; then
+            git add -A
+            git commit -q -m "Update Shorthop to $VERSION"
+            git push origin "HEAD:$DEFAULT_BRANCH"
+            echo "Committed to $DEFAULT_BRANCH. Workers Builds deploys it now." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          git checkout -q -b "$branch"
+          git add -A
+          git commit -q -m "Update Shorthop to $VERSION"
+          git push -f origin "$branch"
+          if [ -n "$(gh pr list --head "$branch" --state open --json number --jq '.[].number')" ]; then
+            echo "The pull request for $branch is updated." | tee -a "$GITHUB_STEP_SUMMARY"
+          elif gh pr create --base "$DEFAULT_BRANCH" --head "$branch" --title "Update Shorthop to $VERSION" --body-file "$RUNNER_TEMP/summary.md"; then
+            echo "Opened a pull request: merge it to deploy." | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            # New repositories don't let Actions open pull requests until you allow it
+            # (Settings → Actions → General → Allow GitHub Actions to create and approve pull requests).
+            url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/compare/$DEFAULT_BRANCH...$branch?expand=1"
+            {
+              echo
+              echo "### Open the pull request yourself"
+              echo
+              echo "GitHub didn't let this workflow open it. The update is on the branch \`$branch\`: [compare and open the pull request]($url), then merge it."
+              echo "Or allow it once (Settings → Actions → General → Allow GitHub Actions to create and approve pull requests) and run this workflow again."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::notice::Open the pull request at $url"
+          fi

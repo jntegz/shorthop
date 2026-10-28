@@ -629,6 +629,19 @@ export interface JobRun {
   error?: string;
 }
 
+/** The running version and the newest release (System status). */
+export interface AppVersionDTO {
+  /** package.json's version at build time, or "dev". */
+  current: string;
+  /** The newest release on GitHub; null until GitHub has answered. */
+  latest: string | null;
+  /** Its release page. */
+  url: string | null;
+  /** Unix seconds: when GitHub was last asked. */
+  checkedAt: number | null;
+  updateAvailable: boolean;
+}
+
 export interface SystemHealthDTO {
   checks: HealthCheck[];
   /** Worst status across the checks that aren't advisory. */

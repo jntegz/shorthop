@@ -4,6 +4,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { parse, printParseErrorCode, type ParseError } from "jsonc-parser";
+import { parse as parseToml } from "smol-toml";
 import { CHECKS_CRON, DIGEST_CRON, ROLLUP_CRON } from "../../src/shared/schedule";
 import { DIGEST_PROVIDERS as PROVIDERS, type DigestProvider } from "../../src/shared/types";
 
@@ -80,6 +81,14 @@ export const EXAMPLE_CONFIG: SetupConfig = {
   customAuth: "",
   customBody: "",
 };
+
+/**
+ * The website dataset for a config from before websites: next to its click
+ * dataset ("links_clicks" → "links_web"), as a fresh install names them.
+ */
+export function webDatasetFor(aeDataset: string): string {
+  return aeDataset.endsWith("_clicks") ? `${aeDataset.slice(0, -"_clicks".length)}_web` : `${aeDataset}_web`;
+}
 
 /** Every hostname the Worker needs a custom domain for. */
 export function routeHosts(c: SetupConfig): string[] {
@@ -279,6 +288,7 @@ export function configFromText(text: string, file = CONFIG_FILE): SetupConfig {
   const auth = str(vars.ADMIN_AUTH);
   // Rewriting an unknown value as the default would silently unlock a deliberately locked admin.
   if (!["", "access+password", "password"].includes(auth)) throw new Error(`${file}: ADMIN_AUTH is "${auth}"; use "access+password" or "password".`);
+  const aeDataset = str(vars.AE_DATASET) || str(ae.dataset, EXAMPLE_CONFIG.aeDataset);
   return {
     workerName: str(raw.name, EXAMPLE_CONFIG.workerName),
     accountId: str(raw.account_id) || str(vars.CF_ACCOUNT_ID),
@@ -295,8 +305,8 @@ export function configFromText(text: string, file = CONFIG_FILE): SetupConfig {
     kvId: str(kv.id) || null,
     d1Name: str(d1.database_name, EXAMPLE_CONFIG.d1Name),
     d1Id: str(d1.database_id) || null,
-    aeDataset: str(vars.AE_DATASET) || str(ae.dataset, EXAMPLE_CONFIG.aeDataset),
-    webDataset: str(vars.AE_WEB_DATASET) || str(web.dataset, EXAMPLE_CONFIG.webDataset),
+    aeDataset,
+    webDataset: str(vars.AE_WEB_DATASET) || str(web.dataset) || webDatasetFor(aeDataset),
     plan: str(vars.WORKERS_PLAN) === "paid" ? "paid" : "free",
     tokenScope: str(vars.API_TOKEN_SCOPE) === "full" ? "full" : "create",
     digestProvider: (PROVIDERS as readonly string[]).includes(provider) ? (provider as Provider) : "off",
@@ -447,4 +457,61 @@ export function renderButtonConfig(c: SetupConfig = BUTTON_CONFIG): string {
   delete raw.secrets;
   raw.workers_dev = true;
   return `${BUTTON_HEADER}\n${toToml(raw, BUTTON_COMMENTS)}`;
+}
+
+/** Top-level keys the new version decides: its bindings, limits, schedules and runtime. */
+const UPSTREAM_KEYS = new Set(["main", "compatibility_date", "compatibility_flags", "preview_urls", "assets", "ratelimits", "durable_objects", "migrations", "triggers", "observability"]);
+/** Binding lists merged entry by entry: the owner's ids and names, the new version's shape. */
+const BINDING_LISTS: Record<string, string[]> = {
+  kv_namespaces: ["id", "preview_id"],
+  d1_databases: ["database_id", "database_name", "preview_database_id"],
+  analytics_engine_datasets: ["dataset"],
+};
+
+/**
+ * A copy's wrangler.toml brought up to this version (the Update Shorthop
+ * workflow, scripts/setup/update-copy.ts): this version's button config with
+ * the owner's values on top. Theirs: name, routes, workers_dev, every var they
+ * set, resource ids and dataset names (by binding), and top-level keys this
+ * version doesn't have (send_email, account_id). Ours: crons, rate limiters,
+ * Durable Objects, assets and everything else.
+ */
+export function mergeButtonConfig(ownText: string, upstreamText = renderButtonConfig()): string {
+  // Through JSON: smol-toml builds null-prototype objects.
+  const own = JSON.parse(JSON.stringify(parseToml(ownText))) as Raw;
+  const upstream = JSON.parse(JSON.stringify(parseToml(upstreamText))) as Raw;
+  // Routes go where the button config's comment about them is.
+  const merged: Raw = {};
+  for (const [key, value] of Object.entries(upstream)) {
+    merged[key] = value;
+    if (key === "preview_urls" && own.routes !== undefined) merged.routes = own.routes;
+  }
+  for (const key of ["name", "workers_dev", "routes"]) if (key in own) merged[key] = own[key];
+  for (const [key, value] of Object.entries(own)) if (!(key in merged) && !UPSTREAM_KEYS.has(key)) merged[key] = value;
+
+  const ownVars = obj(own.vars);
+  const vars = { ...obj(merged.vars), ...ownVars };
+  for (const [list, fields] of Object.entries(BINDING_LISTS)) {
+    const ownEntries = arr(own[list]).map(obj);
+    const entries = arr(merged[list]).map(obj);
+    for (const entry of entries) {
+      const mine = ownEntries.find((e) => e.binding === entry.binding);
+      for (const f of fields) if (mine && f in mine) entry[f] = mine[f];
+    }
+    // The owner's extra bindings stay.
+    entries.push(...ownEntries.filter((e) => !entries.some((x) => x.binding === e.binding)));
+    if (entries.length) merged[list] = entries;
+  }
+  // A copy from before websites: name the new dataset after its click dataset, as setup does.
+  const datasets = arr(merged.analytics_engine_datasets).map(obj);
+  const web = datasets.find((d) => d.binding === "WEB");
+  if (web && !arr(own.analytics_engine_datasets).some((d) => obj(d).binding === "WEB")) {
+    const clicks = str(ownVars.AE_DATASET) || str(datasets.find((d) => d.binding === "CLICKS")?.dataset, EXAMPLE_CONFIG.aeDataset);
+    web.dataset = str(ownVars.AE_WEB_DATASET) || webDatasetFor(clicks);
+  }
+  if (web) vars.AE_WEB_DATASET = str(web.dataset);
+  merged.vars = vars;
+  // With routes of their own, the commented-out example goes.
+  const comments = merged.routes === undefined ? BUTTON_COMMENTS : { ...BUTTON_COMMENTS, preview_urls: BUTTON_COMMENTS.preview_urls!.filter((c) => !c.startsWith("routes = ")) };
+  return `${BUTTON_HEADER}\n${toToml(merged, comments)}`;
 }

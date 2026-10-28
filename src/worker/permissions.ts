@@ -110,6 +110,7 @@ export const RULES: Record<string, Rule> = {
   "PUT /settings/dead-link": need("settings.manage"),
   "POST /settings/rollup": need("settings.manage"),
   "GET /settings/health": need("settings.manage"),
+  "GET /settings/version": need("settings.manage"),
   "POST /settings/health/test-alert": need("settings.manage"),
   // The digest shows click statistics.
   "GET /settings/digest/preview": need({ all: ["settings.manage", "stats.view"] }),

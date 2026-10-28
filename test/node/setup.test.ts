@@ -2,7 +2,9 @@
 // the Workers suite (tsx --test).
 
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { args } from "../../scripts/lib";
 import { CHECKS_CRON, DIGEST_CRON, ROLLUP_CRON } from "../../src/shared/schedule";
@@ -14,13 +16,16 @@ import {
   deployProblems,
   EXAMPLE_CONFIG,
   EXAMPLE_FILE,
+  mergeButtonConfig,
   outdatedProblems,
   parseJsonc,
   renderButtonConfig,
   renderConfig,
   routeHosts,
   type SetupConfig,
+  webDatasetFor,
 } from "../../scripts/setup/template";
+import { applyUpdate, changelogSection, keepMatcher, planUpdate } from "../../scripts/setup/update-copy";
 import {
   datasetProblem,
   defaultSender,
@@ -144,6 +149,90 @@ describe("Deploy to Cloudflare button config", () => {
     assert.deepEqual(outdatedProblems(JSON.stringify(toml)), []);
     // Last: deepEqual narrows the type.
     assert.deepEqual(toml, { ...json, workers_dev: true });
+  });
+});
+
+describe("updating a button copy", () => {
+  // Through JSON: smol-toml builds null-prototype objects.
+  const toml = (text: string) => JSON.parse(JSON.stringify(parseToml(text))) as Record<string, any>;
+  const OLD = readFileSync("test/node/fixtures/wrangler-1.1.1.toml", "utf8");
+
+  it("names a missing website dataset after the click dataset", () => {
+    assert.equal(webDatasetFor("links_clicks"), "links_web");
+    assert.equal(webDatasetFor("stats"), "stats_web");
+    const old = renderConfig(REAL)
+      .replace(/,\n\s*\/\/ Website analytics events from[^\n]*\n[^\n]*"WEB"[^\n]*/, "")
+      .replace(/\n\s*"AE_WEB_DATASET"[^\n]*/, "");
+    assert.equal(configFromText(old).webDataset, "links_web");
+  });
+
+  it("keeps a 1.1.1 copy's ids, routes and vars, and adds what this version needs", () => {
+    const merged = mergeButtonConfig(OLD);
+    const raw = toml(merged);
+    assert.equal(raw.name, "links");
+    assert.deepEqual(raw.routes, [{ pattern: "go.example.net", custom_domain: true }]);
+    assert.equal(raw.workers_dev, true);
+    assert.deepEqual(raw.kv_namespaces, [{ binding: "LINKS", id: "f".repeat(32) }]);
+    assert.equal(raw.d1_databases[0].database_id, "00000000-0000-4000-8000-000000000000");
+    assert.equal(raw.d1_databases[0].database_name, "links-db");
+    assert.deepEqual(raw.analytics_engine_datasets, [
+      { binding: "CLICKS", dataset: "links_clicks" },
+      { binding: "WEB", dataset: "links_web" },
+    ]);
+    assert.equal(raw.vars.SHORT_DOMAINS, "go.example.net");
+    assert.equal(raw.vars.CF_ACCOUNT_ID, "0123456789abcdef0123456789abcdef");
+    assert.equal(raw.vars.WORKERS_PLAN, "paid");
+    assert.equal(raw.vars.DIGEST_MAILGUN_DOMAIN, "mg.example.net");
+    assert.equal(raw.vars.AE_WEB_DATASET, "links_web");
+    assert.deepEqual(raw.send_email, [{ name: "DIGEST", destination_address: "me@example.net" }]);
+    assert.deepEqual(raw.triggers.crons, [ROLLUP_CRON, DIGEST_CRON, CHECKS_CRON]);
+    assert.deepEqual(outdatedProblems(JSON.stringify(raw)), []);
+    assert.equal(mergeButtonConfig(merged), merged, "merging again changes nothing");
+  });
+
+  it("leaves an untouched button config as this version's", () => {
+    assert.equal(mergeButtonConfig(renderButtonConfig()), renderButtonConfig());
+  });
+
+  it("copies the release over the copy, except workflows and kept files, and deletes what the release removed", () => {
+    const root = mkdtempSync(join(tmpdir(), "shorthop-update-"));
+    const write = (dir: string, files: Record<string, string>) => {
+      for (const [path, text] of Object.entries(files)) {
+        mkdirSync(dirname(join(root, dir, path)), { recursive: true });
+        writeFileSync(join(root, dir, path), text);
+      }
+    };
+    try {
+      write("old", { "package.json": '{"version":"1.1.1"}', "src/a.ts": "a1", "src/gone.ts": "x", ".github/workflows/ci.yml": "ci1", "wrangler.toml": renderButtonConfig() });
+      write("new", { "package.json": '{"version":"1.2.0"}', "src/a.ts": "a2", "src/new.ts": "n", "docs/x.md": "d2", ".github/workflows/ci.yml": "ci2", ".github/workflows/update-shorthop.yml": "u", "wrangler.toml": renderButtonConfig(), "node_modules/m/index.js": "m" });
+      write("copy", { "package.json": '{"version":"1.1.1"}', "src/a.ts": "a1", "src/gone.ts": "x", "src/mine.ts": "mine", "docs/x.md": "mine", ".github/workflows/ci.yml": "ci1", "wrangler.toml": OLD, ".shorthop-keep": "# mine\ndocs/\n" });
+      const plan = planUpdate(join(root, "new"), join(root, "copy"), join(root, "old"));
+      assert.deepEqual(plan.write, ["package.json", "src/a.ts", "src/new.ts"]);
+      assert.deepEqual(plan.remove, ["src/gone.ts"]);
+      assert.deepEqual(plan.workflows.sort(), [".github/workflows/ci.yml", ".github/workflows/update-shorthop.yml"]);
+      assert.deepEqual(plan.kept, ["docs/x.md"]);
+      applyUpdate(join(root, "new"), join(root, "copy"), plan);
+      const read = (path: string) => readFileSync(join(root, "copy", path), "utf8");
+      assert.equal(read("src/a.ts"), "a2");
+      assert.equal(read("src/mine.ts"), "mine");
+      assert.equal(read("docs/x.md"), "mine");
+      assert.equal(read(".github/workflows/ci.yml"), "ci1");
+      assert.throws(() => read("src/gone.ts"));
+      assert.throws(() => read("node_modules/m/index.js"));
+      assert.equal(toml(read("wrangler.toml")).kv_namespaces[0].id, "f".repeat(32));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("matches .shorthop-keep paths and globs, and finds a version's changelog", () => {
+    const keep = keepMatcher("README.md\npublic/*.png\nsrc/**/custom.ts\n");
+    assert.ok(keep("README.md") && keep("public/logo.png") && keep("src/a/b/custom.ts"));
+    assert.ok(!keep("docs/README.md") && !keep("public/x/logo.png") && !keep("public/logo.svg"));
+    const log = "# Changelog\n\n## [Unreleased]\n\n## [1.2.0] - 2026-10-28\n\nNew.\n\n## [1.1.1] - x\n\nOld.\n\n[1.2.0]: https://x\n";
+    assert.equal(changelogSection(log, "1.2.0"), "New.");
+    assert.equal(changelogSection(log, "1.1.1"), "Old.");
+    assert.equal(changelogSection(log, "9.9.9"), "");
   });
 });
 

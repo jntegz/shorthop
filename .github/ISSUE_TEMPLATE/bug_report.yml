@@ -23,7 +23,7 @@ body:
     id: version
     attributes:
       label: Version
-      description: From package.json or the CHANGELOG, or the commit you deployed.
+      description: Shown at the bottom of Dashboard → System status in the admin (or in package.json).
       placeholder: "1.1.1"
     validations:
       required: true

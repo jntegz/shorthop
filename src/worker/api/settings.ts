@@ -22,6 +22,7 @@ import { deleteNotFoundImage, getNotFoundPage, notFoundImage, saveNotFoundImage,
 import { pendingRollup } from "../rollup";
 import { clearSessionCookie, loginConfig, revokeAllSessions, securitySummary } from "../session";
 import { saveTurnstileStmt, turnstileSecret, turnstileSettings } from "../turnstile";
+import { appVersion } from "../version";
 
 const DIGEST_TEST_KEY = "digest_test_at";
 const DIGEST_TEST_INTERVAL_SEC = 60;
@@ -134,6 +135,8 @@ export const settingsApi = new Hono<AppEnv>()
   })
 
   .get("/health", async (c) => c.json(await systemHealth(c.env)))
+
+  .get("/version", async (c) => c.json(await appVersion(c.env)))
 
   .post("/health/test-alert", async (c) => c.json(await checkAndAlert(c.env, new Date(), true)))
 

@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { cloudflare } from "@cloudflare/vite-plugin";
 import tailwindcss from "@tailwindcss/vite";
@@ -6,6 +6,7 @@ import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
 const r = (p: string) => fileURLToPath(new URL(p, import.meta.url));
+const { version } = JSON.parse(readFileSync(r("./package.json"), "utf8")) as { version: string };
 
 /**
  * wrangler.jsonc (written by `npm run setup`) when it exists. In Workers
@@ -23,6 +24,8 @@ function wranglerConfig(command: "build" | "serve"): string {
 
 export default defineConfig(({ command }) => ({
   plugins: [react(), tailwindcss(), cloudflare({ configPath: wranglerConfig(command) })],
+  // The running version (src/shared/brand.ts), in the admin and the Worker.
+  define: { __APP_VERSION__: JSON.stringify(version) },
   environments: {
     client: {
       build: {

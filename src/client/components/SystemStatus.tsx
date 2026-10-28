@@ -1,9 +1,9 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { AlertTriangle, BellRing, CheckCircle2, Copy, ExternalLink, RefreshCw, X, XCircle } from "lucide-react";
+import { AlertTriangle, ArrowUpCircle, BellRing, CheckCircle2, Copy, ExternalLink, RefreshCw, X, XCircle } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, useLocation } from "react-router";
 import { toast } from "sonner";
-import { REPO_URL } from "../../shared/brand";
+import { APP_NAME, REPO_URL } from "../../shared/brand";
 import type { HealthCheck, HealthStatus } from "../../shared/types";
 import { api, call, keys } from "../api";
 import { when } from "../lib/format";
@@ -40,6 +40,40 @@ function CheckHelp({ check }: { check: HealthCheck }) {
           Setup guide <ExternalLink className="size-3" />
         </a>
       ) : null}
+    </div>
+  );
+}
+
+/** The running version, and a newer release when there is one (GitHub is asked once a day). */
+function VersionNotice() {
+  const { data: v } = useQuery({ queryKey: keys.version, queryFn: () => call(api.settings.version.$get()), staleTime: 60 * 60_000 });
+  if (!v) return null;
+  const link = "inline-flex items-center gap-1 font-medium text-accent hover:underline";
+  if (!v.updateAvailable) {
+    return (
+      <p className="border-t border-line px-5 py-3 text-xs text-muted">
+        {APP_NAME} {v.current}
+        {v.current === v.latest ? ", the latest version." : null}
+      </p>
+    );
+  }
+  return (
+    <div className="flex items-start gap-3 border-t border-line px-5 py-3 text-sm">
+      <ArrowUpCircle className="mt-0.5 size-4 shrink-0 text-accent" aria-hidden />
+      <div className="min-w-0">
+        <p className="font-medium text-fg">
+          {APP_NAME} {v.latest} is available
+        </p>
+        <p className="text-xs leading-relaxed text-muted">You're on {v.current}. Read what's new and the upgrading notes before you update.</p>
+        <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-xs">
+          <a href={v.url ?? `${REPO_URL}/releases`} target="_blank" rel="noopener noreferrer" className={link}>
+            What's new <ExternalLink className="size-3" />
+          </a>
+          <a href={`${REPO_URL}/blob/main/docs/SETUP.md#updating`} target="_blank" rel="noopener noreferrer" className={link}>
+            How to update <ExternalLink className="size-3" />
+          </a>
+        </div>
+      </div>
     </div>
   );
 }
@@ -113,6 +147,7 @@ function SystemStatusCard() {
           })}
         </ul>
       )}
+      <VersionNotice />
     </Card>
   );
 }

@@ -118,6 +118,7 @@ export const keys = {
   people: ["people"] as const,
   apiKeys: (all: boolean) => ["api-keys", all] as const,
   health: ["settings", "health"] as const,
+  version: ["settings", "version"] as const,
   turnstile: ["settings", "turnstile"] as const,
   checks: ["checks"] as const,
   linkHistory: (domain: string, slug: string) => ["history", domain, slug] as const,
