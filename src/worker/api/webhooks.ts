@@ -1,9 +1,32 @@
 import { Hono } from "hono";
 import { z } from "zod";
+import { can, PERMISSION_INFO, type Actor, type Permission } from "../../shared/permissions";
+import type { WebhookDeliveryDTO } from "../../shared/types";
 import { EVENT_TYPES, MAX_WEBHOOKS, WEBHOOK_EVENTS, webhookUrlProblem } from "../../shared/webhooks";
 import { nowSec } from "../db";
 import { validate, type AppEnv } from "../hono";
 import { deliver, emit, encryptSecret, listDeliveries, listWebhooks, newSecret, redeliver } from "../webhooks";
+
+/** Events that carry data with its own permission: subscribing to them, or reading their payloads, needs it too. */
+const EVENT_PERMISSION: Partial<Record<string, Permission>> = {
+  "site.payment": "revenue.view",
+  "site.traffic_spike": "stats.view",
+  "link.milestone": "stats.view",
+};
+
+function forbiddenEvent(actor: Actor, events: string[]): string | null {
+  for (const e of events) {
+    const need = EVENT_PERMISSION[e];
+    if (need && !can(actor, need)) return `events: "${e}" needs the ${PERMISSION_INFO[need].label} permission.`;
+  }
+  return null;
+}
+
+/** A delivery's payload only for someone who may see what's in it. */
+function visible(actor: Actor, d: WebhookDeliveryDTO): WebhookDeliveryDTO {
+  const need = EVENT_PERMISSION[d.type];
+  return need && !can(actor, need) ? { ...d, payload: `Hidden: needs the ${PERMISSION_INFO[need].label} permission.` } : d;
+}
 
 const idParam = z.object({ id: z.coerce.number().int().positive() });
 const body = z.object({
@@ -28,6 +51,8 @@ export const webhooksApi = new Hono<AppEnv>()
     const b = c.req.valid("json");
     const problem = check(b);
     if (problem) return c.json({ error: problem }, 400);
+    const forbidden = forbiddenEvent(c.get("actor"), b.events);
+    if (forbidden) return c.json({ error: forbidden }, 403);
     const count = await c.env.DB.prepare("SELECT COUNT(*) AS n FROM webhooks").first<{ n: number }>();
     if ((count?.n ?? 0) >= MAX_WEBHOOKS) return c.json({ error: `Keep at most ${MAX_WEBHOOKS} webhooks.` }, 400);
     const secret = newSecret();
@@ -43,6 +68,8 @@ export const webhooksApi = new Hono<AppEnv>()
     const b = c.req.valid("json");
     const problem = check(b);
     if (problem) return c.json({ error: problem }, 400);
+    const forbidden = forbiddenEvent(c.get("actor"), b.events);
+    if (forbidden) return c.json({ error: forbidden }, 403);
     const { meta } = await c.env.DB.prepare("UPDATE webhooks SET url = ?, description = ?, events = ?, active = ?, updated_at = ? WHERE id = ?")
       .bind(new URL(b.url).href, b.description, JSON.stringify([...new Set(b.events)]), b.active ? 1 : 0, nowSec(), id)
       .run();
@@ -73,15 +100,17 @@ export const webhooksApi = new Hono<AppEnv>()
     if (!ids.length) return c.json({ error: "Webhook not found, or paused" }, 404);
     await deliver(c.env, { ids });
     const delivery = (await listDeliveries(c.env, id)).find((d) => d.id === ids[0]);
-    return c.json({ delivery: delivery! });
+    return c.json({ delivery: visible(c.get("actor"), delivery!) });
   })
 
-  .get("/:id/deliveries", validate("param", idParam), async (c) => c.json({ deliveries: await listDeliveries(c.env, c.req.valid("param").id) }))
+  .get("/:id/deliveries", validate("param", idParam), async (c) =>
+    c.json({ deliveries: (await listDeliveries(c.env, c.req.valid("param").id)).map((d) => visible(c.get("actor"), d)) }),
+  )
 
   .post("/deliveries/:delivery/redeliver", validate("param", z.object({ delivery: z.string().regex(/^dlv_[A-Za-z0-9_-]{16}$/) })), async (c) => {
     const id = c.req.valid("param").delivery;
     if (!(await redeliver(c.env, id))) return c.json({ error: "Delivery not found" }, 404);
     const row = await c.env.DB.prepare("SELECT webhook_id FROM webhook_deliveries WHERE id = ?").bind(id).first<{ webhook_id: number }>();
     const delivery = (await listDeliveries(c.env, row!.webhook_id)).find((d) => d.id === id);
-    return c.json({ delivery: delivery! });
+    return c.json({ delivery: visible(c.get("actor"), delivery!) });
   });

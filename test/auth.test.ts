@@ -634,6 +634,20 @@ describe("sessions end", () => {
     expect((await call(withCookie(kept, jwt), undefined, LOGIN_ENV)).status).toBe(200);
   });
 
+  it("on logout, for every spelling of the cookie's signature", async () => {
+    mockCerts();
+    const jwt = await token({});
+    const cookie = await sessionCookie(jwt);
+    // The last of 43 base64url characters carries 2 spare bits: these 3 decode to the same MAC.
+    const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    const last = alphabet.indexOf(cookie.slice(-1));
+    const siblings = [...alphabet].filter((_, i) => i >> 2 === last >> 2 && i !== last).map((c) => cookie.slice(0, -1) + c);
+    expect(siblings).toHaveLength(3);
+    for (const sibling of siblings) expect((await call(withCookie(sibling, jwt), undefined, LOGIN_ENV)).status).toBe(401);
+    expect((await call(logout(cookie, jwt), undefined, LOGIN_ENV)).status).toBe(303);
+    for (const c of [cookie, ...siblings]) expect((await call(withCookie(c, jwt), undefined, LOGIN_ENV)).status).toBe(401);
+  });
+
   it("when the password changes", async () => {
     mockCerts();
     const jwt = await token({});

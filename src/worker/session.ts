@@ -157,7 +157,9 @@ export async function parseSessionCookie(
   const exp = Number(expRaw);
   if (!Number.isInteger(exp) || exp <= now || exp > now + SESSION_TTL_SEC) return null;
   const mac = fromBase64Url(macRaw);
-  if (!mac) return null;
+  // Only the canonical spelling: base64url's spare last bits would otherwise give one MAC
+  // four spellings, and a logout (keyed on the spelling) would miss the other three.
+  if (!mac || toBase64Url(mac) !== macRaw) return null;
   const epochs = { global, user };
   const valid = await crypto.subtle.verify("HMAC", await hmacKey(cfg.secret), mac, encoder.encode(sessionPayload(cfg, exp, epochs, email)));
   return valid ? { exp, mac: macRaw, ...epochs } : null;

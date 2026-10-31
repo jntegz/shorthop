@@ -5,6 +5,7 @@ import { runLinkChecks } from "../src/worker/link-check";
 import { webhookSignature } from "../src/worker/mailer";
 import { checkMilestones, deliver } from "../src/worker/webhooks";
 import { API, bearer, call, enableChecks, json, resetData } from "./helpers";
+import { addUser, adminCall } from "./people";
 
 const HOOK = "https://hooks.example.com/shorthop";
 type Sent = { url: string; headers: Record<string, string>; body: string };
@@ -160,5 +161,41 @@ describe("delivery", () => {
     expect(s.headers["x-shorthop-signature"]).toBe(await webhookSignature(secret, s.body, t));
     await call(`${API}/webhooks/${body.id}`, { method: "DELETE", headers: bearer });
     expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM webhook_deliveries").first<{ n: number }>()).toEqual({ n: 0 });
+  });
+});
+
+describe("permissions of the data in events", () => {
+  const SETTINGS_ONLY = "settings@example.com";
+
+  it("needs See revenue for site.payment and See statistics for traffic and milestones", async () => {
+    await addUser(SETTINGS_ONLY, "user", ["settings.manage"]);
+    for (const event of ["site.payment", "site.traffic_spike", "link.milestone"]) {
+      const res = await adminCall(SETTINGS_ONLY, "/webhooks", { body: { url: HOOK, events: ["link.created", event] } });
+      expect(res.status, event).toBe(403);
+    }
+    expect((await adminCall(SETTINGS_ONLY, "/webhooks", { body: { url: HOOK, events: ["link.created"] } })).status).toBe(201);
+    // Nor by changing a hook someone else subscribed, such as pointing it elsewhere.
+    const { body } = await addHook(["site.payment"]);
+    const put = await adminCall(SETTINGS_ONLY, `/webhooks/${body.id}`, { method: "PUT", body: { url: "https://elsewhere.example.net/x", events: ["site.payment"] } });
+    expect(put.status).toBe(403);
+  });
+
+  it("hides payloads someone may not see in the delivery log", async () => {
+    await addUser(SETTINGS_ONLY, "user", ["settings.manage"]);
+    const { body } = await addHook(["site.payment", "link.created"]);
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO webhook_deliveries (id, webhook_id, event_id, event_type, payload, status, created_at) VALUES ('dlv_pay', ?1, 'e1', 'site.payment', ?2, 'delivered', 2)").bind(
+        body.id,
+        JSON.stringify({ data: { payment: { email: "buyer@example.com", amount: 49 } } }),
+      ),
+      env.DB.prepare("INSERT INTO webhook_deliveries (id, webhook_id, event_id, event_type, payload, status, created_at) VALUES ('dlv_link', ?1, 'e2', 'link.created', '{\"slug\":\"a\"}', 'delivered', 1)").bind(body.id),
+    ]);
+    const res = await adminCall(SETTINGS_ONLY, `/webhooks/${body.id}/deliveries`);
+    const list = ((await res.json()) as { deliveries: WebhookDeliveryDTO[] }).deliveries;
+    expect(JSON.stringify(list)).not.toContain("buyer@example.com");
+    expect(list.find((d) => d.id === "dlv_pay")!.payload).toMatch(/^Hidden: needs the See revenue permission/);
+    expect(list.find((d) => d.id === "dlv_link")!.payload).toBe('{"slug":"a"}');
+    // The owner still sees everything.
+    expect(JSON.stringify(await deliveries(body.id))).toContain("buyer@example.com");
   });
 });
