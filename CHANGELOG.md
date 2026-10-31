@@ -3,6 +3,43 @@
 What changed in each Shorthop release, and what to do when you upgrade.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## [2.0.0] - 2026-10-31
+
+A new admin, and the features that make Shorthop a place to move your links to.
+
+### Added
+
+- **A new admin.** Every page is rebuilt in one design: Analytics (the overview and full statistics in one page, with peak hours and System status), All links, the link page, Websites and each site's dashboard, guide and settings, Recent hits, Link health and Missed visits, Import, Settings and an API reference. A sidebar with a ⌘K command bar (press `c` to create a link), a light and a dark theme with a switch next to Log out, and a phone layout with tabs and More. One self-hosted typeface, Hanken Grotesk (SIL Open Font License). The same addresses as before keep working, including links from emails; `/_admin/stats` opens Analytics.
+- **Dark mode** for the admin and for the pages visitors see: the not-found and "no longer working" pages (with their own dark colours, and a light/dark preview in the editor), shared statistics, login and the bio pages.
+- **Bulk actions** on the Links list: select links (or every link the filters match) to enable, disable, tag, untag or delete them, in parts sized to your Workers plan. Export CSV follows the filters or the selection, tags can be renamed, merged or removed, and the link form warns when a destination is already shortened.
+- **Bookmarklet and share target:** "Shorten this page" from the bookmarks bar, and Shorthop in the phone's share sheet once the admin is installed as an app.
+- **Revenue from links straight to a checkout:** a short link to a Stripe Payment Link, Lemon Squeezy, Dodo, Creem or Gumroad checkout gets a random reference, so the sale is credited to the link without a website in between (Paddle, PayPal and FastSpring links can't carry one). These clicks never count as website visits. Creem's reference parameter is documented by Creem but not yet confirmed with a real order.
+- **Campaign reports:** one shared statistics page for a tag or a set of links, optionally with revenue (per currency), for sponsors and clients. A tag report picks up links tagged later.
+- **Import from Bitly, Rebrandly, Short.io and Dub,** by their CSV export or straight from their API (the key is used only while the page reads and never stored). Links on the vendor's own domain (bit.ly, rebrand.ly, short.gy, dub.sh) move onto your domain with the same back-half. A link's page shows the clicks it had before the move.
+- **Export and import with every setting** (`GET /api/export/links.json`): routing, previews, QR designs, UTM, limits and notes move between workspaces. Passwords never leave.
+- **Backups:** Settings → General → Backup downloads everything as one ZIP, without secrets. Bind an R2 bucket as `BACKUPS` for a copy every week (the newest eight are kept). [How to restore](docs/SETUP.md#restore).
+- **AI assistants:** an MCP server at `/api/mcp` for Claude Code, Cursor and VS Code, using your API key and its permissions; an API reference page and `openapi.json`; and an Agent Skills package (`npx skills add jntegz/shorthop`).
+- **Workers AI suggestions (optional):** with the `AI` binding, the link form suggests slugs and writes social previews.
+- **Live map:** Recent hits opens on a globe of the latest human clicks (city level, rounded to about 11 km), with totals, the top countries and links, a dot-size slider and a domain filter.
+- **Click heatmap:** clicks by weekday and hour in your own time zone, for every link and for the whole account.
+- **`link.clicked` webhook** (best effort, optionally only for links with certain tags).
+- **Unsafe-destination warning:** destinations Cloudflare's security DNS flags as malware or phishing get a warning page before the redirect, and a badge in the admin. "I trust this destination" lifts it. Set `SAFETY_DNS = "off"` to make no lookups.
+- **Bio pages:** a link can be a link-in-bio page instead of a redirect: buttons that are your own short links (so their clicks count, with the source `bio`) or any address, short texts, section titles, social icons, a "Share this page" panel, a photo, and custom colours with contrast warnings. Bio pages have their own view in the sidebar.
+
+### Changed
+
+- Errors are never shown as "no data": a failed request says what failed and offers a retry, confirmations replace the browser's own dialogs, and a payment provider whose connections fail to load hides its switches instead of showing them off.
+- Settings → "API & webhooks" is now "API, MCP & webhooks".
+- The link editor dialogs (link form, QR studio, routing, previews, sharing) are kept and restyled; the old pages, the old layout and the components only they used are gone, and so is the Recharts dependency.
+- The admin's code lives in `src/client/app/`, with its design system documented in [docs/DESIGN.md](docs/DESIGN.md).
+
+### Upgrading
+
+- Apply the six new database migrations (`0026_checkout_links.sql` to `0031_bio_pages.sql`): `npm run db:migrate:remote`, or deploy through Workers Builds, which applies them. Then run `npm ci`.
+- Optional bindings, both commented out in the generated `wrangler.jsonc`: `ai` (Workers AI suggestions) and an R2 bucket as `BACKUPS` (weekly backups). See [docs/CLOUDFLARE-FREE-TIER.md](docs/CLOUDFLARE-FREE-TIER.md).
+- Links created before this version are checked against Cloudflare's security DNS a few at a time by the half-hourly run.
+- **Deploy to Cloudflare copies:** run the Update Shorthop workflow as usual.
+
 ## [1.3.0] - 2026-10-28
 
 ### Added
@@ -234,6 +271,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 First release.
 
+[2.0.0]: https://github.com/jntegz/shorthop/compare/v1.3.0...v2.0.0
 [1.3.0]: https://github.com/jntegz/shorthop/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/jntegz/shorthop/compare/v1.1.1...v1.2.0
 [1.1.1]: https://github.com/jntegz/shorthop/compare/v1.1.0...v1.1.1
