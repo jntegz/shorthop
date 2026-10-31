@@ -1,0 +1,1737 @@
+/* The admin's components (ui/*.tsx). Tokens: tokens.css.
+   [data-demo="hover|focus|active"] lets the component sheet (/kit) show a
+   state without interacting; it is never set in product pages. Hover colours
+   are plain transitions (no movement), so they need no hover-capability gate.
+   Motion: DESIGN.md "Motion"; index.css switches all of it off for
+   prefers-reduced-motion. */
+
+.ui-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+:root[data-ui="app"] :where(.ui-app, .ui-dialog, .ui-sheet, .ui-menu, .ui-command) :where(svg.lucide) {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+:root[data-ui="app"] :where(.ui-app, .ui-dialog, .ui-sheet, .ui-command) kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: var(--ui-r-sm);
+  border: 1px solid var(--ui-line);
+  background: var(--ui-sunken);
+  color: var(--ui-ink-2);
+  font-family: inherit;
+  font-size: var(--ui-t-xs);
+  font-weight: var(--ui-w-medium);
+  line-height: 1;
+}
+
+/* Kit demo focus ring: the same ring :focus-visible draws. */
+[data-demo~="focus"] {
+  outline: 2px solid var(--ui-focus);
+  outline-offset: 2px;
+}
+
+/* ===================== Button ===================== */
+.ui-button {
+  --b-bg: transparent;
+  --b-fg: var(--ui-ink);
+  --b-line: transparent;
+  --b-hover: var(--ui-hover);
+  --b-press: var(--ui-pressed);
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  height: var(--ui-control);
+  padding: 0 14px;
+  border-radius: var(--ui-r-pill);
+  border: 1px solid var(--b-line);
+  background: var(--b-bg);
+  color: var(--b-fg);
+  font: inherit;
+  font-size: var(--ui-t-sm);
+  font-weight: var(--ui-w-medium);
+  line-height: 1;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  transition:
+    background-color var(--ui-dur-fast) ease,
+    border-color var(--ui-dur-fast) ease,
+    color var(--ui-dur-fast) ease,
+    transform var(--ui-dur-press) var(--ui-ease-out);
+}
+.ui-button[data-size="sm"] {
+  height: var(--ui-control-sm);
+  padding: 0 11px;
+  gap: 6px;
+}
+.ui-button[data-size="lg"] {
+  height: var(--ui-control-lg);
+  padding: 0 18px;
+  font-size: var(--ui-t-base);
+}
+.ui-button[data-variant="secondary"] {
+  --b-bg: var(--ui-panel);
+  --b-line: var(--ui-line-strong);
+  --b-hover: var(--ui-panel);
+}
+.ui-button[data-variant="primary"] {
+  --b-bg: var(--ui-accent-fill);
+  --b-fg: var(--ui-on-accent);
+  --b-hover: color-mix(in oklab, var(--ui-accent-fill) 90%, var(--ui-on-accent));
+  --b-press: color-mix(in oklab, var(--ui-accent-fill) 82%, var(--ui-on-accent));
+}
+.ui-button[data-variant="danger"] {
+  --b-bg: var(--ui-danger-fill);
+  --b-fg: var(--ui-on-danger);
+  --b-hover: color-mix(in oklab, var(--ui-danger-fill) 90%, var(--ui-on-danger));
+  --b-press: color-mix(in oklab, var(--ui-danger-fill) 82%, var(--ui-on-danger));
+}
+.ui-button[data-variant="ghost"] {
+  --b-fg: var(--ui-ink-2);
+}
+.ui-button:is(:hover, [data-demo~="hover"]):not(:disabled, [aria-disabled="true"]) {
+  background: var(--b-hover);
+}
+.ui-button[data-variant="secondary"]:is(:hover, [data-demo~="hover"]):not(:disabled) {
+  border-color: var(--ui-line-control);
+}
+.ui-button[data-variant="ghost"]:is(:hover, [data-demo~="hover"]):not(:disabled) {
+  color: var(--ui-ink);
+}
+/* Press: a short scale-down tells the press landed (feedback, 120 ms). */
+.ui-button:is(:active, [data-demo~="active"]):not(:disabled, [aria-disabled="true"]) {
+  background: var(--b-press);
+  transform: scale(0.97);
+}
+.ui-button:disabled,
+.ui-button[aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+.ui-button[aria-busy="true"] {
+  cursor: progress;
+  opacity: 0.85;
+}
+.ui-button-ring {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  animation: ui-spin 700ms linear infinite;
+  flex: none;
+}
+@keyframes ui-spin {
+  to {
+    transform: rotate(1turn);
+  }
+}
+.ui-button .ui-button-kbd {
+  margin-left: 2px;
+  margin-right: -6px;
+  border-color: color-mix(in oklab, currentColor 30%, transparent);
+  background: color-mix(in oklab, currentColor 12%, transparent);
+  color: inherit;
+}
+.ui-icon-button {
+  width: var(--ui-control);
+  padding: 0;
+}
+.ui-icon-button[data-size="sm"] {
+  width: var(--ui-control-sm);
+  padding: 0;
+}
+.ui-icon-button[data-size="lg"] {
+  width: var(--ui-control-lg);
+  padding: 0;
+}
+.ui-icon-button[data-variant="ghost"] {
+  border-radius: var(--ui-r-md);
+}
+
+/* One style for every text action and section link:
+   TextButton, the chart's Show table, "All links", "Show all N", "Live map
+   and filters". Accent ink, a 40 % underline that strengthens on hover; ↗
+   only on links that leave the admin. */
+.ui-text-button,
+.ui-link-btn,
+.ui-panel-link,
+.ui-more {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ui-accent-ink);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+  text-decoration-color: color-mix(in oklab, currentColor 40%, transparent);
+  transition: text-decoration-color var(--ui-dur-fast) ease;
+}
+.ui-text-button {
+  display: inline;
+}
+.ui-panel-link {
+  white-space: nowrap;
+  font-size: var(--ui-t-sm);
+}
+:is(.ui-text-button, .ui-link-btn, .ui-panel-link, .ui-more):is(:hover, [data-demo~="hover"]) {
+  text-decoration-color: currentColor;
+}
+.ui-text-button:disabled {
+  color: var(--ui-ink-3);
+  cursor: not-allowed;
+}
+
+/* ===================== Fields ===================== */
+.ui-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.ui-field-label {
+  font-size: var(--ui-t-sm);
+  font-weight: var(--ui-w-medium);
+  color: var(--ui-ink);
+}
+.ui-field-hint,
+.ui-field-error {
+  margin: 0;
+  font-size: var(--ui-t-sm);
+  color: var(--ui-ink-2);
+}
+.ui-field-error {
+  color: var(--ui-bad);
+  font-weight: var(--ui-w-medium);
+}
+.ui-input,
+.ui-select select {
+  width: 100%;
+  height: var(--ui-control);
+  padding: 0 12px;
+  border-radius: var(--ui-r-md);
+  border: 1px solid var(--ui-line-control);
+  background: var(--ui-panel);
+  color: var(--ui-ink);
+  font: inherit;
+  font-size: var(--ui-t-input);
+  transition:
+    border-color var(--ui-dur-fast) ease,
+    box-shadow var(--ui-dur-fast) ease;
+}
+.ui-textarea {
+  height: auto;
+  min-height: calc(var(--ui-control) * 2);
+  padding: 8px 12px;
+  line-height: var(--ui-lh);
+  resize: vertical;
+}
+.ui-input::placeholder {
+  color: var(--ui-ink-3);
+}
+.ui-input:is(:hover, [data-demo~="hover"]):not(:disabled),
+.ui-select:is(:hover, [data-demo~="hover"]) select:not(:disabled) {
+  border-color: var(--ui-ink-3);
+}
+/* Fields show focus on any focus (typing needs to know where it lands). */
+.ui-input:focus-visible,
+.ui-input:focus,
+.ui-input[data-demo~="focus"],
+.ui-select select:focus-visible,
+.ui-select[data-demo~="focus"] select {
+  outline: none;
+  border-color: var(--ui-accent-ink);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--ui-accent) 26%, transparent);
+}
+.ui-input[data-demo~="focus"],
+.ui-select[data-demo~="focus"] {
+  outline: none;
+}
+.ui-field[data-invalid] .ui-input,
+.ui-field[data-invalid] .ui-select select {
+  border-color: var(--ui-bad);
+}
+.ui-field[data-invalid] .ui-input:focus {
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--ui-bad) 22%, transparent);
+}
+.ui-input:disabled,
+.ui-select select:disabled {
+  background: var(--ui-sunken);
+  border-color: var(--ui-line);
+  color: var(--ui-ink-3);
+  cursor: not-allowed;
+}
+.ui-input[readonly] {
+  background: var(--ui-sunken);
+}
+.ui-select {
+  position: relative;
+  display: block;
+}
+.ui-select select {
+  appearance: none;
+  padding-right: 34px;
+  cursor: pointer;
+}
+.ui-select svg.lucide {
+  position: absolute;
+  right: 11px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--ui-ink-2);
+  pointer-events: none;
+}
+
+/* ===================== Checkbox and switch ===================== */
+.ui-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-height: 24px;
+}
+.ui-toggle-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding-top: 1px;
+}
+.ui-toggle-label {
+  font-weight: var(--ui-w-medium);
+  cursor: pointer;
+}
+.ui-toggle-desc {
+  font-size: var(--ui-t-sm);
+  color: var(--ui-ink-2);
+}
+.ui-toggle[data-disabled] .ui-toggle-label,
+.ui-toggle[data-disabled] .ui-toggle-desc {
+  color: var(--ui-ink-3);
+  cursor: not-allowed;
+}
+.ui-checkbox {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+  padding: 0;
+  border-radius: 5px;
+  border: 1.5px solid var(--ui-line-control);
+  background: var(--ui-panel);
+  color: var(--ui-on-accent);
+  cursor: pointer;
+  transition:
+    background-color var(--ui-dur-fast) ease,
+    border-color var(--ui-dur-fast) ease;
+}
+.ui-checkbox:is(:hover, [data-demo~="hover"]):not(:disabled) {
+  border-color: var(--ui-ink-2);
+}
+.ui-checkbox[data-state="checked"],
+.ui-checkbox[data-state="indeterminate"] {
+  background: var(--ui-accent-fill);
+  border-color: var(--ui-accent-fill);
+}
+.ui-checkbox-mark svg.lucide {
+  width: 13px;
+  height: 13px;
+  stroke-width: 3;
+}
+.ui-checkbox:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.ui-switch {
+  position: relative;
+  flex: none;
+  width: 34px;
+  height: 20px;
+  margin-top: 1px;
+  padding: 0;
+  border-radius: var(--ui-r-pill);
+  border: 0;
+  background: var(--ui-line-control);
+  cursor: pointer;
+  transition: background-color var(--ui-dur-fast) ease;
+}
+.ui-switch:is(:hover, [data-demo~="hover"]):not(:disabled, [data-state="checked"]) {
+  background: color-mix(in oklab, var(--ui-line-control) 60%, var(--ui-ink-2));
+}
+.ui-switch[data-state="checked"] {
+  background: var(--ui-accent-fill);
+}
+.ui-switch-thumb {
+  display: block;
+  width: 16px;
+  height: 16px;
+  margin-left: 2px;
+  border-radius: 50%;
+  background: light-dark(#ffffff, #0f1311);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.2);
+  /* State indication: the thumb slides (a toggle, so a transition, 140 ms). */
+  transition: transform var(--ui-dur-fast) var(--ui-ease-out);
+}
+.ui-switch[data-state="checked"] .ui-switch-thumb {
+  transform: translateX(14px);
+  background: var(--ui-on-accent);
+}
+.ui-switch:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* ===================== Segmented control ===================== */
+.ui-segmented {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--ui-r-pill);
+  background: var(--ui-sunken);
+  border: 1px solid var(--ui-line);
+}
+.ui-segmented-opt {
+  height: calc(var(--ui-control) - 8px);
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--ui-r-pill);
+  background: transparent;
+  color: var(--ui-ink-2);
+  font: inherit;
+  font-size: var(--ui-t-sm);
+  font-weight: var(--ui-w-medium);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color var(--ui-dur-fast) ease,
+    color var(--ui-dur-fast) ease;
+}
+.ui-segmented[data-size="sm"] .ui-segmented-opt {
+  height: calc(var(--ui-control-sm) - 8px);
+  padding: 0 10px;
+}
+.ui-segmented-opt:is(:hover, [data-demo~="hover"]):not(:disabled, [aria-checked="true"]) {
+  color: var(--ui-ink);
+  background: var(--ui-pressed);
+}
+.ui-segmented-opt[aria-checked="true"] {
+  background: var(--ui-ink);
+  color: var(--ui-canvas);
+}
+.ui-segmented-opt:disabled {
+  color: var(--ui-ink-3);
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.ui-seg-short {
+  display: none;
+}
+
+/* ===================== Tabs (underline) ===================== */
+.ui-tabs-row {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--ui-s-3);
+  border-bottom: 1px solid var(--ui-line);
+  margin-bottom: var(--ui-s-2);
+}
+.ui-tabs-row > :not(.ui-tablist) {
+  flex: none;
+  margin-left: auto;
+  padding-bottom: 7px;
+  white-space: nowrap;
+}
+.ui-tablist {
+  display: flex;
+  gap: var(--ui-s-4);
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+/* More tabs than room (phones): the row scrolls with snap, and the cut edge
+   fades out so the hidden tabs are discoverable (Tabs sets data-fade). */
+.ui-tablist[data-fade] {
+  scroll-snap-type: x proximity;
+  scroll-padding-inline: 4px;
+}
+.ui-tablist[data-fade] > .ui-tab {
+  scroll-snap-align: start;
+}
+.ui-tablist[data-fade="end"] {
+  mask-image: linear-gradient(to right, #000 calc(100% - 40px), transparent);
+}
+.ui-tablist[data-fade="start"] {
+  mask-image: linear-gradient(to left, #000 calc(100% - 40px), transparent);
+}
+.ui-tablist[data-fade="both"] {
+  mask-image: linear-gradient(to right, transparent, #000 40px, #000 calc(100% - 40px), transparent);
+}
+.ui-tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  margin-bottom: -1px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ui-ink-2);
+  font: inherit;
+  font-size: var(--ui-t-sm);
+  font-weight: var(--ui-w-medium);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color var(--ui-dur-fast) ease;
+  outline-offset: -2px;
+}
+.ui-tab::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: var(--ui-ink);
+  transform: scaleX(0);
+  opacity: 0;
+  /* State indication: the rule grows in from its centre (200 ms). */
+  transition:
+    transform var(--ui-dur) var(--ui-ease-out),
+    opacity var(--ui-dur-fast) ease;
+}
+.ui-tab:is(:hover, [data-demo~="hover"]):not([data-state="active"], :disabled) {
+  color: var(--ui-ink);
+}
+.ui-tab:is(:hover, [data-demo~="hover"]):not([data-state="active"], :disabled)::after {
+  background: var(--ui-line-strong);
+  transform: scaleX(1);
+  opacity: 1;
+}
+.ui-tab[data-state="active"] {
+  color: var(--ui-ink);
+}
+.ui-tab[data-state="active"]::after {
+  transform: scaleX(1);
+  opacity: 1;
+}
+.ui-tab:disabled {
+  color: var(--ui-ink-3);
+  cursor: not-allowed;
+}
+.ui-tab-count {
+  color: var(--ui-ink-3);
+  font-variant-numeric: tabular-nums;
+}
+.ui-tabpanel:focus-visible {
+  outline-offset: 4px;
+  border-radius: var(--ui-r-sm);
+}
+
+/* ===================== Table ===================== */
+.ui-table-scroll {
+  overflow-x: auto;
+}
+.ui-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--ui-t-sm);
+}
+.ui-table th {
+  height: 34px;
+  padding: 0 10px;
+  text-align: left;
+  vertical-align: bottom;
+  padding-bottom: 7px;
+  font-size: var(--ui-t-xs);
+  font-weight: var(--ui-w-medium);
+  color: var(--ui-ink-2);
+  border-bottom: 1px solid var(--ui-line-strong);
+  white-space: nowrap;
+}
+.ui-table td {
+  height: 42px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--ui-line);
+  font-variant-numeric: tabular-nums;
+}
+.ui-table.is-dense td {
+  height: 34px;
+}
+.ui-table :is(th, td):first-child {
+  padding-left: 4px;
+}
+.ui-table :is(th, td):last-child {
+  padding-right: 4px;
+}
+.ui-table .is-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums lining-nums;
+  white-space: nowrap;
+}
+/* One voice for numbers in rows (tables and breakdown lists alike):
+   Hanken, tabular lining figures, right-aligned. The row's lead value is
+   680 ink; a secondary count in the same row (`is-2`, or a stacked table's
+   labelled cell) is 560 ink-2, as on the links list. */
+.ui-table td.is-num {
+  font-family: var(--ui-font-num);
+  font-weight: var(--ui-w-strong);
+  color: var(--ui-ink);
+}
+.ui-table td.is-num:is(.is-2, [data-label]) {
+  font-weight: var(--ui-w-medium);
+  color: var(--ui-ink-2);
+}
+.ui-table .is-check {
+  width: 34px;
+}
+.ui-table a {
+  color: var(--ui-ink);
+  text-decoration: none;
+  font-weight: var(--ui-w-medium);
+}
+.ui-table a:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.ui-table tbody tr {
+  transition: background-color var(--ui-dur-fast) ease;
+}
+.ui-table tbody tr[data-row] {
+  cursor: default;
+  outline: none;
+}
+.ui-table tbody tr[data-row]:is(:hover, [data-demo~="hover"]) {
+  background: var(--ui-hover);
+}
+/* Keyboard row focus: the focus ring drawn inside the row, plus the hover tint. */
+.ui-table tbody tr[data-row]:is(:focus-visible, [data-demo~="focus"]) {
+  background: var(--ui-hover);
+  outline: 2px solid var(--ui-focus);
+  outline-offset: -2px;
+}
+.ui-table tbody tr.is-selected {
+  background: var(--ui-accent-wash);
+}
+.ui-table tbody tr.is-selected:is(:focus-visible, [data-demo~="focus"]) {
+  background: color-mix(in oklab, var(--ui-accent-wash) 80%, var(--ui-hover));
+}
+.ui-table-sub {
+  display: block;
+  color: var(--ui-ink-3);
+  font-size: var(--ui-t-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Sortable head (SortTH): the whole label is the button; the arrow shows on the active column (and on hover). */
+.ui-sort {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  line-height: 1;
+  vertical-align: bottom;
+  gap: 4px;
+  max-width: 100%;
+  margin: 0 -4px;
+  padding: 2px 4px;
+  border: 0;
+  border-radius: var(--ui-r-sm);
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  transition: color var(--ui-dur-fast) ease, background-color var(--ui-dur-fast) ease;
+}
+.ui-sort span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.is-num .ui-sort {
+  flex-direction: row-reverse;
+}
+.ui-sort:hover {
+  color: var(--ui-ink);
+  background: var(--ui-hover);
+}
+.ui-sort[data-active] {
+  color: var(--ui-ink);
+}
+.ui-app .ui-sort-arrow {
+  width: 12px;
+  height: 12px;
+  opacity: 0;
+  transition: opacity var(--ui-dur-fast) ease;
+}
+.ui-sort:hover .ui-sort-arrow,
+.ui-sort:focus-visible .ui-sort-arrow,
+.ui-sort[data-active] .ui-sort-arrow {
+  opacity: 1;
+}
+.ui-sort:not([data-active]) .ui-sort-arrow {
+  color: var(--ui-ink-3);
+}
+.ui-sort-short {
+  display: none;
+}
+
+/* Pager: range left, rows per page, previous/next. */
+.ui-pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ui-s-2) var(--ui-s-4);
+  margin-top: var(--ui-s-4);
+  font-size: var(--ui-t-sm);
+  color: var(--ui-ink-2);
+}
+.ui-pager-range {
+  font-variant-numeric: tabular-nums;
+  margin-right: auto;
+}
+.ui-pager-size.ui-field .ui-select select {
+  width: auto;
+  height: var(--ui-control-sm);
+  font-size: var(--ui-t-sm);
+}
+.ui-pager-step {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ui-s-2);
+}
+.ui-pager-page {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ===================== Breakdown list ===================== */
+.ui-cols,
+.ui-row-inner {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 3.4em 4.6em;
+  align-items: center;
+  column-gap: var(--ui-s-2);
+}
+.ui-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.ui-row-inner {
+  position: relative;
+  min-height: calc(var(--ui-row) + 4px);
+  padding: 0 2px 10px;
+  color: var(--ui-ink);
+  text-decoration: none;
+  isolation: isolate;
+}
+.ui-row-inner.is-link {
+  border-radius: var(--ui-r-sm);
+  transition: background-color var(--ui-dur-fast) ease;
+}
+.ui-row-inner.is-link:is(:hover, [data-demo~="hover"]) .ui-row-name {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: color-mix(in oklab, currentColor 45%, transparent);
+}
+.ui-row-inner.is-link:is(:hover, :focus-visible, [data-demo~="hover"], [data-demo~="focus"]) .ui-row-bar,
+.ui-row-inner[aria-current="true"] .ui-row-bar {
+  background: var(--ui-accent);
+}
+.ui-row-inner.is-link:is(:focus-visible, [data-demo~="focus"]) {
+  outline: 2px solid var(--ui-focus);
+  outline-offset: 1px;
+}
+/* The bar: 6 px on a full-width track under the row. Its
+   width is the row's share of the total (ui/data.tsx barWidth), so every
+   list scans by shape before you read a number; ink at ≥ 3:1 in both
+   themes, the accent only on the row you point at (DESIGN §6). */
+.ui-row-inner::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  left: 2px;
+  right: 2px;
+  bottom: 3px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--ui-bar-track);
+}
+.ui-row-bar {
+  position: absolute;
+  z-index: -1;
+  left: 2px;
+  bottom: 3px;
+  width: max(0px, calc(var(--w) - 4px));
+  height: 6px;
+  border-radius: 3px;
+  background: var(--ui-bar-data);
+  /* Explains a change: when the period changes, bars re-proportion (240 ms). */
+  transition:
+    width var(--ui-dur-slow) var(--ui-ease-move),
+    background-color var(--ui-dur-fast) ease;
+}
+.ui-rows.is-single .ui-row-inner::before,
+.ui-rows.is-single .ui-row-bar {
+  display: none;
+}
+.ui-row.is-quiet .ui-row-bar {
+  background: var(--ui-bar-quiet);
+}
+.ui-row.is-quiet .ui-row-name,
+.ui-row.is-quiet .ui-row-value {
+  color: var(--ui-ink-2);
+}
+.ui-row-label {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+/* The ribbon segment a row is: the list under a ribbon is its legend. */
+.ui-row-swatch {
+  flex: none;
+  align-self: center;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  background: var(--ui-seg-0);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--ui-ink) 10%, transparent);
+}
+.ui-row-swatch[data-i="1"] {
+  background: var(--ui-seg-1);
+}
+.ui-row-swatch[data-i="2"] {
+  background: var(--ui-seg-2);
+}
+.ui-row-swatch[data-i="3"] {
+  background: var(--ui-seg-3);
+}
+.ui-row-swatch[data-i="4"] {
+  background: var(--ui-seg-4);
+}
+.ui-row-swatch[data-i="rest"] {
+  background: var(--ui-seg-rest);
+}
+.ui-row-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--ui-w-medium);
+}
+.ui-row-sub {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ui-ink-3);
+  font-size: var(--ui-t-sm);
+}
+.ui-row-share,
+.ui-row-value,
+.ui-row-money,
+.ui-row-delta {
+  text-align: right;
+  font-variant-numeric: tabular-nums lining-nums;
+  white-space: nowrap;
+}
+.ui-row-delta {
+  justify-content: flex-end;
+}
+.ui-row-share {
+  color: var(--ui-ink-3);
+  font-size: var(--ui-t-sm);
+}
+.ui-row-value {
+  font-family: var(--ui-font-num);
+  font-weight: var(--ui-w-strong);
+}
+/* Money is a value like any other: ink, the value weight. Green is for deltas only. */
+.ui-row-money {
+  font-family: var(--ui-font-num);
+  font-weight: var(--ui-w-strong);
+  color: var(--ui-ink);
+}
+.ui-row-money.is-none {
+  font-family: var(--ui-font-ui);
+  color: var(--ui-ink-3);
+  font-weight: var(--ui-w-body);
+}
+.ui-cols {
+  padding: 0 2px 4px;
+  font-size: var(--ui-t-xs);
+  font-weight: var(--ui-w-medium);
+  color: var(--ui-ink-3);
+}
+.ui-cols span:not(:first-child) {
+  text-align: right;
+}
+.ui-rows-empty {
+  margin: 0;
+  padding: var(--ui-s-3) 2px;
+  color: var(--ui-ink-2);
+}
+/* "Show all N" is a text link like every other section link (TextButton);
+   it sits under the list's left edge. */
+.ui-more {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 4px;
+  min-height: 30px;
+  font-size: var(--ui-t-sm);
+}
+
+/* ===================== Stat (KPI) ===================== */
+/* A 1 px rule under each number (borders are 1 px everywhere). The selected
+   KPI's indicator is a separate 3 px bar on that rule, like the Tabs underline:
+   line-strong on hover, accent when selected. No radius, so the bar stays a
+   straight rule. */
+.ui-kpi {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 0 0 calc(var(--ui-s-3) + 2px);
+  border-bottom: 1px solid var(--ui-line);
+  text-align: left;
+}
+.ui-kpi::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 3px;
+  background: transparent;
+  pointer-events: none;
+  transition: background-color var(--ui-dur) var(--ui-ease-out);
+}
+.ui-kpi[role="tab"] {
+  cursor: pointer;
+  outline-offset: 4px;
+}
+.ui-kpi[role="tab"]:is(:hover, [data-demo~="hover"]):not(.is-disabled, [aria-selected="true"])::after {
+  background: var(--ui-line-strong);
+}
+.ui-kpi[aria-selected="true"]::after,
+.ui-kpi[data-demo~="selected"]::after {
+  background: var(--ui-accent);
+}
+.ui-kpi.is-disabled {
+  cursor: default;
+}
+.ui-kpi-label {
+  font-size: var(--ui-t-sm);
+  font-weight: var(--ui-w-medium);
+  color: var(--ui-ink-2);
+}
+.ui-kpi-value {
+  margin: 2px 0;
+  font-family: var(--ui-font-num);
+  font-size: var(--ui-t-kpi);
+  font-weight: var(--ui-w-num);
+  font-variant-numeric: tabular-nums lining-nums;
+  letter-spacing: -0.035em;
+  line-height: 1.05;
+  color: var(--ui-ink);
+  white-space: nowrap;
+}
+/* A quiet stat (bots and previews) steps down to the page-title size, so the
+   numbers that matter lead; the line height keeps the strip's rhythm. */
+.ui-kpi.is-quiet .ui-kpi-value {
+  color: var(--ui-ink-2);
+  font-size: var(--ui-t-xl);
+  letter-spacing: -0.02em;
+  line-height: calc(var(--ui-t-kpi) * 1.05);
+}
+.ui-kpi-na {
+  font-family: var(--ui-font-ui);
+  font-size: var(--ui-t-lg);
+  font-weight: var(--ui-w-medium);
+  letter-spacing: 0;
+  color: var(--ui-ink-2);
+  line-height: calc(var(--ui-t-kpi) * 1.05);
+}
+/* "—" for a count in a period with no hits: the value face, ink-3. */
+.ui-kpi-na.is-none {
+  font-family: var(--ui-font-num);
+  font-size: var(--ui-t-xl);
+  color: var(--ui-ink-3);
+}
+.ui-kpi-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  min-height: 1.4em;
+}
+.ui-kpi-note {
+  font-size: var(--ui-t-sm);
+  color: var(--ui-ink-3);
+}
+.ui-kpi-note a {
+  color: var(--ui-accent-ink);
+  text-underline-offset: 3px;
+}
+.ui-delta {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 1px;
+  font-size: var(--ui-t-sm);
+  font-weight: var(--ui-w-medium);
+  font-variant-numeric: tabular-nums;
+  color: var(--ui-ink-2);
+  white-space: nowrap;
+}
+.ui-delta[data-tone="good"] {
+  color: var(--ui-good);
+}
+.ui-delta[data-tone="bad"] {
+  color: var(--ui-bad);
+}
+
+/* ===================== Section ===================== */
+/* No cards: a 1 px top rule, space, a title with an optional line under it. */
+.ui-section {
+  margin-bottom: var(--ui-s-6);
+  padding-top: var(--ui-s-5);
+  border-top: 1px solid var(--ui-line);
+  scroll-margin-top: var(--ui-s-5);
+}
+.ui-section-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--ui-s-2) var(--ui-s-4);
+  margin-bottom: var(--ui-s-4);
+}
+.ui-section-title {
+  min-width: 0;
+  max-width: 72ch;
+}
+.ui-section-sub {
+  margin: 4px 0 0;
+  font-size: var(--ui-t-sm);
+  color: var(--ui-ink-2);
+  text-wrap: pretty;
+}
+.ui-section-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ui-s-2);
+}
+
+/* ===================== Badge ===================== */
+.ui-badge {
+  --tone: var(--ui-ink-2);
+  --tone-bg: var(--ui-sunken);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 9px 0 8px;
+  border-radius: var(--ui-r-pill);
+  background: var(--tone-bg);
+  color: var(--tone);
+  font-size: var(--ui-t-xs);
+  font-weight: var(--ui-w-medium);
+  line-height: 1;
+  white-space: nowrap;
+}
+.ui-badge-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.ui-badge[data-tone="good"] {
+  --tone: var(--ui-good);
+  --tone-bg: var(--ui-good-wash);
+}
+.ui-badge[data-tone="warn"] {
+  --tone: var(--ui-warn);
+  --tone-bg: var(--ui-warn-wash);
+}
+.ui-badge[data-tone="danger"] {
+  --tone: var(--ui-bad);
+  --tone-bg: var(--ui-bad-wash);
+}
+
+/* ===================== Skeleton ===================== */
+.ui-skel {
+  display: block;
+  border-radius: var(--ui-r-sm);
+  background: linear-gradient(90deg, var(--ui-sunken) 0%, var(--ui-pressed) 50%, var(--ui-sunken) 100%);
+  background-size: 200% 100%;
+  animation: ui-shimmer 1.4s linear infinite;
+}
+.ui-skel-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ui-skel-text {
+  height: 0.9em;
+  margin: 0.3em 0;
+}
+.ui-skel-num {
+  width: 3.2em;
+  height: calc(var(--ui-t-kpi) * 0.8);
+  margin: calc(var(--ui-t-kpi) * 0.12) 0;
+}
+.ui-skel-chart {
+  width: 100%;
+  border-radius: var(--ui-r-md);
+}
+.ui-skel-ribbon {
+  height: 28px;
+  border-radius: var(--ui-r-md);
+}
+@keyframes ui-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+
+/* ===================== Empty and error states ===================== */
+.ui-state {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--ui-s-2);
+  max-width: 62ch;
+  padding: var(--ui-s-6) 0;
+}
+.ui-state.is-compact {
+  padding: var(--ui-s-2) 2px var(--ui-s-3);
+}
+.ui-state p {
+  margin: 0;
+}
+.ui-state-title {
+  font-family: var(--ui-font-display);
+  font-weight: var(--ui-w-strong);
+  font-size: var(--ui-t-lg);
+  line-height: 1.3;
+  text-wrap: balance;
+}
+.ui-state.is-compact .ui-state-title {
+  font-size: var(--ui-t-md);
+}
+.ui-state-body {
+  color: var(--ui-ink-2);
+  text-wrap: pretty;
+}
+.ui-state-body p {
+  margin: 0;
+}
+.ui-state > .ui-button {
+  margin-top: var(--ui-s-1);
+}
+/* The raw error, for a bug report: closed by default, quiet. */
+.ui-state-detail {
+  font-size: var(--ui-t-sm);
+  color: var(--ui-ink-3);
+}
+.ui-state-detail summary {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  cursor: pointer;
+  border-radius: var(--ui-r-sm);
+}
+.ui-state-detail summary:hover {
+  color: var(--ui-ink);
+}
+.ui-state-detail summary::before {
+  content: "";
+  width: 5px;
+  height: 8px;
+  margin-right: 6px;
+  background: currentColor;
+  clip-path: polygon(0 0, 100% 50%, 0 100%);
+  transition: transform var(--ui-dur-fast) var(--ui-ease-out);
+}
+.ui-state-detail[open] summary::before {
+  transform: rotate(90deg);
+}
+.ui-state-detail code {
+  display: block;
+  margin-top: 2px;
+  padding: 6px 8px;
+  border-radius: var(--ui-r-sm);
+  background: var(--ui-sunken);
+  color: var(--ui-ink-2);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: var(--ui-t-xs);
+  overflow-wrap: anywhere;
+}
+@media (max-width: 767px) {
+  .ui-state-detail summary {
+    min-height: var(--ui-touch);
+  }
+}
+
+/* ===================== Notice ===================== */
+.ui-notice {
+  --tone: var(--ui-accent-ink);
+  --tone-bg: var(--ui-accent-wash);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--ui-s-2) var(--ui-s-3);
+  padding: var(--ui-s-3) var(--ui-s-4);
+  border-radius: var(--ui-r-md);
+  background: var(--tone-bg);
+  color: var(--ui-ink);
+}
+.ui-notice[data-tone="good"] {
+  --tone: var(--ui-good);
+  --tone-bg: var(--ui-good-wash);
+}
+.ui-notice[data-tone="warn"] {
+  --tone: var(--ui-warn);
+  --tone-bg: var(--ui-warn-wash);
+}
+.ui-notice[data-tone="danger"] {
+  --tone: var(--ui-bad);
+  --tone-bg: var(--ui-bad-wash);
+}
+.ui-app .ui-notice-icon,
+.ui-notice-icon {
+  margin-top: 3px;
+  color: var(--tone);
+}
+.ui-notice-text {
+  flex: 1 1 32ch;
+  min-width: 0;
+}
+.ui-notice-title {
+  margin: 0;
+  font-weight: var(--ui-w-strong);
+}
+.ui-notice-body {
+  color: var(--ui-ink-2);
+}
+.ui-notice-body p {
+  margin: 0;
+}
+.ui-notice-action {
+  display: flex;
+  gap: var(--ui-s-2);
+  align-self: center;
+}
+
+/* ===================== Dialog, sheet, menu ===================== */
+.ui-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: var(--ui-z-overlay);
+  background: var(--ui-overlay);
+}
+.ui-dialog,
+.ui-sheet {
+  position: fixed;
+  z-index: var(--ui-z-modal);
+  display: flex;
+  flex-direction: column;
+  background: var(--ui-panel);
+  color: var(--ui-ink);
+  box-shadow: var(--ui-shadow-pop);
+  font-family: var(--ui-font-ui);
+  font-size: var(--ui-t-base);
+  line-height: var(--ui-lh);
+  outline: none;
+}
+.ui-dialog {
+  top: 50%;
+  left: 50%;
+  width: min(480px, calc(100vw - 24px));
+  max-height: calc(100dvh - 48px);
+  border-radius: var(--ui-r-lg);
+  transform: translate(-50%, -50%);
+}
+.ui-dialog[data-size="sm"] {
+  width: min(380px, calc(100vw - 24px));
+}
+.ui-dialog[data-size="lg"] {
+  width: min(680px, calc(100vw - 24px));
+}
+.ui-dialog-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--ui-s-3);
+  padding: var(--ui-s-4) var(--ui-s-3) var(--ui-s-2) var(--ui-s-4);
+}
+.ui-dialog-head.is-bare {
+  padding-bottom: 0;
+}
+.ui-dialog-title {
+  margin: 4px 0 0;
+  font-family: var(--ui-font-display);
+  font-size: var(--ui-t-lg);
+  font-weight: var(--ui-w-strong);
+  line-height: 1.3;
+}
+.ui-dialog-desc {
+  margin: 4px 0 0;
+  color: var(--ui-ink-2);
+  font-size: var(--ui-t-sm);
+}
+.ui-dialog-body,
+.ui-sheet-body {
+  flex: 1 1 auto;
+  padding: var(--ui-s-2) var(--ui-s-4) var(--ui-s-4);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.ui-dialog-foot {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--ui-s-2);
+  padding: var(--ui-s-3) var(--ui-s-4);
+  border-top: 1px solid var(--ui-line);
+}
+
+/* Occasional overlays get a short entrance; exits mirror it, faster.
+   Modal: fade + 0.97 scale from the centre (not trigger-anchored), 200 ms out-curve. */
+.ui-scrim[data-state="open"] {
+  animation: ui-fade-in var(--ui-dur) var(--ui-ease-out);
+}
+.ui-scrim[data-state="closed"] {
+  animation: ui-fade-out var(--ui-dur-fast) var(--ui-ease-out);
+}
+.ui-dialog[data-state="open"] {
+  animation: ui-dialog-in var(--ui-dur) var(--ui-ease-out);
+}
+.ui-dialog[data-state="closed"] {
+  animation: ui-dialog-out var(--ui-dur-fast) var(--ui-ease-out);
+}
+@keyframes ui-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes ui-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+@keyframes ui-dialog-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.97);
+  }
+}
+@keyframes ui-dialog-out {
+  to {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.97);
+  }
+}
+
+/* Sheet: from the right on wide screens, from the bottom on phones (drawer curve). */
+.ui-sheet {
+  top: 8px;
+  right: 8px;
+  bottom: 8px;
+  width: min(420px, calc(100vw - 16px));
+  border-radius: var(--ui-r-lg);
+}
+.ui-sheet-grip {
+  display: none;
+}
+.ui-sheet[data-state="open"] {
+  animation: ui-sheet-in-right var(--ui-dur-slow) var(--ui-ease-drawer);
+}
+.ui-sheet[data-state="closed"] {
+  animation: ui-sheet-out-right var(--ui-dur) var(--ui-ease-drawer);
+}
+@keyframes ui-sheet-in-right {
+  from {
+    transform: translateX(calc(100% + 8px));
+  }
+}
+@keyframes ui-sheet-out-right {
+  to {
+    transform: translateX(calc(100% + 8px));
+  }
+}
+.ui-sheet[data-side="bottom"] {
+  top: auto;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: auto;
+  max-height: 85dvh;
+  border-radius: var(--ui-r-lg) var(--ui-r-lg) 0 0;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.ui-sheet[data-side="bottom"] .ui-sheet-grip {
+  display: block;
+  width: 36px;
+  height: 4px;
+  margin: 8px auto 0;
+  border-radius: 2px;
+  background: var(--ui-line-strong);
+}
+.ui-sheet[data-side="bottom"][data-state="open"] {
+  animation-name: ui-sheet-in-bottom;
+}
+.ui-sheet[data-side="bottom"][data-state="closed"] {
+  animation-name: ui-sheet-out-bottom;
+}
+@keyframes ui-sheet-in-bottom {
+  from {
+    transform: translateY(100%);
+  }
+}
+@keyframes ui-sheet-out-bottom {
+  to {
+    transform: translateY(100%);
+  }
+}
+@media (max-width: 767px) {
+  .ui-sheet[data-side="auto"] {
+    top: auto;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: auto;
+    max-height: 85dvh;
+    border-radius: var(--ui-r-lg) var(--ui-r-lg) 0 0;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .ui-sheet[data-side="auto"] .ui-sheet-grip {
+    display: block;
+    width: 36px;
+    height: 4px;
+    margin: 8px auto 0;
+    border-radius: 2px;
+    background: var(--ui-line-strong);
+  }
+  .ui-sheet[data-side="auto"][data-state="open"] {
+    animation-name: ui-sheet-in-bottom;
+  }
+  .ui-sheet[data-side="auto"][data-state="closed"] {
+    animation-name: ui-sheet-out-bottom;
+  }
+  .ui-dialog {
+    top: auto;
+    bottom: 12px;
+    transform: translateX(-50%);
+  }
+  @keyframes ui-dialog-in {
+    from {
+      opacity: 0;
+      transform: translate(-50%, 8px);
+    }
+  }
+  @keyframes ui-dialog-out {
+    to {
+      opacity: 0;
+      transform: translate(-50%, 8px);
+    }
+  }
+}
+
+/* Menu: anchored to its trigger, so it grows from there (150 ms). */
+.ui-menu {
+  z-index: var(--ui-z-menu);
+  min-width: 190px;
+  padding: 5px;
+  border-radius: var(--ui-r-md);
+  background: var(--ui-panel);
+  color: var(--ui-ink);
+  box-shadow: var(--ui-shadow-menu);
+  font-family: var(--ui-font-ui);
+  font-size: var(--ui-t-base);
+  transform-origin: var(--radix-dropdown-menu-content-transform-origin);
+}
+.ui-menu[data-state="open"] {
+  animation: ui-menu-in 150ms var(--ui-ease-out);
+}
+.ui-menu[data-state="closed"] {
+  animation: ui-menu-out 100ms var(--ui-ease-out);
+}
+@keyframes ui-menu-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+@keyframes ui-menu-out {
+  to {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+.ui-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 34px;
+  padding: 0 10px;
+  border-radius: var(--ui-r-sm);
+  font-weight: var(--ui-w-medium);
+  cursor: pointer;
+  outline: none;
+  user-select: none;
+}
+.ui-menu-item svg.lucide {
+  color: var(--ui-ink-3);
+}
+.ui-menu-item[data-highlighted] {
+  background: var(--ui-hover);
+}
+.ui-menu-item:focus-visible {
+  outline: 2px solid var(--ui-focus);
+  outline-offset: -2px;
+}
+.ui-menu-item[data-highlighted] svg.lucide {
+  color: var(--ui-ink);
+}
+.ui-menu-item[data-danger] {
+  color: var(--ui-bad);
+}
+.ui-menu-item[data-danger] svg.lucide {
+  color: currentColor;
+}
+.ui-menu-item[data-danger][data-highlighted] {
+  background: var(--ui-bad-wash);
+}
+.ui-menu-item[data-disabled] {
+  color: var(--ui-ink-3);
+  cursor: not-allowed;
+}
+.ui-menu-kbd {
+  margin-left: auto;
+}
+.ui-menu-sep {
+  height: 1px;
+  margin: 5px -5px;
+  background: var(--ui-line);
+}
+
+/* ===================== Phones: 44 px targets ===================== */
+@media (max-width: 767px) {
+  .ui-segmented-opt {
+    height: calc(var(--ui-touch) - 8px);
+  }
+  .ui-segmented {
+    padding: 4px;
+  }
+  .ui-tab {
+    height: var(--ui-touch);
+  }
+  .ui-toggle {
+    min-height: var(--ui-touch);
+    align-items: center;
+  }
+  .ui-toggle .ui-checkbox,
+  .ui-toggle .ui-switch {
+    margin-top: 0;
+  }
+  .ui-toggle-text {
+    padding: 0;
+  }
+  .ui-row-inner.is-link,
+  .ui-more,
+  .ui-menu-item {
+    min-height: var(--ui-touch);
+  }
+  .ui-table td {
+    height: var(--ui-touch);
+  }
+  .ui-seg-long {
+    display: none;
+  }
+  .ui-seg-short {
+    display: inline;
+  }
+  .ui-sort-long {
+    display: none;
+  }
+  .ui-sort-short {
+    display: inline;
+  }
+  .ui-pager-range {
+    flex-basis: 100%;
+  }
+  .ui-pager-size {
+    margin-right: auto;
+  }
+  .ui-pager-size.ui-field .ui-select select {
+    height: var(--ui-touch);
+  }
+}
+
+/* ===================== Tables on phones: stacked rows ===================== */
+/* Column priority (DESIGN §6): a wide table never clips silently. A table that
+   carries money or a journey per row (payments, customer value, latest visits)
+   is marked .is-stack: under 768 px each row becomes a two-line entry. Line 1:
+   the row's name (first cell or [data-title]) and its main number
+   ([data-lead], right); line 2: the other cells, each with its column name
+   ([data-label]) in ink-3. The head stays for screen readers only. */
+@media (max-width: 767px) {
+  .ui-table.is-stack {
+    display: block;
+    min-width: 0;
+  }
+  .ui-table.is-stack thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .ui-table.is-stack tbody {
+    display: block;
+  }
+  .ui-table.is-stack caption {
+    display: block;
+    padding-left: 2px;
+  }
+  .ui-table.is-stack tbody tr {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 2px var(--ui-s-3);
+    padding: 10px 2px;
+    border-bottom: 1px solid var(--ui-line);
+  }
+  /* The line break between line 1 and line 2. */
+  .ui-table.is-stack tbody tr::after {
+    content: "";
+    order: 3;
+    flex-basis: 100%;
+    height: 0;
+  }
+  .ui-table.is-stack tbody td {
+    display: block;
+    order: 4;
+    width: auto;
+    max-width: 100%;
+    height: auto;
+    padding: 0;
+    border: 0;
+    text-align: left;
+    font-size: var(--ui-t-sm);
+    color: var(--ui-ink-2);
+  }
+  .ui-table.is-stack tbody td:first-child,
+  .ui-table.is-stack tbody td[data-title] {
+    order: 1;
+    flex: 1 1 0;
+    min-width: 0;
+    font-size: var(--ui-t-base);
+    color: var(--ui-ink);
+  }
+  .ui-table.is-stack tbody td[data-lead] {
+    order: 2;
+    flex: none;
+    text-align: right;
+    font-family: var(--ui-font-num);
+    font-size: var(--ui-t-base);
+    font-weight: var(--ui-w-strong);
+    color: var(--ui-ink);
+  }
+  .ui-table.is-stack tbody td[data-title] ~ td:first-child,
+  .ui-table.is-stack tbody td:first-child[data-lead] {
+    flex: none;
+  }
+  .ui-table.is-stack tbody td[data-label]::before {
+    content: attr(data-label) " ";
+    color: var(--ui-ink-3);
+  }
+  .ui-table.is-stack .ui-table-sub {
+    display: inline;
+    margin-left: 6px;
+  }
+  .ui-table.is-stack td:first-child .ui-table-sub,
+  .ui-table.is-stack td[data-title] .ui-table-sub {
+    display: block;
+    margin-left: 0;
+  }
+  .ui-table.is-stack .ui-site-trunc {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+}
+
+/* ===================== KPI strip: no orphan cell ===================== */
+/* Under 1024 the strip is two columns; with an odd count (3 or 5) the first,
+   leading stat spans both, so the grid closes (1 + 2 + 2, never 2 + 2 + 1). */
+@media (max-width: 1023px) {
+  .ui-kpis > :first-child:nth-last-child(odd) {
+    grid-column: 1 / -1;
+  }
+}
+@media (max-width: 767px) {
+  .ui-table.is-stack td[data-label] :is(.ui-site-journey, .ui-site-trunc) {
+    display: inline;
+  }
+}
+
+/* ===================== Section folded on phones ===================== */
+/* A rarely used section (Section foldOnPhone) starts closed under 768 px:
+   the title is a 44 px disclosure button, a one-line summary under it. */
+.ui-fold-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: var(--ui-touch);
+  margin: -10px 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ui-fold-chevron {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  color: var(--ui-ink-3);
+  transition: transform var(--ui-dur) var(--ui-ease-out);
+}
+.ui-section.is-open .ui-fold-chevron {
+  transform: rotate(180deg);
+}
+.ui-section.is-fold:not(.is-open) {
+  margin-bottom: var(--ui-s-4);
+}
+.ui-section.is-fold:not(.is-open) .ui-section-head {
+  margin-bottom: 0;
+}

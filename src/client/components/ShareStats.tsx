@@ -7,7 +7,7 @@ import type { LinkDTO, ShareDTO, ShareRange } from "../../shared/types";
 import { api, call } from "../api";
 import { ago, fromLocalInput, num, toLocalInput, when } from "../lib/format";
 import { copy } from "../lib/utils";
-import { Badge, Button, Dialog, Field, Input, Select, Spinner } from "./ui";
+import { Badge, Button, ConfirmDialog, Dialog, Field, Input, LoadError, Select, Spinner } from "./ui";
 
 const sharesKey = (domain: string, slug: string) => ["link", domain, slug, "shares"] as const;
 
@@ -139,6 +139,8 @@ export function ShareStats({ link, label, open, onOpenChange }: { link: LinkDTO;
           <h3 className="mb-2 text-sm font-semibold text-fg">Shares of this link</h3>
           {shares.isPending ? (
             <Spinner />
+          ) : shares.isError && !shares.data ? (
+            <LoadError compact what="The shares of this link" error={shares.error} onRetry={() => void shares.refetch()} retrying={shares.isFetching} />
           ) : list.length === 0 ? (
             <p className="text-sm text-muted">Not shared yet.</p>
           ) : (
@@ -174,6 +176,7 @@ function ShareItem({
   onExpiry: (sec: number | null) => void;
   onDelete: () => void;
 }) {
+  const [stopping, setStopping] = useState(false);
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(toLocalInput(s.expiresAt));
   const active = s.status === "active";
@@ -219,9 +222,20 @@ function ShareItem({
             <Button variant="ghost" size="sm" onClick={() => setEditing((v) => !v)}>
               Change end date
             </Button>
-            <Button variant="ghost" size="sm" disabled={busy} onClick={onRevoke}>
+            <Button variant="ghost" size="sm" disabled={busy} onClick={() => setStopping(true)}>
               Stop sharing now
             </Button>
+            <ConfirmDialog
+              open={stopping}
+              onOpenChange={setStopping}
+              title="Stop sharing now?"
+              description="The address stops working right away for everyone who has it. To share again, create a new link."
+              confirmLabel="Stop sharing"
+              onConfirm={() => {
+                setStopping(false);
+                onRevoke();
+              }}
+            />
           </>
         ) : (
           <Button variant="ghost" size="sm" disabled={busy} onClick={onDelete}>

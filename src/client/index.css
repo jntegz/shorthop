@@ -1,6 +1,7 @@
 @import "tailwindcss";
 
-/* A single light palette keeps every workspace surface consistent. */
+/* Tailwind colours for components/*.tsx. The values are the design's tokens:
+   app/tokens.css points each of these names at one of them. */
 @theme inline {
   --color-bg: var(--bg);
   --color-surface: var(--surface);
@@ -20,71 +21,27 @@
   --color-warn-soft: var(--warn-soft);
   --color-series-1: var(--series-1);
   --color-series-2: var(--series-2);
-  --color-grid: var(--grid);
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
 }
 
 :root {
-  color-scheme: light;
-  --bg: #f6f7f9;
-  --surface: #ffffff;
-  --surface-2: #f3f4f8;
-  --line: #dcdfe6;
-  --fg: #1a1b25;
-  --muted: #555b6e;
-  --subtle: #6b7183;
-  --accent: #3b5bdb;
-  --accent-fg: #ffffff;
-  --accent-soft: #eef2ff;
-  --danger: #b93845;
-  --danger-soft: #fff0f1;
-  --good: #23765a;
-  --good-soft: #edf8f2;
-  --warn: #8c621b;
-  --warn-soft: #fff8e9;
-  --series-1: #4c6ef5;
-  --series-2: #bd7a3b;
-  --grid: #eceef2;
+  /* The accent each person picks (lib/accent.ts sets it); app/tokens.css derives every accent colour from it. */
+  --accent-base: #3b5bdb;
 }
 
-html,
-body {
+html {
   background: var(--bg);
-  color: var(--fg);
-}
-
-body {
-  font-family: var(--font-sans);
-  -webkit-font-smoothing: antialiased;
-}
-
-::selection {
-  background: var(--accent-soft);
-}
-
-:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
 }
 
 .tabular {
   font-variant-numeric: tabular-nums;
 }
 
-body { margin: 0; }
 button, a, input, select, textarea { -webkit-tap-highlight-color: transparent; }
 button:not(:disabled), summary { cursor: pointer; }
 button, a, input, select, textarea { touch-action: manipulation; }
 button:disabled { cursor: not-allowed; }
-/* A sideways scroller is the containing block of what's inside it: otherwise the
-   absolutely positioned screen-reader text in its table cells (sr-only) escapes
-   the scroller and widens the whole page on phones. */
-.overflow-x-auto, .overflow-auto { position: relative; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
-}
-@media (max-width: 767px) {
-  .mobile-nav { padding-bottom: env(safe-area-inset-bottom); }
-  main { padding-bottom: calc(6rem + env(safe-area-inset-bottom)); }
 }

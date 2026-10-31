@@ -1,0 +1,821 @@
+/* Page layout and the analytics home (Analytics.tsx, home.tsx, parts.tsx). */
+
+/* ---------------- Page ---------------- */
+.ui-page {
+  max-width: var(--ui-page-max);
+  margin: 0 auto;
+  padding: var(--ui-s-6) var(--ui-s-6) var(--ui-s-7);
+}
+/* One header pattern on every page (DESIGN §6 "Header"): the title block
+   (h1, then one identity line) on the left, page actions on the right, top-
+   aligned and never wrapping under the title on wide screens. Analytics pages
+   add a second row, the PeriodBar: the period, then the range it covers. */
+.ui-head {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--ui-s-3) var(--ui-s-5);
+  margin-bottom: var(--ui-s-4);
+}
+.ui-head-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.ui-head-sub {
+  margin: 4px 0 0;
+  max-width: 72ch;
+  color: var(--ui-ink-2);
+  font-size: var(--ui-t-sm);
+  text-wrap: pretty;
+}
+.ui-period-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ui-s-2) var(--ui-s-4);
+  margin: 0 0 var(--ui-s-5);
+  padding-top: var(--ui-s-4);
+  border-top: 1px solid var(--ui-line);
+}
+.ui-period-bar .ui-range {
+  margin: 0;
+}
+/* The period never runs past the page: the bar is a size container, and
+   when it is narrower than the full labels need (tablets, phones, a narrow
+   window beside the sidebar) the options switch to their short labels and
+   share the width. Long custom ranges scroll inside the control's own track. */
+.ui-period-bar {
+  container: ui-period / inline-size;
+}
+.ui-period-bar .ui-period {
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+@container ui-period (max-width: 600px) {
+  .ui-period-bar .ui-period {
+    display: flex;
+    flex: 1 1 100%;
+  }
+  .ui-period-bar .ui-period .ui-segmented-opt {
+    flex: 1 0 auto;
+    padding: 0 8px;
+  }
+  .ui-period-bar .ui-period .ui-seg-long {
+    display: none;
+  }
+  .ui-period-bar .ui-period .ui-seg-short {
+    display: inline;
+  }
+}
+.ui-h1 {
+  margin: 0;
+  font-family: var(--ui-font-display);
+  font-size: var(--ui-t-xl);
+  font-weight: var(--ui-w-strong);
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  text-wrap: balance;
+}
+.ui-h2 {
+  margin: 0;
+  font-family: var(--ui-font-display);
+  font-size: var(--ui-t-lg);
+  font-weight: var(--ui-w-strong);
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+}
+.ui-range {
+  margin: 4px 0 0;
+  color: var(--ui-ink-2);
+  font-size: var(--ui-t-sm);
+}
+.ui-range-note a,
+.ui-panel-foot a,
+.ui-health a {
+  color: var(--ui-accent-ink);
+  text-underline-offset: 3px;
+}
+.ui-head-tools {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--ui-s-2);
+}
+.ui-fresh {
+  display: inline-flex;
+}
+/* A select in a chart's tool row is a toolbar field: a pill. */
+.ui-chart-tools .ui-select select {
+  border-radius: var(--ui-r-pill);
+  padding-left: 14px;
+}
+/* A ghost action at the right edge lines its visible label up with the
+   content edge, not its padding box (hover tint still has room to show). */
+@media (min-width: 768px) {
+  :is(.ui-head-tools, .ui-section-tools) > .ui-button[data-variant="ghost"]:last-child:not(.ui-icon-button) {
+    margin-right: -14px;
+  }
+  :is(.ui-head-tools, .ui-section-tools) > .ui-button[data-variant="ghost"][data-size="sm"]:last-child:not(.ui-icon-button) {
+    margin-right: -11px;
+  }
+}
+
+.ui-health {
+  margin: calc(var(--ui-s-4) * -1) 0 var(--ui-s-5);
+  font-size: var(--ui-t-sm);
+  color: var(--ui-ink-2);
+}
+.ui-health a {
+  color: var(--ui-ink-2);
+}
+.ui-health a[data-tone="bad"] {
+  color: var(--ui-bad);
+}
+.ui-health a[data-tone="warn"] {
+  color: var(--ui-warn);
+}
+
+/* ---------------- Period: the Custom… dialog (PeriodControl custom) ---------------- */
+.ui-period-longer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ui-s-2);
+  margin-bottom: var(--ui-s-4);
+}
+.ui-period-dates {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--ui-s-3);
+}
+
+/* ---------------- KPI strip: each Stat is a tab that switches the chart ---------------- */
+.ui-kpis {
+  display: grid;
+  grid-template-columns: repeat(var(--n, 4), minmax(0, 1fr));
+  gap: var(--ui-s-5);
+  margin-bottom: var(--ui-s-5);
+}
+
+/* ---------------- Chart ---------------- */
+.ui-chart-block {
+  position: relative;
+  margin-bottom: var(--ui-s-5);
+}
+.ui-chart-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ui-s-2) var(--ui-s-4);
+  margin-bottom: var(--ui-s-2);
+}
+.ui-chart-head .ui-h2 {
+  font-size: var(--ui-t-md);
+}
+.ui-chart-tools {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-s-4);
+  font-size: var(--ui-t-sm);
+  color: var(--ui-ink-2);
+}
+.ui-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.ui-check input {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--ui-accent-fill);
+}
+.ui-legend-prev {
+  width: 14px;
+  border-top: 2px dashed var(--ui-ghost);
+}
+.ui-chart {
+  position: relative;
+  outline-offset: 2px;
+  border-radius: var(--ui-r-sm);
+  touch-action: pan-y;
+}
+.ui-chart svg {
+  display: block;
+  overflow: visible;
+}
+.ui-grid {
+  stroke: var(--ui-line);
+  stroke-width: 1;
+}
+.ui-axis {
+  stroke: var(--ui-line-strong);
+  stroke-width: 1;
+}
+.ui-tick {
+  fill: var(--ui-ink-3);
+  font-size: var(--ui-t-xs);
+  font-family: var(--ui-font-ui);
+  font-variant-numeric: tabular-nums;
+}
+.ui-chart-hover {
+  fill: var(--ui-hover);
+}
+.ui-bar {
+  fill: var(--ui-accent);
+}
+.ui-bar.is-on {
+  fill: var(--ui-accent-ink);
+}
+.ui-ghost {
+  stroke: var(--ui-ghost);
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+.ui-line {
+  fill: none;
+  stroke: var(--ui-accent);
+  stroke-width: 2.25;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+.ui-line-prev {
+  fill: none;
+  stroke: var(--ui-ghost);
+  stroke-width: 1.5;
+  stroke-dasharray: 3 4;
+}
+.ui-line-dot {
+  fill: var(--ui-panel);
+  stroke: var(--ui-accent);
+  stroke-width: 2.5;
+}
+.ui-line-end {
+  fill: var(--ui-accent);
+}
+.ui-peak-text {
+  fill: var(--ui-ink-2);
+  font-size: var(--ui-t-xs);
+  font-weight: var(--ui-w-medium);
+  font-family: var(--ui-font-ui);
+  font-variant-numeric: tabular-nums;
+}
+.ui-chart-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  color: var(--ui-ink-2);
+}
+.ui-readout {
+  position: absolute;
+  top: 0;
+  transform: translate(-50%, -8px);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 170px;
+  padding: 8px 10px;
+  border-radius: var(--ui-r-md);
+  background: var(--ui-panel);
+  box-shadow: var(--ui-shadow-pop);
+  font-size: var(--ui-t-sm);
+  pointer-events: none;
+  z-index: 2;
+}
+.ui-readout-date {
+  font-weight: var(--ui-w-strong);
+}
+.ui-readout-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  color: var(--ui-ink-2);
+}
+.ui-readout-row strong {
+  color: var(--ui-ink);
+  font-weight: var(--ui-w-strong);
+  font-variant-numeric: tabular-nums;
+}
+.ui-readout-row.is-prev strong {
+  color: var(--ui-ink-2);
+}
+.ui-chart-note {
+  margin: var(--ui-s-2) 0 0;
+  font-size: var(--ui-t-sm);
+  color: var(--ui-ink-3);
+}
+.ui-table-wrap {
+  max-height: 320px;
+  overflow: auto;
+}
+.ui-table-wrap .ui-table th {
+  position: sticky;
+  top: 0;
+  background: var(--ui-canvas);
+}
+.ui-table-wrap .ui-table td {
+  height: 36px;
+}
+.ui-bot {
+  color: var(--ui-ink-3);
+}
+
+/* ---------------- Signature: the source ribbon ---------------- */
+/* The ribbon heads its section: right under the section
+   title, above the Sources | Referrers tabs; the list below is its legend
+   (each row carries its segment's swatch). 28 px tall, 2 px surface gaps
+   (dataviz: a tall segmented bar). */
+.ui-ribbon {
+  margin: 0 0 var(--ui-s-4);
+}
+.ui-ribbon-bar {
+  display: flex;
+  gap: 2px;
+  height: 28px;
+}
+.ui-ribbon-seg {
+  display: flex;
+  align-items: center;
+  min-width: 6px;
+  padding: 0 10px;
+  flex-basis: 0;
+  overflow: hidden;
+  border-radius: var(--ui-r-sm);
+  background: var(--seg);
+  color: var(--ui-seg-ink);
+  font-size: var(--ui-t-sm);
+  font-weight: var(--ui-w-strong);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  /* Explains a change: segments re-proportion when the period changes (240 ms). */
+  transition: flex-grow var(--ui-dur-slow) var(--ui-ease-move);
+}
+.ui-ribbon-seg:first-child {
+  border-top-left-radius: var(--ui-r-md);
+  border-bottom-left-radius: var(--ui-r-md);
+}
+.ui-ribbon-seg:last-child {
+  border-top-right-radius: var(--ui-r-md);
+  border-bottom-right-radius: var(--ui-r-md);
+}
+.ui-ribbon [data-i="0"] {
+  --seg: var(--ui-seg-0);
+}
+.ui-ribbon [data-i="1"] {
+  --seg: var(--ui-seg-1);
+}
+.ui-ribbon [data-i="2"] {
+  --seg: var(--ui-seg-2);
+}
+.ui-ribbon [data-i="3"] {
+  --seg: var(--ui-seg-3);
+}
+.ui-ribbon [data-i="4"] {
+  --seg: var(--ui-seg-4);
+}
+.ui-ribbon [data-i="rest"] {
+  --seg: var(--ui-seg-rest);
+}
+.ui-ribbon-seg[data-i="0"] {
+  color: var(--ui-seg-0-ink);
+}
+.ui-ribbon-seg[data-i="1"] {
+  color: var(--ui-seg-1-ink);
+}
+.ui-ribbon-seg[data-i="rest"] {
+  color: var(--ui-seg-rest-ink);
+}
+/* ---------------- Two open columns of lists ---------------- */
+.ui-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--ui-s-6) var(--ui-s-7);
+  margin-bottom: var(--ui-s-6);
+  padding-top: var(--ui-s-5);
+  border-top: 1px solid var(--ui-line);
+}
+/* Packed (Columns, ≥ 1024): 1 px rows; each section spans its own height
+   plus the 40 px gap in the column Columns gave it, and dense flow stacks it
+   right under the section before it in that column. */
+.ui-columns.is-packed {
+  grid-auto-rows: 1px;
+  grid-auto-flow: row dense;
+  row-gap: 0;
+  align-items: start;
+  /* The last section's span already carries the 40 px gap. */
+  margin-bottom: 0;
+}
+.ui-columns.is-packed > * {
+  align-self: start;
+}
+.ui-panel {
+  min-width: 0;
+}
+.ui-panel-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--ui-s-2) var(--ui-s-3);
+  margin-bottom: var(--ui-s-3);
+}
+.ui-panel-head .ui-h2 {
+  margin-right: auto;
+}
+.ui-panel-foot {
+  margin: var(--ui-s-2) 0 0;
+  font-size: var(--ui-t-sm);
+  color: var(--ui-ink-2);
+}
+.ui-panel-hits {
+  padding-top: var(--ui-s-5);
+  border-top: 1px solid var(--ui-line);
+}
+.ui-cols.has-money,
+.ui-panel-links .ui-row-inner:has(.ui-row-money) {
+  grid-template-columns: minmax(0, 1fr) 5.2em 3.4em 4.6em;
+}
+.ui-panel-money .ui-row-inner:has(.ui-row-delta) {
+  grid-template-columns: minmax(0, 1fr) 3.6em 5.4em;
+}
+.ui-panel-money .ui-row-inner:has(.ui-row-delta):has(.ui-row-share) {
+  grid-template-columns: minmax(0, 1fr) 3.6em 3.4em 5.4em;
+}
+.ui-panel-money .ui-row-inner:not(:has(.ui-row-delta)) {
+  grid-template-columns: minmax(0, 1fr) 3.4em 5.4em;
+}
+.ui-panel-money .ui-row-label {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  padding: 5px 0;
+  line-height: 1.3;
+}
+.ui-panel-money .ui-row-sub {
+  font-size: var(--ui-t-xs);
+}
+
+.ui-empty-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ui-s-2) var(--ui-s-4);
+  margin-bottom: var(--ui-s-5);
+  padding: var(--ui-s-3) var(--ui-s-4);
+  border-radius: var(--ui-r-md);
+  background: var(--ui-accent-wash);
+}
+.ui-empty-notice p {
+  margin: 0;
+}
+
+/* ---------------- Tablet ---------------- */
+@media (max-width: 1023px) and (min-width: 768px) {
+  .ui-page {
+    padding: var(--ui-s-5) var(--ui-s-5) var(--ui-s-7);
+  }
+  .ui-kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--ui-s-4) var(--ui-s-5);
+  }
+  /* Two lists side by side would leave ~220 px each: one column until 1024. */
+  .ui-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* ---------------- Phone ---------------- */
+@media (max-width: 767px) {
+  .ui-page {
+    padding: var(--ui-s-4) 16px var(--ui-s-6);
+  }
+  .ui-head {
+    gap: var(--ui-s-3);
+    margin-bottom: var(--ui-s-3);
+  }
+  .ui-period-bar {
+    gap: var(--ui-s-2);
+    margin-bottom: var(--ui-s-4);
+    padding-top: var(--ui-s-3);
+  }
+  .ui-period-bar .ui-period {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+  .ui-period-bar .ui-period .ui-segmented-opt {
+    flex: 1;
+    padding: 0 4px;
+  }
+  /* Header actions turn into 44 px icon buttons next to the title. */
+  .ui-head-tools .ui-button {
+    width: var(--ui-touch);
+    padding: 0;
+    gap: 0;
+    font-size: 0;
+    flex: none;
+  }
+  .ui-app .ui-head-tools .ui-button svg.lucide {
+    width: 18px;
+    height: 18px;
+  }
+  .ui-health {
+    margin-top: calc(var(--ui-s-3) * -1);
+  }
+  .ui-kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--ui-s-4);
+  }
+  .ui-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .ui-row-sub {
+    display: none;
+  }
+  .ui-chart-tools .ui-link-btn,
+  .ui-check {
+    min-height: var(--ui-touch);
+    display: inline-flex;
+    align-items: center;
+  }
+  .ui-period-dates {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .ui-ribbon-seg:not([data-wide]) .ui-ribbon-in {
+    display: none;
+  }
+}
+
+/* ======================================================================
+   Home additions (prefix home-): peak hours (hits/PeakHours.tsx) and
+   system status (hits/SystemStatus.tsx).
+   ====================================================================== */
+
+/* ---------------- Peak hours: the neutral, rank-stepped heatmap (DESIGN §2.2) ---------------- */
+.home-heat-scroll {
+  position: relative;
+  overflow-x: auto;
+  margin-bottom: var(--ui-s-2);
+  border-radius: var(--ui-r-sm);
+}
+.home-heat-scroll.is-narrow {
+  display: none;
+}
+.home-heat {
+  width: 100%;
+  max-width: 720px;
+  min-width: 560px;
+  table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 2px;
+  font-size: var(--ui-t-xs);
+}
+.home-heat th {
+  font-weight: var(--ui-w-medium);
+  color: var(--ui-ink-3);
+  font-variant-numeric: tabular-nums;
+}
+.home-heat thead th {
+  text-align: left;
+}
+.home-heat tbody th {
+  width: 36px;
+  text-align: left;
+  line-height: 1;
+}
+/* Ink mixed into the canvas, 12 / 30 / 48 / 68 / 90 %; empty = sunken; the
+   three busiest slots (named in the note) the accent, as on the website dashboard. */
+.home-heat tbody td,
+.home-heat-steps > span {
+  --s: 0%;
+  background: color-mix(in oklab, var(--ui-ink) var(--s), var(--ui-canvas));
+}
+.home-heat tbody td {
+  height: 13px;
+  border-radius: 2px;
+}
+.home-heat tbody td[data-l="0"] {
+  background: var(--ui-sunken);
+}
+:is(.home-heat tbody td, .home-heat-steps > span)[data-l="1"] {
+  --s: 12%;
+}
+:is(.home-heat tbody td, .home-heat-steps > span)[data-l="2"] {
+  --s: 30%;
+}
+:is(.home-heat tbody td, .home-heat-steps > span)[data-l="3"] {
+  --s: 48%;
+}
+:is(.home-heat tbody td, .home-heat-steps > span)[data-l="4"] {
+  --s: 68%;
+}
+:is(.home-heat tbody td, .home-heat-steps > span)[data-l="5"] {
+  --s: 90%;
+}
+.home-heat tbody td.is-top,
+.home-heat-top {
+  background: var(--ui-accent);
+}
+.home-heat-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ui-s-2) var(--ui-s-5);
+  margin: var(--ui-s-2) 0 var(--ui-s-3);
+  font-size: var(--ui-t-xs);
+  color: var(--ui-ink-2);
+}
+.home-heat-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.home-heat-end {
+  font-variant-numeric: tabular-nums;
+}
+.home-heat-steps {
+  display: inline-flex;
+  gap: 2px;
+}
+.home-heat-steps > span,
+.home-heat-top {
+  width: 16px;
+  height: 10px;
+  border-radius: 2px;
+}
+.home-heat-top {
+  display: inline-block;
+}
+.home-heat-unit {
+  color: var(--ui-ink-3);
+}
+.home-note {
+  margin: 0;
+  max-width: 72ch;
+  font-size: var(--ui-t-sm);
+  color: var(--ui-ink-2);
+  text-wrap: pretty;
+}
+.home-note strong {
+  color: var(--ui-ink);
+  font-weight: var(--ui-w-medium);
+}
+.home-note-num {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------------- System status ---------------- */
+.home-status {
+  scroll-margin-top: var(--ui-s-5);
+}
+/* Clear of the table or list above (its last row rule would sit on this section's rule). */
+.home-status {
+  margin-top: var(--ui-s-6);
+}
+/* All well: one quiet line under a rule, no block. */
+.home-status.is-quiet {
+  padding-top: var(--ui-s-4);
+  border-top: 1px solid var(--ui-line);
+}
+.home-status-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ui-s-1) var(--ui-s-3);
+  margin: 0;
+  font-size: var(--ui-t-sm);
+  color: var(--ui-ink-2);
+}
+.home-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ui-good);
+}
+.home-checks {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--ui-line);
+}
+.home-check {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--ui-s-3);
+  padding: var(--ui-s-3) 2px;
+  border-bottom: 1px solid var(--ui-line);
+}
+.ui-app .home-check-icon,
+.home-check-icon {
+  flex: none;
+  width: 17px;
+  height: 17px;
+  margin-top: 2px;
+}
+.home-check[data-tone="good"] .home-check-icon {
+  color: var(--ui-good);
+}
+.home-check[data-tone="warn"] .home-check-icon {
+  color: var(--ui-warn);
+}
+.home-check[data-tone="bad"] .home-check-icon {
+  color: var(--ui-bad);
+}
+.home-check-text {
+  min-width: 0;
+}
+.home-check-label {
+  margin: 0;
+  font-weight: var(--ui-w-medium);
+  color: var(--ui-ink);
+}
+.home-check-detail {
+  margin: 2px 0 0;
+  max-width: 72ch;
+  font-size: var(--ui-t-sm);
+  color: var(--ui-ink-2);
+  text-wrap: pretty;
+}
+/* The fix command (copied on click) and the setup guide's section. */
+.home-check-help {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ui-s-1) var(--ui-s-3);
+  margin: var(--ui-s-1) 0 0;
+  font-size: var(--ui-t-sm);
+}
+.home-check-fix {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 2px 8px;
+  border: 1px solid var(--ui-line-strong);
+  border-radius: var(--ui-r-sm);
+  background: var(--ui-panel);
+  color: var(--ui-ink);
+  font: inherit;
+  cursor: pointer;
+}
+.home-check-fix code {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: var(--ui-t-xs);
+  overflow-wrap: anywhere;
+}
+.home-check-fix svg.lucide {
+  width: 12px;
+  height: 12px;
+  flex: none;
+  color: var(--ui-ink-3);
+}
+.home-check-fix:hover {
+  border-color: var(--ui-line-control);
+}
+.home-check-label .ui-badge {
+  margin-left: 8px;
+  vertical-align: 1px;
+}
+/* The running version, and a newer release. */
+.home-status-version {
+  margin: var(--ui-s-3) 0 0;
+  font-size: var(--ui-t-xs);
+  color: var(--ui-ink-3);
+}
+.home-status-update {
+  margin-top: var(--ui-s-3);
+}
+.home-status-update .ui-notice-action {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ui-s-3);
+}
+
+@media (max-width: 767px) {
+  /* The heatmap in 3-hour blocks: the whole week fits, no sideways scroll. */
+  .home-heat-scroll.is-wide,
+  .home-heat-legend.is-wide {
+    display: none;
+  }
+  .home-heat-scroll.is-narrow {
+    display: block;
+  }
+  .home-heat.is-blocks {
+    min-width: 0;
+  }
+  .home-heat.is-blocks tbody td {
+    height: 18px;
+  }
+  .home-status-line .ui-text-button {
+    min-height: var(--ui-touch);
+  }
+  .home-status-when {
+    display: none;
+  }
+}

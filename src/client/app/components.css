@@ -1,0 +1,355 @@
+/* The components in components/*.tsx (LinkForm and its editors, QR studio,
+   share statistics, Disable/Enable, the tag manager, shared reports) are built
+   from components/ui.tsx and Tailwind utilities, mostly into dialogs. This file
+   gives them the admin's design from the outside:
+   - every rule is scoped to :root[data-ui="app"] (set in _admin/index.html);
+   - utilities are matched with [class~="…"] (one whole class), never by
+     position, so a markup change degrades to the plain Tailwind look, not a
+     mess;
+   - Tailwind's utilities live in a cascade layer, so these unlayered rules win
+     without !important.
+   What changes: surfaces, radii, type, controls (inputs, Segmented, switches,
+   chips, buttons) and card-in-card. Inside a dialog nothing is a
+   box: collapsible groups and routing rules become rows under a 1 px rule. */
+
+/* ---- The dialog shell (components/ui.tsx Dialog: D.Content … shadow-2xl) ---- */
+:root[data-ui="app"] [class~="bg-black/40"][class~="fixed"] {
+  background: var(--ui-overlay);
+}
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] {
+  border: 0;
+  border-radius: var(--ui-r-lg);
+  background: var(--ui-panel);
+  box-shadow: var(--ui-shadow-pop);
+  padding: var(--ui-s-4) var(--ui-s-4) var(--ui-s-4);
+  font-family: var(--ui-font-ui);
+  font-size: var(--ui-t-base);
+  line-height: var(--ui-lh);
+  color: var(--ui-ink);
+  overscroll-behavior: contain;
+}
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] > div:first-child h2 {
+  font-family: var(--ui-font-display);
+  font-size: var(--ui-t-lg);
+  font-weight: var(--ui-w-strong);
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+  text-wrap: balance;
+}
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] > div:first-child p {
+  color: var(--ui-ink-2);
+  font-size: var(--ui-t-sm);
+}
+/* The form's Cancel / Save row stays in view: it sticks to the bottom of
+   the scrolling dialog (LinkForm is longer than a 900 px window once a group
+   is open), on the panel, under a 1 px rule. */
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] form > div[class~="justify-end"][class~="border-t"]:last-child {
+  position: sticky;
+  bottom: calc(var(--ui-s-4) * -1);
+  z-index: 2;
+  margin-right: calc(var(--ui-s-4) * -1);
+  margin-bottom: calc(var(--ui-s-4) * -1);
+  margin-left: calc(var(--ui-s-4) * -1);
+  padding: var(--ui-s-3) var(--ui-s-4) var(--ui-s-4);
+  border-top-color: var(--ui-line);
+  background: var(--ui-panel);
+}
+
+/* Section-like headings inside (h3, "Try it", the QR studio's groups). */
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] :is(h3, h4) {
+  font-family: var(--ui-font-display);
+  font-weight: var(--ui-w-strong);
+}
+
+/* ---- Buttons: one shape, the pill ---- */
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] :is(button, a)[class~="inline-flex"][class~="rounded-md"][class~="justify-center"] {
+  border-radius: var(--ui-r-pill);
+  font-size: var(--ui-t-sm);
+  font-weight: var(--ui-w-medium);
+  transition:
+    background-color var(--ui-dur-fast) ease,
+    border-color var(--ui-dur-fast) ease,
+    color var(--ui-dur-fast) ease,
+    transform var(--ui-dur-press) var(--ui-ease-out);
+}
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] :is(button, a)[class~="inline-flex"][class~="rounded-md"][class~="justify-center"]:active:not(:disabled) {
+  transform: scale(0.97);
+}
+/* primary */
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] :is(button, a)[class~="bg-accent"][class~="text-accent-fg"] {
+  border-color: var(--ui-accent-fill);
+  background: var(--ui-accent-fill);
+  color: var(--ui-on-accent);
+}
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] :is(button, a)[class~="bg-accent"][class~="text-accent-fg"]:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--ui-accent-fill) 90%, var(--ui-on-accent));
+}
+/* outline → the design's secondary: panel + strong edge */
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] :is(button, a)[class~="justify-center"][class~="border-line"][class~="bg-surface"] {
+  border-color: var(--ui-line-strong);
+  background: var(--ui-panel);
+}
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] :is(button, a)[class~="justify-center"][class~="border-line"][class~="bg-surface"]:hover:not(:disabled) {
+  border-color: var(--ui-line-control);
+  background: var(--ui-panel);
+}
+/* secondary (sunken fill) → the same secondary */
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] :is(button, a)[class~="justify-center"][class~="bg-surface-2"] {
+  border: 1px solid var(--ui-line-strong);
+  background: var(--ui-panel);
+}
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] :is(button, a)[class~="justify-center"][class~="bg-surface-2"]:hover:not(:disabled) {
+  border-color: var(--ui-line-control);
+}
+/* danger: components/ui.tsx hardcodes white text; flipped in dark mode (AA) */
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] :is(button, a)[class~="bg-danger"] {
+  background: var(--ui-danger-fill);
+  color: var(--ui-on-danger);
+}
+
+/* ---- Fields: the design's input shell ---- */
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] :is(input, select, textarea)[class~="rounded-md"][class~="border"],
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] button[class~="rounded-md"][class~="border"][class~="text-left"][class~="w-full"] {
+  border-color: var(--ui-line-control);
+  border-radius: var(--ui-r-md);
+  background: var(--ui-panel);
+  color: var(--ui-ink);
+  font-size: var(--ui-t-input);
+  transition:
+    border-color var(--ui-dur-fast) ease,
+    box-shadow var(--ui-dur-fast) ease;
+}
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] :is(input, select, textarea)[class~="rounded-md"][class~="border"]:hover:not(:disabled, :focus),
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] button[class~="rounded-md"][class~="border"][class~="text-left"][class~="w-full"]:hover {
+  border-color: var(--ui-ink-3);
+}
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] :is(input, select, textarea)[class~="rounded-md"][class~="border"]:focus {
+  outline: none;
+  border-color: var(--ui-accent-ink);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--ui-accent) 26%, transparent);
+}
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] :is(input, select, textarea)[aria-invalid="true"] {
+  border-color: var(--ui-bad);
+}
+/* A select disabled because it has one choice (the domain, with one domain)
+   is information, not an unavailable control: sunken, but ink-2 text, so it
+   doesn't look fainter than the field beside it. */
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] select[class~="rounded-md"][class~="border"]:disabled {
+  background: var(--ui-sunken);
+  border-color: var(--ui-line);
+  color: var(--ui-ink-2);
+  opacity: 1;
+}
+/* Inline-edit inputs (a routing rule's name) keep their invisible edge until hovered. */
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] input[class~="border-transparent"]:not(:hover, :focus) {
+  border-color: transparent;
+  background: transparent;
+}
+/* An input inside a combined shell (the slug field's domain prefix) has no edge of its own. */
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] input[class~="border-0"] {
+  border: 0;
+  box-shadow: none;
+  font-size: var(--ui-t-input);
+}
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] input[class~="border-0"]:focus {
+  box-shadow: none;
+}
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] [class~="focus-within:border-accent"] {
+  border-color: var(--ui-line-control);
+  border-radius: var(--ui-r-md);
+  background: var(--ui-panel);
+}
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] [class~="focus-within:border-accent"]:focus-within {
+  border-color: var(--ui-accent-ink);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--ui-accent) 26%, transparent);
+}
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] [class~="focus-within:border-accent"] > span[class~="bg-surface-2"] {
+  background: var(--ui-sunken);
+  border-color: var(--ui-line);
+  color: var(--ui-ink-2);
+}
+/* The combobox's open list. */
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] [class~="ring-accent/25"][class~="border-accent"] {
+  border-color: var(--ui-accent-ink);
+  border-radius: var(--ui-r-md);
+  background: var(--ui-panel);
+}
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] label[class~="text-sm"] {
+  font-weight: var(--ui-w-medium);
+  color: var(--ui-ink);
+}
+@media (max-width: 767px) {
+  :root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] {
+    padding: var(--ui-s-4) 16px;
+  }
+}
+
+/* ---- Segmented (Redirect | Bio page, QR options) → the design's Segmented ---- */
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] [role="radiogroup"][class~="rounded-md"][class~="bg-surface-2"] {
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--ui-line);
+  border-radius: var(--ui-r-pill);
+  background: var(--ui-sunken);
+}
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] [role="radiogroup"][class~="bg-surface-2"] > [role="radio"] {
+  min-height: 28px;
+  padding: 0 12px;
+  border-radius: var(--ui-r-pill);
+  background: transparent;
+  box-shadow: none;
+  color: var(--ui-ink-2);
+  font-size: var(--ui-t-sm);
+  font-weight: var(--ui-w-medium);
+  transition:
+    background-color var(--ui-dur-fast) ease,
+    color var(--ui-dur-fast) ease;
+}
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] [role="radiogroup"][class~="bg-surface-2"] > [role="radio"]:hover:not([aria-checked="true"]) {
+  background: var(--ui-pressed);
+  color: var(--ui-ink);
+}
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] [role="radiogroup"][class~="bg-surface-2"] > [role="radio"][aria-checked="true"] {
+  background: var(--ui-ink);
+  color: var(--ui-canvas);
+}
+
+/* ---- Switches → the design's switch track ---- */
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] button[role="switch"] {
+  background: var(--ui-line-control);
+}
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] button[role="switch"][data-state="checked"] {
+  background: var(--ui-accent-fill);
+}
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] button[role="switch"] > span {
+  background: light-dark(#ffffff, #0f1311);
+}
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] button[role="switch"][data-state="checked"] > span {
+  background: var(--ui-on-accent);
+}
+
+/* ---- No card-in-card: collapsible groups become ruled rows ---- */
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] details[class~="border"] {
+  border: 0;
+  border-top: 1px solid var(--ui-line);
+  border-radius: 0;
+  background: transparent;
+}
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] details[class~="border"] > summary {
+  min-height: 44px;
+  padding-left: 0;
+  padding-right: 0;
+  font-family: var(--ui-font-display);
+  font-size: var(--ui-t-md);
+  font-weight: var(--ui-w-strong);
+}
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] details[class~="border"] > summary > span:not(:first-of-type) {
+  font-family: var(--ui-font-ui);
+}
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] details[class~="border"] > summary svg[class~="text-accent"] {
+  color: var(--ui-ink-3);
+}
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] details[class~="border"] > div[class~="border-t"] {
+  border-top: 0;
+  padding: 0 0 var(--ui-s-4);
+}
+/* Boxed groups inside the form (Link no longer working, the routing fallback,
+   the simulator): a rule above, no box. The slug's combined shell keeps its edge. */
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] form > div[class~="rounded-lg"][class~="border"]:not([class~="focus-within:border-accent"]),
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] div[class~="rounded-md"][class~="border"][class~="bg-surface"],
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] div[class~="border-dashed"] {
+  border: 0;
+  border-top: 1px solid var(--ui-line);
+  border-radius: 0;
+  background: transparent;
+  padding-left: 0;
+  padding-right: 0;
+}
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] .card {
+  border: 0;
+  background: transparent;
+}
+
+/* ---- Routing rules: rows under a rule, not boxes in a box ---- */
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] li[class~="rounded-md"][class~="border"][class~="bg-surface"] {
+  border: 0;
+  border-top: 1px solid var(--ui-line);
+  border-radius: 0;
+  background: transparent;
+}
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] li[class~="rounded-md"][class~="border-danger/40"] {
+  border-top-color: var(--ui-bad);
+}
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] li[class~="rounded-md"][class~="bg-surface"] > div[class~="border-b"] {
+  border-bottom: 0;
+  padding-left: 0;
+  padding-right: 0;
+}
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] li[class~="rounded-md"][class~="bg-surface"] > div[class~="p-3"] {
+  padding: 0 0 var(--ui-s-3);
+}
+/* The rule number: quiet ink-3 text, not an accent tile. */
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] span[class~="size-6"][class~="bg-accent-soft"] {
+  width: auto;
+  min-width: 14px;
+  background: transparent;
+  color: var(--ui-ink-3);
+  font-size: var(--ui-t-xs);
+}
+/* Presets: the icon sits on the card, no tinted tile. */
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] span[class~="size-8"][class~="bg-accent-soft"] {
+  width: auto;
+  height: auto;
+  background: transparent;
+  color: var(--ui-ink-2);
+}
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] button[class~="flex-col"][class~="rounded-md"][class~="border"] {
+  border-color: var(--ui-line-strong);
+  border-radius: var(--ui-r-md);
+  background: var(--ui-panel);
+}
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] button[class~="flex-col"][class~="rounded-md"][class~="border"]:hover {
+  border-color: var(--ui-line-control);
+  background: var(--ui-hover);
+}
+
+/* ---- Chips: neutral sunken pills, the chosen one an ink pill (like Segmented) ---- */
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] button[aria-pressed][class~="rounded-full"] {
+  border-color: transparent;
+  background: var(--ui-sunken);
+  color: var(--ui-ink-2);
+}
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] button[aria-pressed][class~="rounded-full"]:hover {
+  border-color: transparent;
+  background: var(--ui-pressed);
+  color: var(--ui-ink);
+}
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] button[aria-pressed="true"][class~="rounded-full"],
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] button[aria-pressed="true"][class~="rounded-full"]:hover {
+  background: var(--ui-ink);
+  color: var(--ui-canvas);
+}
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] span[class~="rounded-full"][class~="bg-accent-soft"] {
+  background: var(--ui-sunken);
+  color: var(--ui-ink);
+}
+/* Slug ideas */
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] button[class~="rounded-full"][class~="font-mono"] {
+  border-color: var(--ui-line-strong);
+}
+
+/* ---- Notices inside: one tinted band, no coloured edge ---- */
+:root[data-ui="app"] [role="dialog"][class~="shadow-2xl"] :is([role="status"], [role="alert"], div)[class~="border"]:is([class~="bg-warn-soft"], [class~="bg-danger-soft"], [class~="bg-accent-soft"]) {
+  border-color: transparent;
+  border-radius: var(--ui-r-md);
+}
+
+/* ---- Popovers (InfoTip) ---- */
+:root[data-ui="app"] [role="dialog"][class~="shadow-xl"] {
+  border: 0;
+  border-radius: var(--ui-r-md);
+  background: var(--ui-panel);
+  box-shadow: var(--ui-shadow-menu);
+  font-family: var(--ui-font-ui);
+  color: var(--ui-ink);
+}

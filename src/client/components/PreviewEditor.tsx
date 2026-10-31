@@ -1,5 +1,5 @@
 import { useMutation } from "@tanstack/react-query";
-import { AlertTriangle, ArrowUpRight, DownloadCloud, ImagePlus, Link2, Loader2, RefreshCw, Trash2 } from "lucide-react";
+import { AlertTriangle, ArrowUpRight, DownloadCloud, ImagePlus, Link2, Loader2, RefreshCw, Sparkles, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState, type DragEvent } from "react";
 import { toast } from "sonner";
 import {
@@ -16,6 +16,7 @@ import {
   type PreviewProblem,
 } from "../../shared/preview";
 import { api, call, uploadPreviewImage } from "../api";
+import { useMe } from "../lib/me";
 import { cn } from "../lib/utils";
 import { Button, Input, Segmented, Textarea } from "./ui";
 
@@ -262,6 +263,16 @@ export function PreviewEditor({
     },
     onError: (e) => toast.error(e.message),
   });
+  // Workers AI (when bound): a title and description written from the destination's own.
+  const ai = useMe().data?.workspace.aiAvailable ?? false;
+  const write = useMutation({
+    mutationFn: (url: string) => call(api.previews.ai.preview.$post({ json: { url } })),
+    onSuccess: (r) => {
+      onChange({ title: r.title, description: r.description, image: value?.image ?? null });
+      toast.success("Written with Workers AI", { description: "Check it, and edit anything that isn't right." });
+    },
+    onError: (e) => toast.error(e.message),
+  });
   const problem = (field: PreviewProblem["field"]) => problems.find((p) => p.field === field)?.message;
 
   if (!value) {
@@ -274,6 +285,11 @@ export function PreviewEditor({
           <Button type="button" variant="outline" size="sm" disabled={!destination} loading={load.isPending} onClick={() => destination && load.mutate(destination)} title={destination ? undefined : "Enter the destination URL first"}>
             {load.isPending ? null : <DownloadCloud />} Start from the destination's preview
           </Button>
+          {ai ? (
+            <Button type="button" variant="outline" size="sm" disabled={!destination} loading={write.isPending} onClick={() => destination && write.mutate(destination)} title={destination ? undefined : "Enter the destination URL first"}>
+              {write.isPending ? null : <Sparkles />} Write with AI
+            </Button>
+          ) : null}
           <Button type="button" variant="ghost" size="sm" onClick={() => onChange({ title: "", description: "", image: null })}>
             Start blank
           </Button>
@@ -318,6 +334,11 @@ export function PreviewEditor({
           <Button type="button" variant="ghost" size="sm" disabled={!destination} loading={load.isPending} onClick={() => destination && load.mutate(destination)}>
             {load.isPending ? null : <RefreshCw />} Reload from destination
           </Button>
+          {ai ? (
+            <Button type="button" variant="ghost" size="sm" disabled={!destination} loading={write.isPending} onClick={() => destination && write.mutate(destination)}>
+              {write.isPending ? null : <Sparkles />} Rewrite with AI
+            </Button>
+          ) : null}
           <Button type="button" variant="ghost" size="sm" onClick={() => onChange(null)}>
             Remove custom preview
           </Button>

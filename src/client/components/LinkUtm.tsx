@@ -80,6 +80,9 @@ export function LinkUtm({
           { value: "custom", label: "Custom for this link" },
         ]}
       />
+      {presets.isError && !presets.data ? (
+        <p className="text-xs text-muted">Presets couldn’t load. <button type="button" className="text-accent underline" onClick={() => void presets.refetch()}>Try again</button></p>
+      ) : null}
       {list.length ? (
         <div className="flex flex-wrap items-center gap-1.5">
           <span className="text-xs text-muted">Presets:</span>

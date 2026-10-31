@@ -1,8 +1,8 @@
 // Small shadcn-style primitives on Radix, styled with the semantic tokens.
 
 import { cva, type VariantProps } from "class-variance-authority";
-import { ArrowDown, ArrowUp, ArrowUpDown, Check, ChevronDown, ChevronLeft, ChevronRight, Info, Loader2, Search, X } from "lucide-react";
-import { Dialog as D, DropdownMenu as M, Popover as P, Switch as S } from "radix-ui";
+import { Check, ChevronDown, Info, Loader2, Search, X } from "lucide-react";
+import { Dialog as D, Popover as P, Switch as S } from "radix-ui";
 import {
   createContext,
   useContext,
@@ -18,7 +18,6 @@ import {
   type TextareaHTMLAttributes,
 } from "react";
 import type { Help } from "../lib/help";
-import { PAGE_SIZES, parsePageSize, type PageSize, type SortDir } from "../lib/table";
 import { cn } from "../lib/utils";
 
 const button = cva(
@@ -58,10 +57,6 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
     </button>
   );
 });
-
-export function buttonClass(opts: VariantProps<typeof button> & { className?: string }): string {
-  return cn(button({ variant: opts.variant, size: opts.size }), opts.className);
-}
 
 const FieldContext = createContext<{ describedBy?: string; invalid?: boolean }>({});
 
@@ -303,47 +298,6 @@ export function Dialog({
   );
 }
 
-/**
- * A short list of actions behind a button, such as a row's "⋯". Not modal, so
- * an item can open a Dialog without the two fighting over focus.
- */
-export function Menu({ trigger, children }: { trigger: ReactNode; children: ReactNode }) {
-  return (
-    <M.Root modal={false}>
-      <M.Trigger asChild>{trigger}</M.Trigger>
-      <M.Portal>
-        <M.Content
-          align="end"
-          sideOffset={4}
-          collisionPadding={12}
-          className="z-[60] min-w-52 rounded-md border border-line bg-surface p-1 text-sm shadow-xl focus:outline-none"
-        >
-          {children}
-        </M.Content>
-      </M.Portal>
-    </M.Root>
-  );
-}
-
-export function MenuItem({ icon, tone, onSelect, children }: { icon?: ReactNode; tone?: "danger"; onSelect: () => void; children: ReactNode }) {
-  return (
-    <M.Item
-      onSelect={onSelect}
-      className={cn(
-        "flex cursor-pointer items-center gap-2 rounded px-2.5 py-2 outline-none select-none data-[disabled]:opacity-50 data-[highlighted]:bg-surface-2 [&_svg]:size-4 [&_svg]:shrink-0",
-        tone === "danger" ? "text-danger" : "text-fg",
-      )}
-    >
-      {icon}
-      {children}
-    </M.Item>
-  );
-}
-
-export function MenuSeparator() {
-  return <M.Separator className="my-1 h-px bg-line" />;
-}
-
 export function Segmented<T extends string>({
   value,
   onChange,
@@ -412,56 +366,80 @@ export function Notice({ tone = "warn", children }: { tone?: "warn" | "accent" |
   return <div role={tone === "danger" ? "alert" : "status"} className={cn("flex items-start gap-2.5 rounded-md border px-4 py-3 text-sm leading-relaxed", tones[tone])}><Info className="mt-0.5 size-4 shrink-0" aria-hidden /><div>{children}</div></div>;
 }
 
-export function PageHeader({ title, description, actions }: { title: ReactNode; description?: ReactNode; actions?: ReactNode }) {
+/**
+ * A query that failed: says what couldn't load and offers a retry, so a failure
+ * never reads as "no data". `compact` is the quiet one-line form for cards.
+ */
+export function LoadError({
+  what,
+  error,
+  onRetry,
+  retrying,
+  compact,
+}: {
+  what: string;
+  error: unknown;
+  onRetry?: () => void;
+  retrying?: boolean;
+  compact?: boolean;
+}) {
+  const retry = onRetry ? (
+    <button className="ml-1 font-medium underline underline-offset-2" onClick={onRetry} disabled={retrying}>
+      {retrying ? "Retrying…" : "Try again"}
+    </button>
+  ) : null;
+  if (compact) {
+    return (
+      <p role="alert" className="px-4 py-3 text-sm text-muted">
+        {what} couldn’t load. {retry}
+      </p>
+    );
+  }
   return (
-    <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
-      <div className="min-w-0">
-        <h1 className="text-2xl font-semibold tracking-tight text-fg">{title}</h1>
-        {description ? <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-muted">{description}</p> : null}
-      </div>
-      {actions ? <div className="flex flex-wrap items-center gap-2">{actions}</div> : null}
-    </div>
+    <Notice tone="danger">
+      {what} couldn’t load: {errorMessage(error)} {retry}
+    </Notice>
   );
 }
 
-/** A column header that sorts the table: click to sort by it, click again to flip the order. */
-export function SortHeader({ label, active, dir, onSort, className }: { label: string; active: boolean; dir: SortDir; onSort: () => void; className?: string }) {
-  const Icon = !active ? ArrowUpDown : dir === "asc" ? ArrowUp : ArrowDown;
-  return (
-    <th className={cn("px-4 py-2.5 font-medium", className)} aria-sort={active ? (dir === "asc" ? "ascending" : "descending") : "none"}>
-      <button
-        type="button"
-        onClick={onSort}
-        className={cn("inline-flex items-center gap-1 rounded hover:text-fg", active && "text-fg", className?.includes("text-right") && "flex-row-reverse")}
-        title={`Sort by ${label.toLowerCase()}`}
-      >
-        {label}
-        <Icon className={cn("size-3.5", !active && "opacity-40")} aria-hidden />
-      </button>
-    </th>
-  );
+/** The message to show for a failed request; a network failure has no useful one of its own. */
+export function errorMessage(error: unknown): string {
+  if (error instanceof TypeError) return "Couldn’t reach the server. Check your connection.";
+  if (error instanceof Error && error.message) return error.message;
+  return "Something went wrong.";
 }
 
-/** "Showing 1–25 of 312", rows per page (25, 50, 100) and previous/next. */
-export function Pagination({ page, pages, size, total, onPage, onSize }: { page: number; pages: number; size: PageSize; total: number; onPage: (page: number) => void; onSize: (size: PageSize) => void }) {
-  if (total === 0) return null;
-  const from = (page - 1) * size + 1;
-  const to = Math.min(page * size, total);
+/** Asks before an action that can't be undone. */
+export function ConfirmDialog({
+  open,
+  onOpenChange,
+  title,
+  description,
+  confirmLabel,
+  onConfirm,
+  loading,
+  tone = "danger",
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  title: string;
+  description?: string;
+  confirmLabel: string;
+  onConfirm: () => void;
+  loading?: boolean;
+  tone?: "danger" | "primary";
+}) {
   return (
-    <nav className="mt-3 flex flex-wrap items-center justify-between gap-3 text-xs text-muted" aria-label="Pagination">
-      <span className="tabular">Showing {from}–{to} of {total}</span>
-      <div className="flex items-center gap-2">
-        <label className="inline-flex items-center gap-2">
-          Rows per page
-          <Select className="h-9 w-auto text-xs" value={size} onChange={(e) => onSize(parsePageSize(e.target.value) ?? size)}>
-            {PAGE_SIZES.map((s) => <option key={s} value={s}>{s}</option>)}
-          </Select>
-        </label>
-        <Button variant="outline" size="icon-sm" aria-label="Previous page" disabled={page <= 1} onClick={() => onPage(page - 1)}><ChevronLeft /></Button>
-        <span className="tabular min-w-20 text-center">Page {page} of {pages}</span>
-        <Button variant="outline" size="icon-sm" aria-label="Next page" disabled={page >= pages} onClick={() => onPage(page + 1)}><ChevronRight /></Button>
+    <Dialog open={open} onOpenChange={onOpenChange} title={title} description={description}>
+      <div className="flex justify-end gap-2">
+        <Button variant="outline" onClick={() => onOpenChange(false)}>
+          Cancel
+        </Button>
+        <Button variant={tone === "danger" ? "danger" : "primary"} onClick={onConfirm} loading={loading}>
+          {confirmLabel}
+        </Button>
       </div>
-    </nav>
+    </Dialog>
   );
 }
 

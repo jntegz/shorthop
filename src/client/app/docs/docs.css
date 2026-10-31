@@ -1,0 +1,163 @@
+/* API reference (docs/). Prefix docs-. Loaded with the shell. Code blocks
+   and inline code come from sitepages.css (.sitepage-code, .sitepage-c). */
+
+.docs-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ui-s-1) var(--ui-s-4);
+  margin: var(--ui-s-2) 0 0;
+  font-size: var(--ui-t-sm);
+}
+.docs-search {
+  max-width: 420px;
+  margin-bottom: var(--ui-s-5);
+}
+.docs-search .ui-input {
+  border-radius: var(--ui-r-pill);
+  padding-left: 16px;
+}
+
+/* One operation per row, under 1 px rules. */
+.docs-ops {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--ui-line-strong);
+}
+.docs-op {
+  border-bottom: 1px solid var(--ui-line);
+}
+.docs-op-row {
+  display: grid;
+  grid-template-columns: 64px minmax(0, auto) minmax(0, 1fr) 16px;
+  align-items: center;
+  gap: var(--ui-s-3);
+  width: 100%;
+  min-height: 42px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--ui-r-sm);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--ui-dur-fast) ease;
+}
+.docs-op-row:hover {
+  background: var(--ui-hover);
+}
+.docs-op-row:focus-visible {
+  outline: 2px solid var(--ui-focus);
+  outline-offset: -2px;
+}
+.docs-method {
+  justify-self: start;
+  padding: 1px 7px;
+  border-radius: var(--ui-r-pill);
+  background: var(--ui-sunken);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: var(--ui-t-xs);
+  font-weight: var(--ui-w-strong);
+  letter-spacing: 0.02em;
+  color: var(--ui-ink-2);
+}
+.docs-method[data-method="get"] {
+  color: var(--ui-good);
+  background: var(--ui-good-wash);
+}
+.docs-method[data-method="post"] {
+  color: var(--ui-accent-ink);
+  background: var(--ui-accent-wash);
+}
+.docs-method:is([data-method="put"], [data-method="patch"]) {
+  color: var(--ui-warn);
+  background: var(--ui-warn-wash);
+}
+.docs-method[data-method="delete"] {
+  color: var(--ui-bad);
+  background: var(--ui-bad-wash);
+}
+.docs-path {
+  min-width: 0;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: var(--ui-t-sm);
+  color: var(--ui-ink);
+  overflow-wrap: anywhere;
+}
+.docs-summary {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ui-ink-2);
+  font-size: var(--ui-t-sm);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.docs-chevron {
+  width: 16px;
+  height: 16px;
+  color: var(--ui-ink-3);
+  transition: transform var(--ui-dur) var(--ui-ease-out);
+}
+.docs-op[data-open] .docs-chevron {
+  transform: rotate(180deg);
+}
+.docs-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-s-4);
+  padding: var(--ui-s-2) 8px var(--ui-s-5) calc(64px + var(--ui-s-3) + 8px);
+}
+.docs-detail-summary {
+  display: none;
+  margin: 0;
+  color: var(--ui-ink);
+  font-weight: var(--ui-w-medium);
+}
+.docs-desc {
+  margin: 0;
+  max-width: 72ch;
+  color: var(--ui-ink-2);
+  text-wrap: pretty;
+}
+.docs-params {
+  max-width: 720px;
+}
+.docs-muted {
+  color: var(--ui-ink-2);
+}
+.docs-required {
+  color: var(--ui-bad);
+  font-weight: var(--ui-w-strong);
+}
+.docs-op-skel {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-s-3);
+  height: 42px;
+  border-bottom: 1px solid var(--ui-line);
+}
+
+/* Under 768 px the summary moves into the open detail; the path gets the row. */
+@media (max-width: 767px) {
+  .docs-search {
+    max-width: none;
+  }
+  .docs-op-row {
+    grid-template-columns: 58px minmax(0, 1fr) 16px;
+    min-height: var(--ui-touch);
+    padding: 8px 4px;
+  }
+  .docs-summary {
+    display: none;
+  }
+  .docs-detail-summary {
+    display: block;
+  }
+  .docs-detail {
+    padding: var(--ui-s-2) 0 var(--ui-s-5);
+  }
+  .docs-params {
+    max-width: none;
+  }
+}

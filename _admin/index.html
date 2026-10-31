@@ -1,11 +1,18 @@
 <!doctype html>
-<html lang="en">
+<!-- data-ui scopes the design tokens (src/client/app/tokens.css). On <html>, not a wrapper,
+     because Radix portals (dialogs, menus, toasts) render into <body>. -->
+<html lang="en" data-ui="app">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="robots" content="noindex" />
-    <meta name="theme-color" content="#f8f9fc" />
+    <meta name="theme-color" content="#f8f9f7" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0f1311" media="(prefers-color-scheme: dark)" />
+    <script src="/_admin/assets/theme-1.js"></script>
     <link rel="icon" href="/_admin/assets/brand.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/_admin/assets/icon-192.png" />
+    <!-- Install the admin as an app, and share pages to it to shorten them. Access protects assets too, hence the credentials. -->
+    <link rel="manifest" href="/_admin/assets/manifest.webmanifest" crossorigin="use-credentials" />
     <title>Workspace · Shorthop</title>
   </head>
   <body>

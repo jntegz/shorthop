@@ -1,0 +1,290 @@
+/* The component sheet (/kit). Layout only; every component's look is ui.css. */
+.ui-kit {
+  max-width: 1240px;
+}
+.ui-kit-section {
+  padding: var(--ui-s-5) 0 var(--ui-s-6);
+  border-top: 1px solid var(--ui-line);
+}
+.ui-kit-section-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px var(--ui-s-4);
+  margin-bottom: var(--ui-s-4);
+}
+.ui-kit-note {
+  margin: 0;
+  max-width: 62ch;
+  color: var(--ui-ink-2);
+  font-size: var(--ui-t-sm);
+  text-wrap: pretty;
+}
+.ui-kit-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: var(--ui-s-4) var(--ui-s-4);
+  margin-bottom: var(--ui-s-4);
+}
+.ui-kit-grid.is-fields {
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+}
+.ui-kit-grid.is-two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--ui-s-5) var(--ui-s-6);
+}
+.ui-kit-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.ui-kit-cell.is-wide {
+  grid-column: span 3;
+}
+.ui-kit-grid.is-two .ui-kit-cell.is-wide {
+  grid-column: auto;
+}
+.ui-kit-cell-body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-height: 36px;
+  justify-content: center;
+}
+.ui-kit-cell-body > * {
+  max-width: 100%;
+}
+.ui-kit-cell.is-wide .ui-kit-cell-body,
+.ui-kit-grid.is-fields .ui-kit-cell-body {
+  align-items: stretch;
+}
+.ui-kit-cell-label,
+.ui-kit-legend {
+  margin: 0;
+  font-size: var(--ui-t-xs);
+  color: var(--ui-ink-3);
+}
+.ui-kit-legend {
+  margin-top: var(--ui-s-2);
+  word-spacing: 0.3em;
+}
+.ui-kit-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ui-s-2);
+}
+.ui-kit-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-s-3);
+}
+.ui-kit-panel-text {
+  margin: var(--ui-s-2) 0 0;
+  color: var(--ui-ink-2);
+}
+
+.ui-kit-swatches {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  gap: var(--ui-s-3) var(--ui-s-3);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.ui-kit-swatches li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.ui-kit-swatch {
+  display: flex;
+  align-items: flex-end;
+  height: 44px;
+  margin-bottom: 4px;
+  padding: 4px 8px;
+  border-radius: var(--ui-r-sm);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--ui-ink) 12%, transparent);
+  font-family: var(--ui-font-display);
+  font-weight: var(--ui-w-strong);
+}
+.ui-kit-swatch-name {
+  font-size: var(--ui-t-xs);
+  font-weight: var(--ui-w-medium);
+}
+.ui-kit-swatch-role {
+  font-size: var(--ui-t-xs);
+  color: var(--ui-ink-3);
+}
+.ui-kit-pairs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ui-s-2);
+  margin-top: var(--ui-s-4);
+}
+.ui-kit-pair {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: var(--ui-r-pill);
+  font-size: var(--ui-t-sm);
+  font-weight: var(--ui-w-medium);
+}
+
+.ui-kit-type {
+  width: 100%;
+  border-collapse: collapse;
+}
+.ui-kit-type th,
+.ui-kit-type td {
+  padding: 8px 12px 8px 0;
+  border-bottom: 1px solid var(--ui-line);
+  text-align: left;
+  vertical-align: baseline;
+}
+.ui-kit-type th {
+  width: 64px;
+  font-size: var(--ui-t-xs);
+  font-weight: var(--ui-w-medium);
+  color: var(--ui-ink-2);
+}
+.ui-kit-type-meta {
+  width: 150px;
+  font-size: var(--ui-t-xs);
+  color: var(--ui-ink-3);
+  line-height: 1.4;
+}
+.ui-kit-t-kpi {
+  font-family: var(--ui-font-num);
+  font-size: var(--ui-t-kpi);
+  font-weight: var(--ui-w-num);
+  letter-spacing: -0.035em;
+  line-height: 1.05;
+  font-variant-numeric: tabular-nums lining-nums;
+}
+.ui-kit-t-xl,
+.ui-kit-t-lg,
+.ui-kit-t-md {
+  font-family: var(--ui-font-display);
+  font-weight: var(--ui-w-strong);
+  letter-spacing: -0.015em;
+}
+.ui-kit-t-xl {
+  font-size: var(--ui-t-xl);
+}
+.ui-kit-t-lg {
+  font-size: var(--ui-t-lg);
+}
+.ui-kit-t-md {
+  font-size: var(--ui-t-md);
+}
+.ui-kit-t-base {
+  font-size: var(--ui-t-base);
+}
+.ui-kit-t-sm {
+  font-size: var(--ui-t-sm);
+  font-weight: var(--ui-w-medium);
+}
+.ui-kit-t-xs {
+  font-size: var(--ui-t-xs);
+  font-weight: var(--ui-w-medium);
+  color: var(--ui-ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.ui-kit-stats {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: var(--ui-s-5);
+}
+.ui-kit-skel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Static previews of portalled surfaces: same classes, laid into the flow. */
+.ui-kit-static {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--ui-s-5);
+  margin-top: var(--ui-s-4);
+  padding: var(--ui-s-5);
+  border-radius: var(--ui-r-lg);
+  background: var(--ui-overlay);
+}
+.ui-kit-static .ui-dialog,
+.ui-kit-static .ui-menu {
+  position: relative;
+  top: auto;
+  left: auto;
+  bottom: auto;
+  transform: none;
+  z-index: auto;
+  animation: none;
+}
+
+@media (max-width: 1023px) {
+  .ui-kit-stats {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+@media (max-width: 767px) {
+  .ui-kit-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--ui-s-3);
+  }
+  .ui-kit-grid.is-fields,
+  .ui-kit-grid.is-two {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .ui-kit-cell.is-wide {
+    grid-column: 1 / -1;
+  }
+  .ui-kit-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .ui-kit-type-meta {
+    display: none;
+  }
+  .ui-kit-static {
+    padding: var(--ui-s-3);
+  }
+}
+
+.ui-kit-strip {
+  margin-top: var(--ui-s-5);
+}
+.ui-kit-strip .ui-kpis {
+  margin-bottom: var(--ui-s-2);
+}
+.ui-kit-strip .ui-kit-legend + .ui-kpis {
+  margin-top: var(--ui-s-5);
+}
+.ui-kit-headdemo {
+  padding: var(--ui-s-4);
+  border-radius: var(--ui-r-md);
+  box-shadow: inset 0 0 0 1px var(--ui-line);
+}
+.ui-kit-headdemo .ui-period-bar {
+  margin-bottom: 0;
+}
+
+/* The ribbon sample at a column's width, as it sits on the pages. */
+.ui-kit-narrow {
+  max-width: 520px;
+}
+/* A tab row narrower than its tabs, to show the edge fade. */
+.ui-kit-tabs-narrow {
+  max-width: 300px;
+}
+.ui-app .ui-kit-inline-icon {
+  display: inline;
+  width: 13px;
+  height: 13px;
+  vertical-align: -1px;
+}

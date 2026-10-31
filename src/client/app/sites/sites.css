@@ -1,0 +1,1043 @@
+/* Website picker and website dashboard (sites/*.tsx). Builds on ui.css and
+   home.css (page, KPI strip, chart, columns, breakdown rows). No cards: a
+   section is a top rule and space. Everything sits under data-ui="app". */
+
+/* ---------------- Header ---------------- */
+.ui-site-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.ui-site-title .ui-h1 {
+  min-width: 0;
+  /* Wrap at spaces only; a single word longer than the line may still break. */
+  overflow-wrap: break-word;
+}
+.ui-site-switch {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: var(--ui-control);
+  height: var(--ui-control);
+  border: 0;
+  border-radius: var(--ui-r-pill);
+  background: none;
+  color: var(--ui-ink-2);
+  cursor: pointer;
+  transition:
+    background-color var(--ui-dur-fast) ease,
+    color var(--ui-dur-fast) ease;
+}
+.ui-site-switch:hover,
+.ui-site-switch[data-state="open"] {
+  background: var(--ui-hover);
+  color: var(--ui-ink);
+}
+.ui-app .ui-site-switch svg.lucide {
+  width: 20px;
+  height: 20px;
+}
+.ui-site-range {
+  line-height: 1.7;
+}
+.ui-site-domains {
+  overflow-wrap: anywhere;
+}
+.ui-site-online {
+  margin-left: var(--ui-s-2);
+  vertical-align: 1px;
+}
+
+/* ---------------- Filters ---------------- */
+.ui-site-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ui-s-2);
+  margin: calc(var(--ui-s-2) * -1) 0 var(--ui-s-5);
+}
+.ui-site-filters-label {
+  font-size: var(--ui-t-sm);
+  color: var(--ui-ink-2);
+}
+.ui-site-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  min-height: var(--ui-control-sm);
+  padding: 4px 8px 4px 12px;
+  border: 0;
+  /* Round on one line, a soft rectangle when a long path wraps. */
+  border-radius: 16px;
+  background: var(--ui-accent-wash);
+  color: var(--ui-ink);
+  font: inherit;
+  font-size: var(--ui-t-sm);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--ui-dur-fast) ease;
+}
+.ui-site-chip:hover {
+  background: color-mix(in oklab, var(--ui-accent-wash) 70%, var(--ui-pressed));
+}
+.ui-site-chip-dim {
+  color: var(--ui-ink-2);
+  white-space: nowrap;
+}
+.ui-site-chip-val {
+  min-width: 0;
+  font-weight: var(--ui-w-strong);
+  color: var(--ui-accent-ink);
+  /* Long paths are shown in full here: the chip is where a cut-off row name can be read. */
+  overflow-wrap: anywhere;
+}
+.ui-site-chip svg.lucide {
+  color: var(--ui-ink-2);
+}
+
+.ui-site-notice {
+  margin-bottom: var(--ui-s-5);
+}
+.ui-site-live-notice {
+  margin-top: calc(var(--ui-s-2) * -1);
+}
+
+/* ---------------- KPI strip and the quieter facts ---------------- */
+.ui-site-kpis {
+  margin-bottom: var(--ui-s-4);
+}
+.ui-site-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ui-s-2) var(--ui-s-5);
+  margin: 0 0 var(--ui-s-5);
+}
+.ui-site-facts > div {
+  min-width: 0;
+}
+.ui-site-facts dt {
+  font-size: var(--ui-t-sm);
+  color: var(--ui-ink-2);
+}
+.ui-site-facts dd {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  margin: 2px 0 0;
+}
+.ui-site-fact-value {
+  font-family: var(--ui-font-num);
+  font-size: var(--ui-t-lg);
+  font-weight: var(--ui-w-strong);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+.ui-site-fact-note {
+  font-size: var(--ui-t-sm);
+  color: var(--ui-ink-3);
+}
+.ui-site-visitfacts {
+  padding-bottom: var(--ui-s-4);
+  border-bottom: 1px solid var(--ui-line);
+}
+/* Where four facts can't share one line, they wrap 2 + 2, never 3 + an
+   orphan ("Visitors who paid" alone on a row at 768). */
+@media (max-width: 1199px) {
+  .ui-site-visitfacts {
+    display: grid;
+    grid-template-columns: repeat(2, max-content);
+    column-gap: var(--ui-s-6);
+  }
+}
+
+/* ---------------- Chart ---------------- */
+.ui-site-chart {
+  margin-bottom: var(--ui-s-6);
+}
+.ui-site-chart-total {
+  margin-left: var(--ui-s-3);
+  font-family: var(--ui-font-ui);
+  font-size: var(--ui-t-sm);
+  font-weight: var(--ui-w-medium);
+  color: var(--ui-ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.ui-site-buckets .ui-select select {
+  height: var(--ui-control-sm);
+  font-size: var(--ui-t-sm);
+}
+.ui-site-spike {
+  fill: var(--ui-warn);
+}
+.ui-site-spike-key {
+  display: inline-block;
+  width: 0;
+  height: 0;
+  margin-right: 4px;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-bottom: 8px solid var(--ui-warn);
+}
+.ui-site-readout-spike,
+.ui-site-spike-note {
+  color: var(--ui-warn);
+  font-size: var(--ui-t-sm);
+}
+.ui-readout:has(.ui-site-readout-spike) {
+  max-width: 300px;
+}
+
+/* ---------------- Sections ---------------- */
+.ui-site-note {
+  margin: 0 0 var(--ui-s-2);
+  font-size: var(--ui-t-sm);
+  color: var(--ui-ink-2);
+  text-wrap: pretty;
+}
+.ui-site-note a {
+  color: var(--ui-accent-ink);
+  text-underline-offset: 3px;
+}
+.ui-site-note code,
+.ui-state-body code,
+.ui-site-props code {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.92em;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--ui-sunken);
+}
+.ui-site-quiet {
+  color: var(--ui-ink-3);
+}
+.ui-site-warn {
+  color: var(--ui-warn);
+}
+.ui-site-small {
+  font-size: var(--ui-t-sm);
+}
+.ui-site-nowrap {
+  white-space: nowrap;
+}
+.ui-site-trunc {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ui-site-columns:not(.is-packed) {
+  margin-bottom: var(--ui-s-6);
+}
+.ui-site-columns .ui-panel .ui-site-note {
+  margin-top: var(--ui-s-1);
+}
+
+/* ---------------- Path to money ---------------- */
+.ui-site-path {
+  display: grid;
+  grid-template-columns: repeat(var(--n, 4), minmax(0, 1fr));
+  gap: var(--ui-s-5);
+  list-style: none;
+  margin: 0 0 var(--ui-s-4);
+  padding: 0;
+}
+.ui-site-step {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.ui-site-step-label {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--ui-s-2);
+  font-size: var(--ui-t-sm);
+  font-weight: var(--ui-w-medium);
+  color: var(--ui-ink-2);
+}
+.ui-site-step-from {
+  color: var(--ui-ink-3);
+  font-weight: var(--ui-w-body);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+/* Secondary numbers: only the KPI strip gets the 46 px numerals (DESIGN §3). */
+.ui-site-step-value {
+  font-family: var(--ui-font-num);
+  font-size: var(--ui-t-lg);
+  font-weight: var(--ui-w-strong);
+  line-height: 1.3;
+  font-variant-numeric: tabular-nums lining-nums;
+}
+.ui-site-step-bar {
+  display: block;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--ui-sunken);
+  overflow: hidden;
+}
+.ui-site-step-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--ui-ink-3);
+  transition: width var(--ui-dur-slow) var(--ui-ease-move);
+}
+.ui-site-step-foot {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 2px 8px;
+  font-size: var(--ui-t-sm);
+  color: var(--ui-ink-3);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------------- Breakdown rows that filter ---------------- */
+.ui-pick .ui-cols,
+.ui-pick .ui-row-inner {
+  grid-template-columns: minmax(0, 1fr) 3.4em 4.6em;
+}
+.ui-pick.has-money .ui-cols,
+.ui-pick.has-money .ui-row-inner {
+  grid-template-columns: minmax(0, 1fr) 3.4em 4.6em 5.4em;
+}
+.ui-pick-btn {
+  width: 100%;
+  border: 0;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ui-pick-btn:hover {
+  background: var(--ui-hover);
+}
+.ui-pick-link {
+  color: var(--ui-ink);
+  text-decoration: none;
+}
+.ui-pick-link:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.ui-row-inner:has(.ui-pick-link:is(:hover, :focus-visible)) .ui-row-bar {
+  background: var(--ui-accent);
+}
+.ui-pick-link:focus-visible {
+  outline: 2px solid var(--ui-focus);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+.ui-pick-filter {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: var(--ui-r-sm);
+  background: none;
+  color: var(--ui-ink-3);
+  cursor: pointer;
+  transition:
+    background-color var(--ui-dur-fast) ease,
+    color var(--ui-dur-fast) ease;
+}
+.ui-pick-filter:hover {
+  background: var(--ui-hover);
+  color: var(--ui-ink);
+}
+/* One filter icon per row was a column of identical marks: with a mouse it
+   shows on the row you point at (and on keyboard focus); touch keeps it. */
+@media (hover: hover) and (pointer: fine) {
+  .ui-pick-filter {
+    opacity: 0;
+    transition:
+      opacity var(--ui-dur-fast) ease,
+      background-color var(--ui-dur-fast) ease,
+      color var(--ui-dur-fast) ease;
+  }
+  .ui-row:is(:hover, :focus-within) .ui-pick-filter,
+  .ui-pick-filter:focus-visible {
+    opacity: 1;
+  }
+}
+.ui-app .ui-pick-filter svg.lucide {
+  width: 14px;
+  height: 14px;
+}
+.ui-pick .ui-row-label {
+  align-items: center;
+}
+.ui-pick-sort {
+  justify-self: end;
+  min-height: 24px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ui-ink-3);
+  font: inherit;
+  font-size: var(--ui-t-xs);
+  font-weight: var(--ui-w-medium);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color var(--ui-dur-fast) ease;
+}
+.ui-pick-sort:hover,
+.ui-pick-sort[aria-pressed="true"] {
+  color: var(--ui-ink);
+}
+.ui-state-body a {
+  color: var(--ui-accent-ink);
+  text-underline-offset: 3px;
+}
+
+/* ---------------- Goals ---------------- */
+.ui-site-disclose {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  min-height: 30px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ui-ink);
+  font: inherit;
+  font-weight: var(--ui-w-medium);
+  text-align: left;
+  cursor: pointer;
+}
+.ui-site-disclose:hover .ui-site-trunc {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.ui-site-disclose svg.lucide {
+  color: var(--ui-ink-3);
+  transition: transform var(--ui-dur-fast) var(--ui-ease-out);
+}
+.ui-site-disclose svg.lucide.is-open {
+  transform: rotate(90deg);
+}
+.ui-site-goals td:first-child {
+  max-width: 0;
+  width: 50%;
+}
+.ui-site-subrow td {
+  height: auto;
+  padding: var(--ui-s-2) 4px var(--ui-s-3) 24px;
+}
+.ui-site-props {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: var(--ui-s-3) var(--ui-s-5);
+  margin: 0;
+}
+.ui-site-props dt {
+  margin-bottom: 4px;
+}
+.ui-site-props dd {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 3.4em;
+  gap: 8px;
+  margin: 0;
+  font-size: var(--ui-t-sm);
+}
+.ui-site-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.ui-site-num.is-quiet {
+  color: var(--ui-ink-3);
+}
+
+/* ---------------- Funnels ---------------- */
+.ui-site-funnel .ui-row-inner {
+  grid-template-columns: minmax(0, 1fr) minmax(6em, auto) 3.4em 4.6em;
+}
+.ui-site-funnel .ui-row-name {
+  font-weight: var(--ui-w-medium);
+}
+.ui-site-step-n {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--ui-sunken);
+  color: var(--ui-ink-2);
+  font-size: var(--ui-t-xs);
+  font-weight: var(--ui-w-strong);
+  font-variant-numeric: tabular-nums;
+}
+.ui-site-funnel-pick {
+  min-width: 180px;
+}
+.ui-site-form {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--ui-s-4);
+}
+.ui-site-form-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--ui-s-3);
+  width: 100%;
+}
+.ui-site-steps {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-s-2);
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ui-site-steps li {
+  display: grid;
+  grid-template-columns: 20px 7.5em minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--ui-s-2);
+}
+
+/* ---------------- Peak hours ---------------- */
+/* Scrollers are positioned so the absolutely placed screen-reader text inside stays in them. */
+.ui-site .ui-table-scroll,
+.ui-site .ui-table-wrap,
+.ui-sites .ui-table-scroll {
+  position: relative;
+}
+.ui-site-heat-scroll {
+  position: relative;
+  overflow-x: auto;
+  margin-bottom: var(--ui-s-2);
+  border-radius: var(--ui-r-sm);
+}
+.ui-site-heat-scroll.is-narrow {
+  display: none;
+}
+.ui-site-heat {
+  width: 100%;
+  max-width: 720px;
+  min-width: 560px;
+  table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 2px;
+  font-size: var(--ui-t-xs);
+}
+.ui-site-heat th {
+  font-weight: var(--ui-w-medium);
+  color: var(--ui-ink-3);
+  font-variant-numeric: tabular-nums;
+}
+.ui-site-heat thead th {
+  text-align: left;
+}
+.ui-site-heat tbody th {
+  width: 36px;
+  text-align: left;
+  line-height: 1;
+}
+/* Peak hours: five discrete steps of ink mixed into the
+   canvas, 12 / 30 / 48 / 68 / 90 % (insights.tsx heatScale: by rank among
+   the cells with any value, 40 / 25 / 15 / 10 / 10 %, so only the busiest
+   tenth reaches ink). Validated
+   with the dataviz validator (--ordinal) on both canvases: monotone
+   lightness, every adjacent step ≥ 0.06 OKLCH L apart, steps 2–5 clear 2:1
+   (2.1:1 light and dark); step 1 is the sequential "near zero" end and may
+   recede (1.3:1), an empty cell is the sunken tint. The three busiest slots
+   (named in the note) are the accent, matching the legend's "Busiest". */
+.ui-site-heat tbody td,
+.ui-site-heat-steps > span {
+  --s: 0%;
+  background: color-mix(in oklab, var(--ui-ink) var(--s), var(--ui-canvas));
+}
+.ui-site-heat tbody td {
+  height: 13px;
+  border-radius: 2px;
+}
+.ui-site-heat tbody td[data-l="0"] {
+  background: var(--ui-sunken);
+}
+:is(.ui-site-heat tbody td, .ui-site-heat-steps > span)[data-l="1"] {
+  --s: 12%;
+}
+:is(.ui-site-heat tbody td, .ui-site-heat-steps > span)[data-l="2"] {
+  --s: 30%;
+}
+:is(.ui-site-heat tbody td, .ui-site-heat-steps > span)[data-l="3"] {
+  --s: 48%;
+}
+:is(.ui-site-heat tbody td, .ui-site-heat-steps > span)[data-l="4"] {
+  --s: 68%;
+}
+:is(.ui-site-heat tbody td, .ui-site-heat-steps > span)[data-l="5"] {
+  --s: 90%;
+}
+.ui-site-heat tbody td.is-top,
+.ui-site-heat-top {
+  background: var(--ui-accent);
+}
+.ui-site-heat-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ui-s-2) var(--ui-s-5);
+  margin: var(--ui-s-2) 0 var(--ui-s-3);
+  font-size: var(--ui-t-xs);
+  color: var(--ui-ink-2);
+}
+.ui-site-heat-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.ui-site-heat-end {
+  font-variant-numeric: tabular-nums;
+}
+.ui-site-heat-steps {
+  display: inline-flex;
+  gap: 2px;
+}
+.ui-site-heat-steps > span,
+.ui-site-heat-top {
+  width: 16px;
+  height: 10px;
+  border-radius: 2px;
+}
+.ui-site-heat-top {
+  display: inline-block;
+}
+.ui-site-heat-unit {
+  color: var(--ui-ink-3);
+}
+
+/* ---------------- Page speed ---------------- */
+.ui-site-vital {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.ui-site-vital-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.ui-site-vital[data-rating="good"] {
+  color: var(--ui-good);
+}
+.ui-site-vital[data-rating="needs"] {
+  color: var(--ui-warn);
+}
+.ui-site-vital[data-rating="poor"] {
+  color: var(--ui-bad);
+}
+
+/* ---------------- Tables with paths ---------------- */
+.ui-site-path-cell {
+  max-width: 0;
+  width: 55%;
+}
+.ui-site-two {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--ui-s-5) var(--ui-s-7);
+  margin-bottom: var(--ui-s-2);
+}
+.ui-site-caption {
+  caption-side: top;
+  padding: 0 4px var(--ui-s-2);
+  text-align: left;
+  font-size: var(--ui-t-sm);
+  font-weight: var(--ui-w-strong);
+  color: var(--ui-ink);
+}
+
+/* ---------------- Payments ---------------- */
+.ui-site-filterbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ui-s-2) var(--ui-s-3);
+  margin-bottom: var(--ui-s-3);
+}
+.ui-site-search {
+  position: relative;
+  flex: 0 1 300px;
+  min-width: 200px;
+}
+.ui-site-search > svg.lucide {
+  position: absolute;
+  z-index: 1;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--ui-ink-3);
+  pointer-events: none;
+}
+.ui-site-search .ui-input {
+  height: var(--ui-control-sm);
+  padding-left: 34px;
+  border-radius: var(--ui-r-pill);
+}
+.ui-site-count {
+  margin: 0 0 0 auto;
+  font-size: var(--ui-t-sm);
+  color: var(--ui-ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.ui-site-payments {
+  transition: opacity var(--ui-dur-fast) ease;
+}
+.ui-site-payments.is-stale {
+  opacity: 0.6;
+}
+.ui-site-payments .ui-table {
+  min-width: 760px;
+}
+.ui-site-payments .ui-table td {
+  height: 52px;
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+.ui-site-neg {
+  color: var(--ui-bad);
+}
+.ui-site-cust {
+  max-width: 0;
+  width: 22%;
+  color: var(--ui-ink-2);
+}
+.ui-site-credit {
+  max-width: 0;
+  width: 28%;
+}
+.ui-site-journey {
+  display: block;
+  max-width: 100%;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  color: var(--ui-ink);
+  font: inherit;
+  font-weight: var(--ui-w-medium);
+  text-align: left;
+  cursor: pointer;
+}
+.ui-site-journey:hover .ui-site-trunc {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.ui-site-journey .ui-table-sub {
+  font-weight: var(--ui-w-body);
+}
+/* Journey dialog: one ruled list, payments marked by weight, not a box. */
+.ui-site-journeylist {
+  margin: 0 0 var(--ui-s-3);
+  padding: 0;
+  list-style: none;
+}
+.ui-site-journeylist li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px var(--ui-s-3);
+  padding: var(--ui-s-2) 0;
+  border-bottom: 1px solid var(--ui-line);
+  font-size: var(--ui-t-sm);
+}
+.ui-site-journeylist li.is-payment strong {
+  color: var(--ui-ink);
+  font-family: var(--ui-font-num);
+}
+.ui-site-j-when {
+  color: var(--ui-ink-3);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.ui-site-j-detail {
+  grid-column: 1 / -1;
+  color: var(--ui-ink-2);
+  overflow-wrap: anywhere;
+}
+
+.ui-site-live td:first-child {
+  width: 7.5em;
+}
+
+/* ================= Picker ================= */
+.ui-sites-table td {
+  height: 62px;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  vertical-align: middle;
+}
+.ui-sites-row {
+  cursor: pointer;
+}
+.ui-sites-name {
+  width: 26%;
+}
+.ui-sites-link.ui-sites-link {
+  font-family: var(--ui-font-display);
+  font-size: var(--ui-t-md);
+  font-weight: var(--ui-w-strong);
+  color: var(--ui-ink);
+}
+.ui-sites-row[data-paused] .ui-sites-link {
+  color: var(--ui-ink-2);
+}
+.ui-sites-status-inline {
+  display: none;
+}
+.ui-sites-status-plain {
+  font-size: var(--ui-t-sm);
+  color: var(--ui-ink-2);
+}
+.ui-sites-status .ui-table-sub {
+  margin-top: 4px;
+  max-width: 22ch;
+}
+.ui-sites-big {
+  display: block;
+  font-family: var(--ui-font-num);
+  font-size: var(--ui-t-md);
+  font-weight: var(--ui-w-strong);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+.ui-sites-sub {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+.ui-sites-sub .ui-delta {
+  font-size: var(--ui-t-xs);
+}
+.ui-sites-trend {
+  display: block;
+}
+/* Sparklines are neutral (ghost, ≥ 3:1 as a graphic); the accent only on the
+   row you point at or move to, like the breakdown bars. Today is still filling. */
+.ui-sites-trend rect {
+  fill: var(--ui-ghost);
+  transition: fill var(--ui-dur-fast) ease;
+}
+.ui-sites-row:is(:hover, :focus-visible, :focus-within) .ui-sites-trend rect {
+  fill: var(--ui-accent);
+}
+.ui-sites-trend rect.is-today,
+.ui-sites-row:is(:hover, :focus-visible, :focus-within) .ui-sites-trend rect.is-today {
+  fill: var(--ui-bar-rest);
+}
+.ui-sites-trend rect.is-zero {
+  fill: var(--ui-line-strong);
+}
+.ui-sites-trend-none {
+  font-size: var(--ui-t-sm);
+  color: var(--ui-ink-3);
+}
+.ui-sites-source {
+  max-width: 0;
+  width: 16%;
+}
+.ui-sites-more {
+  width: 44px;
+  text-align: right;
+}
+/* The window group heads (Sites.tsx Head): each window named once. */
+.ui-sites-groups th,
+.ui-sites-groups td {
+  height: auto;
+  padding-bottom: 2px;
+  border-bottom: 0;
+}
+.ui-sites-group {
+  text-align: left;
+  font-size: var(--ui-t-xs);
+  font-weight: var(--ui-w-strong);
+  color: var(--ui-ink-2);
+  box-shadow: inset 0 -1px 0 var(--ui-line-strong);
+}
+.ui-sites-win {
+  display: none;
+}
+.ui-sites-customers {
+  width: 9.5em;
+}
+.ui-sites-customers .ui-table-sub {
+  white-space: nowrap;
+  font-family: var(--ui-font-ui);
+  font-weight: var(--ui-w-body);
+  color: var(--ui-ink-3);
+}
+
+/* ---------------- Tablet ---------------- */
+/* Column priority (DESIGN §6): decoration goes first (sparkline, top source,
+   the status column), then counts; money never drops. From 1023 down the
+   picker is Website (status under the name), Visitors, Revenue. */
+@media (max-width: 1023px) {
+  .ui-sites-source,
+  .ui-sites-status,
+  .ui-sites-trendcell,
+  .ui-sites-customers,
+  .ui-sites-groups {
+    display: none;
+  }
+  /* Without the group row, each head names its window. */
+  .ui-sites-win {
+    display: inline;
+  }
+  .ui-sites-status-inline {
+    display: block;
+    margin-top: 6px;
+  }
+  .ui-sites-status-inline:empty {
+    display: none;
+  }
+  .ui-sites-name {
+    width: auto;
+  }
+  .ui-site-two {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .ui-site-path {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* ---------------- Phone ---------------- */
+@media (max-width: 767px) {
+  /* Guide and Settings always wrap under the title block: the name gets the
+     full width, so it never breaks inside a word. */
+  .ui-head.ui-site-head {
+    flex-wrap: wrap;
+  }
+  .ui-head.ui-site-head .ui-head-tools {
+    flex: 1 1 100%;
+    justify-content: flex-start;
+    margin-left: -11px;
+  }
+  .ui-site .ui-head-tools .ui-button,
+  .ui-sites .ui-head-tools .ui-button {
+    width: auto;
+    padding: 0 14px;
+    gap: 6px;
+    font-size: var(--ui-t-sm);
+  }
+  .ui-site-switch,
+  .ui-pick-filter {
+    width: var(--ui-touch);
+    height: var(--ui-touch);
+  }
+  .ui-site-chip,
+  .ui-pick-sort {
+    min-height: var(--ui-touch);
+  }
+  .ui-site-facts {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--ui-s-3);
+  }
+  .ui-site-path {
+    gap: var(--ui-s-4);
+  }
+  .ui-pick-share {
+    display: none;
+  }
+  .ui-pick .ui-cols,
+  .ui-pick .ui-row-inner {
+    grid-template-columns: minmax(0, 1fr) 4.6em;
+  }
+  .ui-pick.has-money .ui-cols,
+  .ui-pick.has-money .ui-row-inner {
+    grid-template-columns: minmax(0, 1fr) 4.2em 4.8em;
+  }
+  /* Paths and URLs wrap on phones: there's no hover to reveal a cut-off name. */
+  .ui-row-name.is-path {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    padding: 6px 0 2px;
+    line-height: 1.35;
+  }
+  .ui-site-funnel .ui-row-inner {
+    grid-template-columns: minmax(0, 1fr) 3.4em 4.2em;
+  }
+  /* The heatmap in 3-hour blocks: the whole week fits, no sideways scroll. */
+  .ui-site-heat-scroll.is-wide {
+    display: none;
+  }
+  .ui-site-heat-scroll.is-narrow {
+    display: block;
+  }
+  .ui-site-heat.is-blocks {
+    min-width: 0;
+  }
+  .ui-site-heat.is-blocks tbody td {
+    height: 18px;
+  }
+  .ui-site-heat-legend.is-wide {
+    display: none;
+  }
+  .ui-site-payments .ui-table {
+    min-width: 0;
+  }
+  .ui-site-funnel .ui-row-share:first-of-type {
+    display: none;
+  }
+  .ui-site-search {
+    flex: 1 1 100%;
+  }
+  .ui-site-search .ui-input {
+    height: var(--ui-touch);
+  }
+  .ui-site-count {
+    margin-left: 0;
+  }
+  .ui-site-form-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .ui-site-steps li {
+    grid-template-columns: 20px 6.5em minmax(0, 1fr) auto;
+  }
+  .ui-chart-head .ui-chart-tools {
+    flex-wrap: wrap;
+    gap: var(--ui-s-2) var(--ui-s-4);
+  }
+  .ui-site-chart-total {
+    display: block;
+    margin: 2px 0 0;
+  }
+  .ui-site-disclose {
+    min-height: var(--ui-touch);
+  }
+
+  /* Picker: name with its status, visitors, revenue, actions. */
+  .ui-sites-name {
+    width: 50%;
+    max-width: 0;
+  }
+  .ui-sites-win {
+    display: none;
+  }
+  .ui-sites-name .ui-sites-link {
+    display: block;
+    overflow-wrap: anywhere;
+  }
+  .ui-sites-name .ui-table-sub {
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+  .ui-sites-revenue .ui-table-sub {
+    display: none;
+  }
+}

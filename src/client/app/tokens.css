@@ -1,0 +1,277 @@
+/* The admin's design tokens, "Almanac" (docs/DESIGN.md).
+   Everything is scoped to :root[data-ui="app"], set on <html> in
+   _admin/index.html (on <html> because Radix portals render into <body>).
+   Light and dark come from one declaration each through light-dark(), driven
+   by color-scheme: light, dark (explicit) or the system (theme "auto": no
+   data-theme attribute). --accent-base is set by lib/accent.ts; every accent
+   colour is derived from it. */
+
+:root[data-ui="app"] {
+  color-scheme: light;
+}
+:root[data-ui="app"][data-theme="dark"] {
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-ui="app"]:not([data-theme="light"]) {
+    color-scheme: dark;
+  }
+}
+
+:root[data-ui="app"] {
+  /* ---- Neutrals: lichen grey, a faint green-grey ---- */
+  --ui-canvas: light-dark(#f8f9f7, #0f1311);
+  --ui-side: light-dark(#f1f4f0, #0b0f0d);
+  --ui-panel: light-dark(#ffffff, #161b18);
+  --ui-sunken: light-dark(#eef1ed, #1b211d);
+  --ui-hover: light-dark(#eef1ed, #1b211d);
+  --ui-pressed: light-dark(#e4e9e3, #232b26);
+  --ui-line: light-dark(#dfe4de, #27302a);
+  --ui-line-strong: light-dark(#c4ccc3, #38433b);
+  /* Edges that identify a control (inputs, checkbox, switch track): ≥ 3:1. */
+  --ui-line-control: light-dark(#828e85, #66736a);
+  --ui-ink: light-dark(#121a15, #e3eae5);
+  --ui-ink-2: light-dark(#434e47, #a9b5ad);
+  --ui-ink-3: light-dark(#5a665e, #8b988f);
+  /* Decoration only (previous-period line, bots bar): never text. */
+  --ui-ghost: light-dark(#8a958d, #6d7a71);
+  --ui-bots: light-dark(#9aa59d, #56625a);
+  --ui-overlay: light-dark(rgb(18 26 21 / 0.32), rgb(0 0 0 / 0.6));
+
+  /* ---- Accent, derived from --accent-base ----
+     fill + on-accent: primary buttons, selected switch/checkbox (text ≥ 4.5:1)
+     ink: accent text and links on canvas/panel (≥ 4.5:1)
+     line: chart line, KPI underline, focus ring (graphics, ≥ 3:1)
+     wash: selected/notice background; bar: a hovered breakdown bar */
+  --ui-accent-fill: light-dark(color-mix(in oklab, var(--accent-base) 86%, black), color-mix(in oklab, var(--accent-base) 55%, white));
+  --ui-on-accent: light-dark(#ffffff, #0f1311);
+  --ui-accent-ink: light-dark(color-mix(in oklab, var(--accent-base) 80%, black), color-mix(in oklab, var(--accent-base) 55%, white));
+  --ui-accent: light-dark(var(--accent-base), color-mix(in oklab, var(--accent-base) 75%, white));
+  --ui-accent-wash: light-dark(color-mix(in oklab, var(--accent-base) 10%, #f8f9f7), color-mix(in oklab, var(--accent-base) 18%, #0f1311));
+  /* Breakdown bars: a 6 px bar on a full-width track.
+     The bar is ink mixed 48 % into the canvas: 3.6:1 on the light canvas
+     (#7e837f) and 3.7:1 on the dark one (#6b706d), so it reads as a mark, not
+     an underline, in both themes. Quiet rows (bots, "everything else") 30 %
+     (2.1:1); the track is the line colour (1.2 / 1.4:1), visible but never
+     mistaken for a value. The accent only on hover/focus of a linked row and
+     on the row that is the active filter (DESIGN §2.2). --ui-bar-rest is the
+     faint ink tint (16 %) kept for the sparkline's unfinished day. */
+  --ui-bar-data: color-mix(in oklab, var(--ui-ink) 48%, var(--ui-canvas));
+  --ui-bar-quiet: color-mix(in oklab, var(--ui-ink) 30%, var(--ui-canvas));
+  --ui-bar-track: var(--ui-line);
+  --ui-bar-rest: color-mix(in oklab, var(--ui-ink) 16%, var(--ui-canvas));
+  --ui-bar: color-mix(in oklab, var(--ui-accent) 62%, var(--ui-canvas));
+  --ui-focus: var(--ui-accent-ink);
+
+  /* ---- Status ---- */
+  --ui-good: light-dark(#187548, #5bc78f);
+  --ui-warn: light-dark(#845d16, #dfb15c);
+  --ui-bad: light-dark(#ad3535, #f07d7d);
+  --ui-good-wash: light-dark(color-mix(in oklab, #187548 9%, #f8f9f7), color-mix(in oklab, #5bc78f 16%, #0f1311));
+  --ui-warn-wash: light-dark(color-mix(in oklab, #845d16 10%, #f8f9f7), color-mix(in oklab, #dfb15c 16%, #0f1311));
+  --ui-bad-wash: light-dark(color-mix(in oklab, #ad3535 10%, #f8f9f7), color-mix(in oklab, #f07d7d 16%, #0f1311));
+  /* Danger buttons follow the primary rule: dark ink on a light fill in dark mode. */
+  --ui-danger-fill: light-dark(#ad3535, #f07d7d);
+  --ui-on-danger: light-dark(#ffffff, #0f1311);
+
+  /* ---- Source ribbon segments (signature) ----
+     A single-hue ordinal ramp, validated with the dataviz validator (--ordinal)
+     for the default blue: every adjacent step ≥ 0.06 OKLCH L apart, the faintest
+     step ≥ 2:1 on the light canvas and ≥ 5:1 on the dark one. Light mode steps
+     from the accent fill toward the canvas; dark mode steps from a light tint
+     *down* toward the accent, never toward the canvas, so no segment sinks into
+     #0f1311. Text inside a segment: on-accent on 0–1 in light, dark ink on
+     every dark-mode step (≥ 4.9:1); "everything else" keeps ink. The fallback
+     below is for browsers without relative colour. */
+  --ui-seg-0: light-dark(var(--ui-accent-fill), color-mix(in oklab, var(--accent-base) 30%, white));
+  --ui-seg-1: light-dark(color-mix(in oklab, var(--accent-base) 100%, white), color-mix(in oklab, var(--accent-base) 42%, white));
+  --ui-seg-2: light-dark(color-mix(in oklab, var(--accent-base) 76%, white), color-mix(in oklab, var(--accent-base) 55%, white));
+  --ui-seg-3: light-dark(color-mix(in oklab, var(--accent-base) 62%, white), color-mix(in oklab, var(--accent-base) 70%, white));
+  --ui-seg-4: light-dark(color-mix(in oklab, var(--accent-base) 48%, white), color-mix(in oklab, var(--accent-base) 84%, white));
+  --ui-seg-rest: light-dark(#dfe4de, #5b665e);
+  --ui-seg-0-ink: light-dark(var(--ui-on-accent), #0f1311);
+  --ui-seg-1-ink: light-dark(#ffffff, #0f1311);
+  --ui-seg-ink: light-dark(var(--ui-ink), #0f1311);
+  --ui-seg-rest-ink: var(--ui-ink);
+
+  /* ---- Type ---- */
+  --ui-font-ui: "Hanken UI", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  /* One family: headings and numbers are Hanken too, set apart by weight, size and tabular figures. */
+  --ui-font-display: var(--ui-font-ui);
+  --ui-font-num: var(--ui-font-display);
+  --ui-t-xs: 12px;
+  --ui-t-sm: 13px;
+  --ui-t-base: 14px;
+  --ui-t-md: 15px;
+  --ui-t-lg: 17px;
+  --ui-t-xl: 28px;
+  --ui-t-kpi: 46px;
+  --ui-t-input: 14px;
+  --ui-lh: 1.55;
+  --ui-lh-tight: 1.2;
+  --ui-w-body: 420;
+  --ui-w-medium: 560;
+  --ui-w-strong: 680;
+  --ui-w-num: 560;
+
+  /* ---- Space, size, shape ---- */
+  --ui-s-1: 4px;
+  --ui-s-2: 8px;
+  --ui-s-3: 12px;
+  --ui-s-4: 20px;
+  --ui-s-5: 28px;
+  --ui-s-6: 40px;
+  --ui-s-7: 64px;
+  --ui-row: 38px;
+  --ui-control-sm: 30px;
+  --ui-control: 36px;
+  --ui-control-lg: 44px;
+  --ui-touch: 44px;
+  --ui-side-w: 248px;
+  --ui-page-max: 1180px;
+
+  --ui-r-sm: 6px;
+  --ui-r-md: 10px;
+  --ui-r-lg: 14px;
+  --ui-r-pill: 999px;
+
+  --ui-shadow-raise: 0 1px 2px light-dark(rgb(18 26 21 / 0.06), transparent);
+  --ui-shadow-menu: 0 0 0 1px var(--ui-line-strong), 0 12px 28px -10px light-dark(rgb(18 26 21 / 0.22), rgb(0 0 0 / 0.6));
+  --ui-shadow-pop: 0 0 0 1px light-dark(var(--ui-line), var(--ui-line-strong)), 0 28px 56px -18px light-dark(rgb(18 26 21 / 0.32), rgb(0 0 0 / 0.7));
+
+  /* ---- Motion (DESIGN.md "Motion"). Reduced motion: index.css stops all of it. ---- */
+  --ui-dur-press: 120ms;
+  --ui-dur-fast: 140ms;
+  --ui-dur: 200ms;
+  --ui-dur-slow: 240ms;
+  --ui-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ui-ease-move: cubic-bezier(0.77, 0, 0.175, 1);
+  --ui-ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+  --ui-ease: var(--ui-ease-drawer);
+
+  /* ---- Layers ---- */
+  --ui-z-sticky: 10;
+  --ui-z-side: 20;
+  --ui-z-tabbar: 30;
+  --ui-z-overlay: 60;
+  --ui-z-modal: 61;
+  --ui-z-menu: 70;
+  --ui-z-skip: 90;
+}
+
+/* Safe accents. lib/accent.ts accepts any hex, so a picked colour can be very
+   light (yellow) or very dark (navy). Clamp the lightness in OKLCH so the
+   contrast rules above hold for every hue: fill/ink at most L 0.50 in light
+   (white text ≥ 5:1), at least L 0.72 in dark (dark text ≥ 7:1); the line at
+   most L 0.60 in light and at least 0.62 in dark (≥ 3:1). The four preset
+   accents are not changed by the clamp. Browsers without relative colour keep
+   the color-mix values, which pass for the presets. */
+@supports (color: oklch(from red l c h)) {
+  :root[data-ui="app"] {
+    --ui-accent-fill: light-dark(oklch(from color-mix(in oklab, var(--accent-base) 86%, black) min(l, 0.5) c h), oklch(from color-mix(in oklab, var(--accent-base) 55%, white) max(l, 0.72) c h));
+    --ui-accent-ink: light-dark(oklch(from color-mix(in oklab, var(--accent-base) 80%, black) min(l, 0.5) c h), oklch(from color-mix(in oklab, var(--accent-base) 55%, white) max(l, 0.72) c h));
+    --ui-accent: light-dark(oklch(from var(--accent-base) min(l, 0.6) c h), oklch(from color-mix(in oklab, var(--accent-base) 75%, white) max(l, 0.62) c h));
+    /* The ribbon ramp at fixed OKLCH lightness, the accent's hue, chroma capped. */
+    --ui-seg-0: light-dark(var(--ui-accent-fill), oklch(from var(--accent-base) 0.88 min(c, 0.07) h));
+    --ui-seg-1: light-dark(oklch(from var(--accent-base) 0.525 min(c, 0.19) h), oklch(from var(--accent-base) 0.815 min(c, 0.1) h));
+    --ui-seg-2: light-dark(oklch(from var(--accent-base) 0.632 min(c, 0.15) h), oklch(from var(--accent-base) 0.75 min(c, 0.13) h));
+    --ui-seg-3: light-dark(oklch(from var(--accent-base) 0.7 min(c, 0.12) h), oklch(from var(--accent-base) 0.685 min(c, 0.15) h));
+    --ui-seg-4: light-dark(oklch(from var(--accent-base) 0.765 min(c, 0.09) h), oklch(from var(--accent-base) 0.62 min(c, 0.15) h));
+  }
+}
+
+@media (max-width: 767px) {
+  :root[data-ui="app"] {
+    --ui-t-kpi: 34px;
+    --ui-t-input: 16px;
+    --ui-control-sm: var(--ui-touch);
+    --ui-control: var(--ui-touch);
+  }
+}
+
+/* ---- The names components/*.tsx use (Tailwind colours from index.css,
+   components/ui.tsx), pointed at the tokens above so LinkForm, the QR studio
+   and the other dialogs match. Their shapes (radii, controls, card-in-card)
+   are set in components.css. ---- */
+:root[data-ui="app"] {
+  --bg: var(--ui-canvas);
+  --surface: var(--ui-panel);
+  --surface-2: var(--ui-sunken);
+  --line: var(--ui-line);
+  --fg: var(--ui-ink);
+  --muted: var(--ui-ink-2);
+  --subtle: var(--ui-ink-3);
+  --accent: var(--ui-accent-fill);
+  --accent-fg: var(--ui-on-accent);
+  --accent-soft: var(--ui-accent-wash);
+  --good: var(--ui-good);
+  --good-soft: var(--ui-good-wash);
+  --danger: var(--ui-bad);
+  --danger-soft: var(--ui-bad-wash);
+  --warn: var(--ui-warn);
+  --warn-soft: var(--ui-warn-wash);
+  --series-1: var(--ui-accent);
+  --series-2: var(--ui-ghost);
+  /* Tailwind's font-sans (components/*.tsx) follows Hanken here. */
+  --font-sans: var(--ui-font-ui);
+}
+
+/* ---- Toasts (sonner, mounted by main.tsx): same surfaces and type. ---- */
+:root[data-ui="app"] [data-sonner-toaster][data-sonner-theme] {
+  --normal-bg: var(--ui-panel);
+  --normal-border: var(--ui-line-strong);
+  --normal-text: var(--ui-ink);
+  --success-bg: var(--ui-panel);
+  --success-border: var(--ui-line-strong);
+  --success-text: var(--ui-good);
+  --error-bg: var(--ui-panel);
+  --error-border: var(--ui-line-strong);
+  --error-text: var(--ui-bad);
+  --warning-bg: var(--ui-panel);
+  --warning-border: var(--ui-line-strong);
+  --warning-text: var(--ui-warn);
+  --info-bg: var(--ui-panel);
+  --info-border: var(--ui-line-strong);
+  --info-text: var(--ui-ink);
+  --border-radius: var(--ui-r-md);
+  font-family: var(--ui-font-ui);
+}
+:root[data-ui="app"] [data-sonner-toast] {
+  box-shadow: var(--ui-shadow-menu);
+  font-size: var(--ui-t-sm);
+}
+:root[data-ui="app"] [data-sonner-toast] [data-description] {
+  color: var(--ui-ink-2);
+}
+
+/* ---- Base ---- */
+:root[data-ui="app"] body {
+  font-family: var(--ui-font-ui);
+  font-size: var(--ui-t-base);
+  line-height: var(--ui-lh);
+  font-weight: var(--ui-w-body);
+  font-optical-sizing: auto;
+  background: var(--ui-canvas);
+  color: var(--ui-ink);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+/* Zero-specificity scope, so a component that draws its own focus (fields'
+   halo, the command input, table rows' inset ring) can replace the outline. */
+:where(:root[data-ui="app"]) :focus-visible {
+  outline: 2px solid var(--ui-focus);
+  outline-offset: 2px;
+}
+:root[data-ui="app"] ::selection {
+  background: color-mix(in oklab, var(--ui-accent) 28%, transparent);
+  color: var(--ui-ink);
+}
+:root[data-ui="app"] {
+  accent-color: var(--ui-accent-fill);
+  caret-color: var(--ui-accent-ink);
+  scrollbar-color: var(--ui-line-strong) transparent;
+}
+:root[data-ui="app"] :is(button, a, [role="tab"], [role="option"], label) {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}

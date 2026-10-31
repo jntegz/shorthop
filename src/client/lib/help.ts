@@ -63,11 +63,6 @@ export const LINK_HELP = {
     "Adds UTM tags to the destination at the moment someone clicks, so analytics tools like Google Analytics can attribute the visit. The saved destination doesn't change. Tags already in the destination, or passed through from the short link, are never overwritten. Off by default for new links. Uses this link's template if set, otherwise the default from Settings.",
     "…/guide?utm_source=sh.example&utm_medium=shortlink&utm_campaign=guide",
   ),
-  utmTemplate: h(
-    "Custom UTM template",
-    "Replaces the default template for this link only: key=value pairs joined by &, ASCII only, without spaces, ? or #, up to 512 characters. {slug} becomes the slug, {domain} the short domain. {source} becomes the ?s= tag, qr for QR scans, the in-app browser (li, fb, ig, x), the referrer or direct. {variant} becomes the smart-routing destination's name (or its rule's), or default. Leave empty to follow the default, including later changes to it.",
-    "utm_source=linkedin&utm_campaign={slug}&utm_content={source}",
-  ),
   routing: h(
     "Smart routing",
     "Send visitors to different destinations by device (iPhone & iPad, Android, desktop, other) and country, or split them between destinations for an A/B test. Rules are checked from the top and the first match wins; everyone no rule matches goes to the destination URL. Devices and countries are detected from the browser and Cloudflare's location data, so VPNs and unusual browsers can land elsewhere. iPads that ask for desktop sites count as desktop. Each visit is assigned on its own, with no cookie. Bots and link previews always get the destination URL. Changes go live within about a minute.",
@@ -164,10 +159,6 @@ export const IMPORT_HELP = {
   ),
 } satisfies Record<string, Help>;
 
-export const PROBE_HELP = h(
-  "Scanner probe",
-  "Automated scanners request paths like /.env, /wp-login.php or /config.json on every site, looking for leaked secrets or vulnerable software. They get the not-found page; nothing is exposed.",
-);
 export const STATS_HELP = {
   live: h(
     "When new clicks appear",

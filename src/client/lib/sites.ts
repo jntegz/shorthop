@@ -5,7 +5,6 @@ import { useSearchParams } from "react-router";
 import { formatMoney, FX_CURRENCIES, GRANULARITIES, SITE_DIMS, type Granularity, type SiteDim } from "../../shared/sites";
 import type { ComboOption } from "../components/ui";
 import { RANGES, type Period, type Range } from "../../shared/types";
-import { countryName, flag } from "./format";
 
 export const DIM_LABELS: Record<SiteDim, string> = {
   channel: "Channel",
@@ -33,9 +32,6 @@ export const DIM_LABELS: Record<SiteDim, string> = {
   screen: "Screen",
   visitor_type: "New vs returning",
 };
-
-const CONTINENTS: Record<string, string> = { AF: "Africa", AN: "Antarctica", AS: "Asia", EU: "Europe", NA: "North America", OC: "Oceania", SA: "South America" };
-const SCREENS: Record<string, string> = { phone: "Phone (under 600 px)", tablet: "Tablet (600–1023 px)", laptop: "Laptop (1024–1599 px)", wide: "Wide (1600 px and up)" };
 
 export const GRANULARITY_LABELS: Record<Granularity, string> = { hour: "Hourly", day: "Daily", week: "Weekly", month: "Monthly" };
 
@@ -89,23 +85,13 @@ export function viewQuery(v: SiteView): Record<string, string> {
   return q;
 }
 
-export function money(minor: number, currency: string, compact = false): string {
-  return formatMoney(minor, currency, { compact });
+/** A website's dashboard address. */
+export function sitePath(id: string): string {
+  return `/sites/${encodeURIComponent(id)}`;
 }
 
-/** How a dimension's value reads in a list. */
-export function dimValue(dim: SiteDim | "pages" | "goals" | "outbound", value: string): string {
-  if (value === "(not matched)") return "Not matched to a visit";
-  if (dim === "country") return value ? `${flag(value)} ${countryName(value)}` : "Unknown";
-  if (dim === "device") return value ? value[0]!.toUpperCase() + value.slice(1) : "Unknown";
-  if (dim === "link") return value || "Not from a short link";
-  if (dim === "campaign" || dim.startsWith("utm_")) return value || "(none)";
-  if (dim === "referrer") return value || "No referrer";
-  if (dim === "continent") return CONTINENTS[value] ?? (value || "Unknown");
-  if (dim === "screen") return SCREENS[value] ?? (value || "Unknown");
-  if (dim === "visitor_type") return value === "returning" ? "Returning" : "New";
-  if (dim === "timezone") return value ? value.replaceAll("_", " ") : "Unknown";
-  return value || "Unknown";
+export function money(minor: number, currency: string, compact = false): string {
+  return formatMoney(minor, currency, { compact });
 }
 
 /** What the Direct sources mean (src/worker/web/source.ts), for their tooltips. */

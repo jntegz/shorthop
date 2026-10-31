@@ -1,0 +1,664 @@
+/* The shell: the sidebar, the phone header, bottom tab bar and More sheet,
+   and the command bar. */
+
+.ui-skip {
+  position: fixed;
+  left: 8px;
+  top: -80px;
+  z-index: var(--ui-z-skip);
+  padding: 10px 14px;
+  border-radius: var(--ui-r-md);
+  background: var(--ui-accent-fill);
+  color: var(--ui-on-accent);
+  font-weight: var(--ui-w-medium);
+  text-decoration: none;
+}
+.ui-skip:focus {
+  top: 8px;
+}
+
+.ui-app {
+  min-height: 100dvh;
+  display: grid;
+  grid-template-columns: var(--ui-side-w) minmax(0, 1fr);
+  /* The sidebar's colour runs the full height, also in full-page captures. */
+  background: linear-gradient(to right, var(--ui-side) calc(var(--ui-side-w) - 1px), var(--ui-line) 0 var(--ui-side-w), transparent 0);
+}
+/* Links take their parent's colour unless a component gives them one. Zero
+   specificity, so .ui-button (white on the primary fill), .ui-foot-link,
+   .ui-kpi-note a and the rest keep their own colour. */
+:where(.ui-app a) {
+  color: inherit;
+}
+.ui-app .ui-main {
+  min-width: 0;
+  padding-bottom: 0;
+  outline: none;
+}
+
+/* ---------------- Sidebar ---------------- */
+.ui-side {
+  position: sticky;
+  top: 0;
+  z-index: var(--ui-z-side);
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  padding: 20px 14px 14px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--ui-side);
+  border-right: 1px solid var(--ui-line);
+}
+.ui-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  align-self: flex-start;
+  padding: 2px 6px;
+  margin-left: -2px;
+  border-radius: var(--ui-r-sm);
+  font-family: var(--ui-font-display);
+  font-size: 19px;
+  font-weight: var(--ui-w-strong);
+  letter-spacing: -0.025em;
+  line-height: 1.2;
+  text-decoration: none;
+}
+.ui-brand-mark {
+  width: 24px;
+  height: 24px;
+  color: var(--ui-accent);
+}
+
+/* The sidebar's three stacked controls (search, workspace, Create link) share
+   one height, so the search reads as a field, not a caption. Sized explicitly
+   (box-sizing, line-height, no native appearance) so every browser agrees. */
+.ui-side {
+  --ui-side-control: 40px;
+}
+.ui-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  box-sizing: border-box;
+  width: 100%;
+  height: var(--ui-side-control);
+  min-height: var(--ui-side-control);
+  margin-top: 18px;
+  padding: 0 8px 0 13px;
+  appearance: none;
+  border-radius: var(--ui-r-pill);
+  border: 1px solid var(--ui-line-strong);
+  background: var(--ui-panel);
+  color: var(--ui-ink-3);
+  font: inherit;
+  font-size: var(--ui-t-base);
+  line-height: 1;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color var(--ui-dur-fast) ease,
+    color var(--ui-dur-fast) ease;
+}
+.ui-search > svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+.ui-search span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ui-search:hover {
+  border-color: var(--ui-line-strong);
+  color: var(--ui-ink-2);
+}
+
+.ui-workspace {
+  display: block;
+  margin-top: 14px;
+  padding: 9px 12px 10px;
+  border-radius: var(--ui-r-md);
+  border: 1px solid var(--ui-line);
+  text-decoration: none;
+  transition: border-color var(--ui-dur-fast) ease, background-color var(--ui-dur-fast) ease;
+}
+a.ui-workspace:hover {
+  border-color: var(--ui-line-strong);
+  background: var(--ui-panel);
+}
+.ui-workspace-name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 6px;
+  font-size: var(--ui-t-sm);
+  font-weight: var(--ui-w-strong);
+  line-height: 1.35;
+}
+.ui-workspace-domain {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--ui-t-xs);
+  color: var(--ui-ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.ui-side-create {
+  width: 100%;
+  height: var(--ui-side-control);
+  min-height: var(--ui-side-control);
+  margin-top: 14px;
+  flex: none;
+}
+
+/* Several domains: the box is a button that lists them. */
+.ui-workspace.is-menu {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box;
+  width: 100%;
+  appearance: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ui-workspace.is-menu:hover,
+.ui-workspace.is-menu[data-state="open"] {
+  border-color: var(--ui-line-strong);
+  background: var(--ui-panel);
+}
+.ui-workspace-text {
+  flex: 1;
+  min-width: 0;
+}
+.ui-workspace-count {
+  color: var(--ui-ink-3);
+}
+/* "Demo data" while npm run seed:dev's sample links are the only ones. */
+.ui-workspace-demo {
+  white-space: nowrap;
+  padding: 1px 6px;
+  border-radius: var(--ui-r-pill);
+  background: var(--ui-accent-wash);
+  color: var(--ui-accent-ink);
+  font-size: var(--ui-t-xs);
+  font-weight: var(--ui-w-strong);
+}
+.ui-workspace-chevron {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  color: var(--ui-ink-3);
+}
+
+.ui-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-top: 22px;
+}
+.ui-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 34px;
+  padding: 0 10px;
+  border-radius: var(--ui-r-md);
+  color: var(--ui-ink-2);
+  font-weight: var(--ui-w-medium);
+  text-decoration: none;
+  transition:
+    background-color var(--ui-dur-fast) ease,
+    color var(--ui-dur-fast) ease;
+}
+.ui-app .ui-nav-item svg.lucide {
+  width: 17px;
+  height: 17px;
+  color: var(--ui-ink-3);
+  transition: color var(--ui-dur-fast) ease;
+}
+.ui-nav-item:hover {
+  background: var(--ui-hover);
+  color: var(--ui-ink);
+}
+.ui-nav-item[aria-current="page"] {
+  background: var(--ui-panel);
+  color: var(--ui-ink);
+  font-weight: var(--ui-w-strong);
+  box-shadow: 0 0 0 1px var(--ui-line), var(--ui-shadow-raise);
+}
+.ui-app .ui-nav-item[aria-current="page"] svg.lucide {
+  color: var(--ui-accent-ink);
+}
+.ui-nav-item.is-group {
+  margin-top: 18px;
+}
+.ui-nav-label {
+  flex: 1;
+  min-width: 0;
+}
+.ui-side-foot {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding-top: 28px;
+}
+.ui-foot-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 24px;
+  padding: 0 8px;
+  border-radius: var(--ui-r-sm);
+  color: var(--ui-ink-2);
+  font-size: var(--ui-t-xs);
+  text-decoration: none;
+}
+.ui-app .ui-foot-link svg.lucide {
+  width: 12px;
+  height: 12px;
+}
+.ui-foot-link:hover {
+  color: var(--ui-ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+/* The project and its licence, under the footer links. */
+.ui-foot-credit {
+  margin: 4px 0 0;
+  padding: 0 8px;
+  color: var(--ui-ink-3);
+  font-size: var(--ui-t-xs);
+}
+.ui-foot-credit a:hover {
+  color: var(--ui-ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* System status: one quiet line with a dot, only when something needs attention. */
+.ui-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+  padding: 0 8px;
+  border-radius: var(--ui-r-sm);
+  font-size: var(--ui-t-xs);
+  font-weight: var(--ui-w-medium);
+  color: var(--ui-ink-2);
+  text-decoration: none;
+}
+/* One line at every sidebar width (220 px at tablets); the full list is in the title. */
+.ui-status-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ui-status:hover {
+  color: var(--ui-ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.ui-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--ui-warn);
+  box-shadow: 0 0 0 3px var(--ui-warn-wash);
+}
+.ui-status[data-tone="error"] .ui-status-dot {
+  background: var(--ui-bad);
+  box-shadow: 0 0 0 3px var(--ui-bad-wash);
+}
+
+.ui-account {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  margin-top: 10px;
+  padding-top: 12px;
+  border-top: 1px solid var(--ui-line);
+}
+.ui-account-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+  padding: 4px;
+  margin-left: -4px;
+  border-radius: var(--ui-r-md);
+  text-decoration: none;
+}
+.ui-account-link:hover {
+  background: var(--ui-hover);
+}
+.ui-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--ui-accent-wash);
+  color: var(--ui-accent-ink);
+  font-size: var(--ui-t-xs);
+  font-weight: var(--ui-w-strong);
+  letter-spacing: 0.02em;
+}
+.ui-account-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.3;
+}
+.ui-account-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--ui-t-sm);
+  font-weight: var(--ui-w-strong);
+}
+.ui-account-role {
+  font-size: var(--ui-t-xs);
+  color: var(--ui-ink-2);
+}
+.ui-account form {
+  display: contents;
+}
+
+.ui-mobile-head,
+.ui-tabbar {
+  display: none;
+}
+
+/* ---------------- More sheet (phones) ---------------- */
+.ui-more-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.ui-more-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  padding: 0 10px;
+  border-radius: var(--ui-r-md);
+  color: var(--ui-ink);
+  font-weight: var(--ui-w-medium);
+  text-decoration: none;
+}
+.ui-sheet .ui-more-item svg.lucide {
+  width: 19px;
+  height: 19px;
+  color: var(--ui-ink-3);
+}
+.ui-more-item:active,
+.ui-more-item:hover {
+  background: var(--ui-hover);
+}
+.ui-more-item[aria-current="page"] {
+  background: var(--ui-sunken);
+}
+.ui-sheet .ui-more-item[aria-current="page"] svg.lucide:first-child {
+  color: var(--ui-accent-ink);
+}
+.ui-sheet .ui-more-item .ui-more-chevron {
+  margin-left: auto;
+  width: 16px;
+  height: 16px;
+}
+.ui-more-account {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 14px 0 6px;
+  border-top: 1px solid var(--ui-line);
+}
+.ui-more-account form {
+  display: contents;
+}
+.ui-more-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  margin: 4px 0 4px -8px;
+}
+.ui-more-links .ui-foot-link {
+  min-height: 44px;
+}
+.ui-sheet .ui-status {
+  min-height: 44px;
+  margin-left: -8px;
+}
+
+/* ---------------- Command bar (no animation: opened by keyboard many times a day) ---------------- */
+.ui-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--ui-z-overlay);
+  background: var(--ui-overlay);
+}
+.ui-command {
+  position: fixed;
+  z-index: var(--ui-z-modal);
+  top: 14vh;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(620px, calc(100vw - 24px));
+  border-radius: var(--ui-r-lg);
+  background: var(--ui-panel);
+  color: var(--ui-ink);
+  box-shadow: var(--ui-shadow-pop);
+  font-family: var(--ui-font-ui);
+  font-size: var(--ui-t-base);
+  overflow: hidden;
+  outline: none;
+}
+.ui-command-input {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--ui-line);
+}
+.ui-command-input:focus-within {
+  box-shadow: inset 0 -2px 0 var(--ui-accent);
+}
+.ui-command-input input {
+  flex: 1;
+  height: 52px;
+  background: transparent;
+  border: 0;
+  outline: none;
+  color: var(--ui-ink);
+  font: inherit;
+  font-size: 16px;
+}
+.ui-command-input input:focus-visible {
+  outline: none;
+}
+.ui-command-input input::placeholder {
+  color: var(--ui-ink-3);
+}
+.ui-command-busy {
+  font-size: var(--ui-t-sm);
+  color: var(--ui-ink-3);
+}
+.ui-command-list {
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  max-height: min(400px, 55vh);
+  overflow-y: auto;
+}
+.ui-command-group {
+  padding: 10px 10px 4px;
+  font-size: var(--ui-t-xs);
+  font-weight: var(--ui-w-medium);
+  color: var(--ui-ink-3);
+}
+.ui-command-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 38px;
+  padding: 0 10px;
+  border-radius: var(--ui-r-md);
+  cursor: pointer;
+}
+.ui-command svg.lucide {
+  width: 16px;
+  height: 16px;
+  color: var(--ui-ink-3);
+  flex: none;
+}
+.ui-command-item.is-active {
+  background: var(--ui-hover);
+}
+.ui-command-item.is-active svg.lucide {
+  color: var(--ui-accent-ink);
+}
+.ui-command-label {
+  font-weight: var(--ui-w-medium);
+  white-space: nowrap;
+}
+.ui-command-hint {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ui-ink-3);
+  font-size: var(--ui-t-sm);
+}
+.ui-command-item .ui-command-enter {
+  margin-left: auto;
+}
+.ui-command-empty {
+  padding: 14px 10px;
+  color: var(--ui-ink-2);
+}
+.ui-command-foot {
+  display: flex;
+  gap: 16px;
+  padding: 8px 16px;
+  border-top: 1px solid var(--ui-line);
+  font-size: var(--ui-t-xs);
+  color: var(--ui-ink-3);
+}
+.ui-command-foot span {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+/* ---------------- Tablet ---------------- */
+@media (max-width: 1023px) and (min-width: 768px) {
+  :root[data-ui="app"] {
+    --ui-side-w: 220px;
+  }
+  .ui-side {
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+}
+
+/* ---------------- Phone ---------------- */
+@media (max-width: 767px) {
+  .ui-app {
+    display: block;
+    background: none;
+  }
+  .ui-side {
+    display: none;
+  }
+  .ui-mobile-head {
+    position: sticky;
+    top: 0;
+    z-index: var(--ui-z-sticky);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 56px;
+    padding: 0 8px 0 14px;
+    background: var(--ui-canvas);
+    border-bottom: 1px solid var(--ui-line);
+  }
+  .ui-mobile-head .ui-brand {
+    align-self: center;
+  }
+  .ui-mobile-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .ui-tabbar {
+    position: fixed;
+    inset: auto 0 0 0;
+    z-index: var(--ui-z-tabbar);
+    display: grid;
+    grid-template-columns: repeat(var(--n, 4), minmax(0, 1fr));
+    padding-bottom: env(safe-area-inset-bottom);
+    background: var(--ui-panel);
+    border-top: 1px solid var(--ui-line);
+  }
+  .ui-tabbar-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    min-width: 0;
+    min-height: 60px;
+    padding: 0 4px;
+    border: 0;
+    background: none;
+    color: var(--ui-ink-2);
+    font: inherit;
+    font-size: var(--ui-t-xs);
+    font-weight: var(--ui-w-medium);
+    text-decoration: none;
+    cursor: pointer;
+  }
+  .ui-app .ui-tabbar-item svg.lucide {
+    width: 21px;
+    height: 21px;
+  }
+  .ui-tabbar-item span {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .ui-tabbar-item[aria-current="page"],
+  .ui-tabbar-item.is-current {
+    color: var(--ui-ink);
+    font-weight: var(--ui-w-strong);
+  }
+  .ui-app .ui-tabbar-item:is([aria-current="page"], .is-current) svg.lucide {
+    color: var(--ui-accent-ink);
+  }
+  .ui-app .ui-main {
+    padding-bottom: calc(76px + env(safe-area-inset-bottom));
+  }
+}

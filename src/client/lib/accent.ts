@@ -20,13 +20,10 @@ export function savedAccent(): string {
   }
 }
 
-/** Sets the accent and the tokens made from it (the soft background, the first chart series). */
+/** Sets the accent; index.css makes the soft background and chart series from it, per theme. */
 export function applyAccent(color: string): void {
   const c = isHex(color) ? color : DEFAULT_ACCENT;
-  const s = document.documentElement.style;
-  s.setProperty("--accent", c);
-  s.setProperty("--accent-soft", `color-mix(in srgb, ${c} 9%, white)`);
-  s.setProperty("--series-1", `color-mix(in srgb, ${c} 85%, white)`);
+  document.documentElement.style.setProperty("--accent-base", c);
 }
 
 export function saveAccent(color: string): void {

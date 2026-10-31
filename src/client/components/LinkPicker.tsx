@@ -23,9 +23,12 @@ export function LinkPicker({
     queryFn: () =>
       call(api.links.$get({ query: { sort: "slug", period: "7d" } })),
   });
+  // The current choice stays listed even when it no longer works (disabled,
+  // replaced, expired), so the picker doesn't look empty.
   const options = (candidates.data?.links ?? []).filter(
     (l) =>
-      linkState(l) === "active" && !exclude.includes(linkKey(l.domain, l.slug)),
+      linkKey(l.domain, l.slug) === value ||
+      (linkState(l) === "active" && !exclude.includes(linkKey(l.domain, l.slug))),
   );
   return (
     <Select
@@ -41,7 +44,7 @@ export function LinkPicker({
       }
     >
       <option value="">
-        {candidates.isPending ? "Loading links…" : "Choose a link"}
+        {candidates.isPending ? "Loading links…" : candidates.isError && !candidates.data ? "Your links couldn’t load" : "Choose a link"}
       </option>
       {options.map((l) => {
         const key = linkKey(l.domain, l.slug);

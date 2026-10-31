@@ -1,19 +1,36 @@
 import "./index.css";
+// The admin's design (src/client/app, docs/DESIGN.md). Every stylesheet loads
+// here, in one fixed order, never with a lazy page: otherwise which of two equal
+// selectors wins would depend on the route you entered by.
+import "./app/fonts.css";
+import "./app/tokens.css";
+import "./app/components.css";
+import "./app/ui.css";
+import "./app/shell.css";
+import "./app/home.css";
+import "./app/sites/sites.css";
+import "./app/links/links.css";
+import "./app/link/link.css";
+import "./app/kit/kit.css";
+import "./app/hits/hits.css";
+import "./app/health/health.css";
+import "./app/import/import.css";
+import "./app/settings/settings.css";
+import "./app/sitepages/sitepages.css";
+import "./app/docs/docs.css";
 import { applyAccent, savedAccent } from "./lib/accent";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { StrictMode, useEffect, type ComponentType } from "react";
+import { applyTheme, savedTheme, useTheme } from "./lib/theme";
+import { MutationCache, QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { StrictMode, useEffect } from "react";
 import { createRoot } from "react-dom/client";
-import { createBrowserRouter, Link, RouterProvider, useRouteError } from "react-router";
-import { Toaster } from "sonner";
+import { createBrowserRouter, Link, Navigate, RouterProvider, useRouteError } from "react-router";
+import { Toaster, toast } from "sonner";
 import { ApiError } from "./api";
-import { Layout } from "./components/Layout";
-import { Button, Card, Empty } from "./components/ui";
-import { RequirePermission } from "./lib/me";
-import { Links } from "./pages/Links";
-import type { Permission } from "../shared/permissions";
-
+import { errorMessage } from "./components/ui";
+import { Button } from "./app/ui";
 
 applyAccent(savedAccent());
+applyTheme(savedTheme());
 
 // A tab opened before a deploy still asks for the old content-hashed chunks,
 // which the new deploy no longer has. Reload once to pick up the new build; the
@@ -42,6 +59,13 @@ function isChunkError(err: unknown): boolean {
 }
 
 const queryClient = new QueryClient({
+  // A safety net: a change that fails without its own error handling still says so.
+  mutationCache: new MutationCache({
+    onError: (err, _vars, _ctx, mutation) => {
+      if (mutation.options.onError) return;
+      toast.error(errorMessage(err));
+    },
+  }),
   defaultOptions: {
     queries: {
       staleTime: 30_000,
@@ -51,26 +75,9 @@ const queryClient = new QueryClient({
   },
 });
 
-function gated(Page: ComponentType, need: Permission, redirect?: string) {
-  return {
-    Component: () => (
-      <RequirePermission need={need} redirect={redirect}>
-        <Page />
-      </RequirePermission>
-    ),
-  };
-}
-
-function NotFound() {
-  return (
-    <Card>
-      <Empty title="Page not found">
-        <Link to="/" className="text-accent hover:underline">
-          Go to the dashboard
-        </Link>
-      </Empty>
-    </Card>
-  );
+function ThemedToaster() {
+  const theme = useTheme();
+  return <Toaster position="bottom-right" richColors closeButton theme={theme === "auto" ? "system" : theme} />;
 }
 
 function RouteError() {
@@ -80,48 +87,45 @@ function RouteError() {
     if (chunk) reloadOnce();
   }, [chunk]);
   return (
-    <Card>
-      <Empty title={chunk ? "A new version of the admin is available" : "Something went wrong"}>
-        <p>{chunk ? "The admin was updated since this tab was opened. Reload to continue." : "This page hit an unexpected error. Reloading usually helps."}</p>
-        <div className="mt-4 flex justify-center gap-2">
-          <Button onClick={() => window.location.reload()}>Reload</Button>
-          {chunk ? null : (
-            <Link to="/" className="inline-flex items-center px-3 text-sm text-accent hover:underline">
-              Go to the dashboard
-            </Link>
-          )}
-        </div>
-      </Empty>
-    </Card>
+    <div className="ui-page">
+      <div className="ui-state">
+        <p className="ui-state-title">{chunk ? "A new version of the admin is available" : "Something went wrong"}</p>
+        <p className="ui-state-body">{chunk ? "The admin was updated since this tab was opened. Reload to continue." : "This page hit an unexpected error. Reloading usually helps."}</p>
+        <Button onClick={() => window.location.reload()}>Reload</Button>
+        {chunk ? null : <Link to="/" className="ui-link-btn">Go to the dashboard</Link>}
+      </div>
+    </div>
   );
 }
 
 const router = createBrowserRouter(
   [
     {
-      element: <Layout />,
       errorElement: <RouteError />,
+      lazy: async () => ({ Component: (await import("./app/Shell")).Shell }),
       children: [
         {
           // Errors inside a page keep the navigation around them.
           errorElement: <RouteError />,
           children: [
-        // Pages with charts, QR or CSV parsing load on demand. Without the
-        // permission a page needs, people see a notice (the overview: all links).
-        { index: true, lazy: async () => gated((await import("./pages/Dashboard")).Dashboard, "stats.view", "/links") },
-        { path: "links", element: <Links /> },
-        { path: "links/:domain/:slug", lazy: async () => ({ Component: (await import("./pages/LinkDetail")).LinkDetail }) },
-        { path: "hits", lazy: async () => gated((await import("./pages/RecentHits")).RecentHits, "stats.view") },
-        { path: "stats", lazy: async () => gated((await import("./pages/Stats")).Stats, "stats.view") },
-        { path: "sites", lazy: async () => gated((await import("./pages/Sites")).Sites, "stats.view") },
-        { path: "sites/:id", lazy: async () => gated((await import("./pages/SiteDashboard")).SiteDashboard, "stats.view") },
-        { path: "sites/:id/guide", lazy: async () => gated((await import("./pages/SiteGuide")).SiteGuide, "stats.view") },
-        { path: "sites/:id/settings", lazy: async () => gated((await import("./pages/SiteSettings")).SiteSettings, "sites.manage") },
-        { path: "health", lazy: async () => gated((await import("./pages/Health")).Health, "health.manage") },
-        { path: "misses", lazy: async () => gated((await import("./pages/Misses")).Misses, "health.manage") },
-        { path: "import", lazy: async () => gated((await import("./pages/Import")).Import, "links.create") },
-        { path: "settings", lazy: async () => ({ Component: (await import("./pages/Settings")).Settings }) },
-        { path: "*", element: <NotFound /> },
+            // Pages load on demand. Without the permission a page needs, people
+            // see a notice (Analytics: all links instead).
+            { index: true, lazy: async () => { const [{ gate }, { Analytics }] = await Promise.all([import("./app/Gate"), import("./app/Analytics")]); return gate(Analytics, "stats.view", "/links"); } },
+            { path: "stats", element: <Navigate to="/" replace /> },
+            { path: "kit", lazy: async () => ({ Component: (await import("./app/kit/Kit")).Kit }) },
+            { path: "links", lazy: async () => ({ Component: (await import("./app/links/Links")).LinksPage }) },
+            { path: "links/:domain/:slug", lazy: async () => ({ Component: (await import("./app/link/LinkPage")).LinkPage }) },
+            { path: "hits", lazy: async () => { const [{ gate }, { HitsPage }] = await Promise.all([import("./app/Gate"), import("./app/hits/Hits")]); return gate(HitsPage, "stats.view"); } },
+            { path: "sites", lazy: async () => { const [{ gate }, { SitesPage }] = await Promise.all([import("./app/Gate"), import("./app/sites/Sites")]); return gate(SitesPage, "stats.view"); } },
+            { path: "sites/:id", lazy: async () => { const [{ gate }, { SitePage }] = await Promise.all([import("./app/Gate"), import("./app/sites/Site")]); return gate(SitePage, "stats.view"); } },
+            { path: "sites/:id/guide", lazy: async () => { const [{ gate }, { SiteGuidePage }] = await Promise.all([import("./app/Gate"), import("./app/sitepages/SiteGuide")]); return gate(SiteGuidePage, "stats.view"); } },
+            { path: "sites/:id/settings", lazy: async () => { const [{ gate }, { SiteSettingsPage }] = await Promise.all([import("./app/Gate"), import("./app/sitepages/SiteSettings")]); return gate(SiteSettingsPage, "sites.manage"); } },
+            { path: "health", lazy: async () => { const [{ gate }, { HealthPage }] = await Promise.all([import("./app/Gate"), import("./app/health/Health")]); return gate(HealthPage, "health.manage"); } },
+            { path: "misses", lazy: async () => { const [{ gate }, { MissesPage }] = await Promise.all([import("./app/Gate"), import("./app/health/Misses")]); return gate(MissesPage, "health.manage"); } },
+            { path: "import", lazy: async () => { const [{ gate }, { ImportPage }] = await Promise.all([import("./app/Gate"), import("./app/import/Import")]); return gate(ImportPage, "links.create"); } },
+            { path: "settings", lazy: async () => ({ Component: (await import("./app/settings/Settings")).SettingsPage }) },
+            { path: "api-docs", lazy: async () => ({ Component: (await import("./app/docs/ApiDocs")).ApiDocsPage }) },
+            { path: "*", lazy: async () => ({ Component: (await import("./app/PageNotFound")).PageNotFound }) },
           ],
         },
       ],
@@ -134,7 +138,7 @@ createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <RouterProvider router={router} />
-      <Toaster position="bottom-right" richColors closeButton theme="light" />
+      <ThemedToaster />
     </QueryClientProvider>
   </StrictMode>,
 );

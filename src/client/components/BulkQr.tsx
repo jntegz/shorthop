@@ -87,11 +87,12 @@ export function BulkQr({ open, onOpenChange, links, label, filtered }: { open: b
             </p>
           </div>
         ) : null}
+        {defaults.isError ? <Notice>Your saved default design couldn’t load; codes without their own design use the built-in one.</Notice> : null}
         <div className="flex justify-end gap-2">
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={progress !== null}>
             Cancel
           </Button>
-          <Button onClick={() => void run()} loading={progress !== null} disabled={!list.length || !defaults.data}>
+          <Button onClick={() => void run()} loading={progress !== null} disabled={!list.length || defaults.isPending}>
             {progress === null ? <Download /> : null} Download ZIP
           </Button>
         </div>

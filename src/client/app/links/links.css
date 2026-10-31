@@ -1,0 +1,594 @@
+/* The links list (links/Links.tsx). Tokens: ../tokens.css; components: ../ui.css.
+   Rows are 44 px: slug first and strongest, destination host in ink-2 with the
+   path quieter, tags neutral, status only when it means something, clicks
+   right-aligned, tabular. Columns drop out as the page narrows; what a
+   dropped column held moves under the slug. */
+
+.ui-head.links-head {
+  margin-bottom: var(--ui-s-4);
+}
+.links-intro {
+  max-width: 68ch;
+  text-wrap: pretty;
+}
+
+/* ---------------- Filter row ---------------- */
+.links-filters {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-s-2);
+  margin-bottom: var(--ui-s-2);
+}
+.links-search {
+  position: relative;
+  flex: 1 1 260px;
+  min-width: 0;
+}
+.links-search .ui-input {
+  padding: 0 34px 0 36px;
+  border-radius: var(--ui-r-pill);
+}
+.links-search .ui-input::-webkit-search-cancel-button {
+  margin-right: -20px;
+}
+
+.links-search-icon {
+  position: absolute;
+  left: 13px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--ui-ink-3);
+  pointer-events: none;
+}
+.ui-app .links-search kbd.links-search-kbd {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+.links-search .ui-input:focus ~ .links-search-kbd {
+  display: none;
+}
+.links-fields {
+  display: flex;
+  align-items: center;
+  gap: var(--ui-s-2);
+  flex: none;
+}
+.links-fields .ui-field {
+  flex: none;
+}
+.links-fields .ui-select select {
+  width: auto;
+  max-width: 168px;
+  text-overflow: ellipsis;
+  /* Toolbar fields are pills, like the search beside them. */
+  border-radius: var(--ui-r-pill);
+  padding-left: 14px;
+}
+.ui-button.links-filters-btn {
+  display: none;
+}
+.links-count-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  margin-right: -4px;
+  border-radius: var(--ui-r-pill);
+  background: var(--ui-accent-fill);
+  color: var(--ui-on-accent);
+  font-size: var(--ui-t-xs);
+  font-variant-numeric: tabular-nums;
+}
+.links-sheet-fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-s-4);
+  padding-bottom: var(--ui-s-2);
+}
+
+/* ---------------- Count line ---------------- */
+.links-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ui-s-1) var(--ui-s-4);
+  min-height: 32px;
+  margin-bottom: var(--ui-s-1);
+  font-size: var(--ui-t-sm);
+  color: var(--ui-ink-2);
+}
+.links-meta p {
+  margin: 0;
+}
+.links-meta-count {
+  display: flex;
+  align-items: baseline;
+  gap: 0.3em;
+  min-width: 150px;
+}
+.links-meta-n {
+  font-family: var(--ui-font-num);
+  font-weight: var(--ui-w-strong);
+  color: var(--ui-ink);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+.links-updating,
+.links-meta-note {
+  color: var(--ui-ink-3);
+}
+.links-create-short {
+  display: none;
+}
+.links-meta-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ui-s-1) var(--ui-s-4);
+}
+.links-meta-actions .ui-text-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.ui-app .links-inline-icon {
+  width: 14px;
+  height: 14px;
+}
+.links-keys {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--ui-ink-3);
+  font-size: var(--ui-t-xs);
+}
+.links-keys kbd + kbd {
+  margin-left: -1px;
+}
+.links-keys kbd:not(:first-child):not(kbd + kbd) {
+  margin-left: 6px;
+}
+
+/* ---------------- Table ---------------- */
+.ui-table.links-table {
+  table-layout: fixed;
+}
+.ui-table.links-table th:has(.ui-sort) {
+  padding-bottom: 3px;
+}
+.ui-table.links-table th.links-c-tags {
+  padding-bottom: 5px;
+}
+.ui-table.links-table td {
+  height: 44px;
+  padding-top: 3px;
+  padding-bottom: 3px;
+}
+.ui-table.links-table tbody tr[data-row] {
+  cursor: pointer;
+  /* Keyboard focus never lands under the phone header or the bulk bar. */
+  scroll-margin: 72px 0 132px;
+}
+.links-c-check {
+  width: 36px;
+}
+.ui-table.links-table :is(th, td).links-c-check {
+  padding-right: 0;
+}
+.links-c-dest {
+  width: 25%;
+}
+.links-c-tags {
+  width: 18%;
+}
+.links-c-status {
+  width: 132px;
+}
+.links-c-num {
+  width: 96px;
+}
+.links-c-menu {
+  width: 40px;
+}
+.ui-table.links-table th.links-c-menu,
+.ui-table.links-table td.links-c-menu {
+  padding-left: 0;
+  text-align: right;
+}
+
+/* Link cell */
+.links-c-link {
+  min-width: 0;
+}
+.links-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.ui-table a.links-slug {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ui-ink);
+  font-size: var(--ui-t-base);
+  font-weight: var(--ui-w-medium);
+  letter-spacing: -0.005em;
+}
+.ui-table a.links-slug:hover {
+  text-decoration: underline;
+  text-decoration-color: var(--ui-line-control);
+}
+.links-mark {
+  display: inline-flex;
+  flex: none;
+  color: var(--ui-ink-3);
+}
+.ui-app .links-mark svg.lucide {
+  width: 14px;
+  height: 14px;
+}
+.links-mark-text {
+  flex: none;
+  color: var(--ui-ink-3);
+  font-size: var(--ui-t-xs);
+  font-weight: var(--ui-w-medium);
+}
+.links-sub {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ui-ink-3);
+  font-size: var(--ui-t-xs);
+  line-height: 1.35;
+}
+.links-sub-dest,
+.links-status-inline {
+  display: none;
+}
+
+/* Destination */
+.links-dest {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ui-ink-3);
+}
+.links-host {
+  color: var(--ui-ink-2);
+}
+
+/* Tags: neutral; a click filters by the tag. */
+.links-tags {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+}
+.links-tag {
+  flex: none;
+  max-width: 96px;
+  height: 22px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--ui-r-pill);
+  background: var(--ui-sunken);
+  color: var(--ui-ink-2);
+  font: inherit;
+  font-size: var(--ui-t-xs);
+  font-weight: var(--ui-w-medium);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  transition: background-color var(--ui-dur-fast) ease, color var(--ui-dur-fast) ease;
+}
+.links-tag:hover {
+  background: var(--ui-pressed);
+  color: var(--ui-ink);
+}
+.links-tag-more {
+  flex: none;
+  color: var(--ui-ink-3);
+  font-size: var(--ui-t-xs);
+  font-weight: var(--ui-w-medium);
+}
+
+/* Status */
+.links-status {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+}
+.links-badge-link {
+  display: inline-flex;
+  border-radius: var(--ui-r-pill);
+  text-decoration: none;
+}
+.ui-table a.links-badge-link:hover {
+  text-decoration: none;
+}
+.links-badge-link:hover .ui-badge {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* Numbers */
+.ui-table td.links-num {
+  font-family: var(--ui-font-num);
+  font-weight: var(--ui-w-strong);
+  font-size: var(--ui-t-base);
+  color: var(--ui-ink);
+}
+.ui-table td.links-num.is-2 {
+  font-weight: var(--ui-w-medium);
+  color: var(--ui-ink-2);
+}
+/* A zero is an answer too, but a quiet one: the clicks that exist stand out. */
+.ui-table td.links-num.is-zero {
+  font-weight: var(--ui-w-medium);
+  color: var(--ui-ink-3);
+}
+
+/* Row menu: quiet until the row is hovered, focused or the menu is open. */
+.ui-button.links-row-menu {
+  color: var(--ui-ink-3);
+}
+.ui-table.links-table tr:is(:hover, :focus-visible, :focus-within) .ui-button.links-row-menu,
+.ui-button.links-row-menu[data-state="open"] {
+  color: var(--ui-ink);
+}
+
+/* Row tick box: out of the Tab order, a bigger hit area than it looks. */
+.links-c-check .ui-checkbox {
+  position: relative;
+  margin-top: 0;
+}
+.links-c-check .ui-checkbox::after {
+  content: "";
+  position: absolute;
+  inset: -9px;
+}
+.ui-table.links-table .links-c-check .ui-toggle {
+  min-height: 0;
+}
+
+/* Skeleton rows */
+.links-skel-row td {
+  height: 44px;
+}
+.links-skel-box {
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+}
+.links-skel-num {
+  width: 36px;
+  margin-left: auto;
+}
+
+/* ---------------- Bulk bar ---------------- */
+.links-bulk {
+  position: sticky;
+  bottom: var(--ui-s-4);
+  z-index: var(--ui-z-sticky);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  width: fit-content;
+  max-width: 100%;
+  margin: var(--ui-s-3) auto 0;
+  padding: 5px 5px 5px 16px;
+  border-radius: var(--ui-r-pill);
+  background: var(--ui-panel);
+  box-shadow: var(--ui-shadow-menu);
+  animation: links-bulk-in var(--ui-dur) var(--ui-ease-out);
+}
+/* It rises from the bottom edge, where it stays: tells where the actions went. */
+@keyframes links-bulk-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+.links-bulk-count {
+  margin-right: var(--ui-s-2);
+  font-size: var(--ui-t-sm);
+  font-weight: var(--ui-w-strong);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.links-bulk-wide {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.links-bulk-narrow {
+  display: none;
+}
+.ui-button.links-bulk-delete {
+  --b-fg: var(--ui-bad);
+}
+.ui-button.links-bulk-delete:hover:not(:disabled) {
+  --b-hover: var(--ui-bad-wash);
+  color: var(--ui-bad);
+}
+.links-bulk-clear {
+  margin-left: var(--ui-s-1);
+}
+.links-bulk .ui-icon-button[data-variant="ghost"] {
+  border-radius: var(--ui-r-pill);
+}
+
+.links-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-s-4);
+}
+.links-form-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--ui-s-2);
+}
+
+.links-preparing {
+  position: fixed;
+  right: var(--ui-s-5);
+  bottom: var(--ui-s-5);
+  z-index: var(--ui-z-overlay);
+  padding: var(--ui-s-3) var(--ui-s-4);
+  border-radius: var(--ui-r-md);
+  background: var(--ui-panel);
+  box-shadow: var(--ui-shadow-menu);
+  font-size: var(--ui-t-sm);
+}
+
+/* ---------------- Widths ---------------- */
+/* Tags need room: only where the link column keeps ~280 px. */
+@media (max-width: 1359px) {
+  .links-c-tags {
+    display: none;
+  }
+  .links-c-dest {
+    width: 32%;
+  }
+}
+/* The filter selects move into a sheet. */
+@media (max-width: 1199px) {
+  .links-fields {
+    display: none;
+  }
+  .ui-button.links-filters-btn {
+    display: inline-flex;
+  }
+  .links-keys {
+    display: none;
+  }
+}
+/* No destination column: it moves under the slug. Counts follow the drop
+   order of DESIGN §6: tablets keep the period and Total; phones keep one. */
+@media (max-width: 1023px) {
+  .links-c-dest,
+  .links-c-status {
+    display: none;
+  }
+  .links-sub-title {
+    display: none;
+  }
+  .links-sub-dest {
+    display: block;
+  }
+  /* The status badge moves next to the slug (only links that have one). */
+  .links-status-inline {
+    display: inline-flex;
+    min-width: 0;
+  }
+  .links-c-num {
+    width: 76px;
+  }
+}
+@media (max-width: 767px) {
+  .links-filters {
+    margin-bottom: var(--ui-s-1);
+  }
+  .links-search {
+    flex-basis: 0;
+  }
+  .ui-app .links-search kbd.links-search-kbd {
+    display: none;
+  }
+  .links-filters-btn {
+    flex: none;
+  }
+  .ui-head.links-head {
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: nowrap;
+  }
+  .ui-head.links-head:has(.links-intro) {
+    align-items: flex-start;
+  }
+  .ui-head.links-head .ui-head-tools .ui-button {
+    width: var(--ui-touch);
+    padding: 0;
+    gap: 0;
+    font-size: 0;
+  }
+  .ui-head.links-head .ui-head-tools .ui-button-kbd {
+    display: none;
+  }
+  /* One clicks column: the chosen period's (Links.tsx doesn't draw it when
+     the whole list has none in it, so Total is then the one). */
+  .links-table.has-period .links-c-total {
+    display: none;
+  }
+  /* Bio pages keeps a labelled create button: the phone header's + is "Create link". */
+  .ui-head.links-head .ui-head-tools .ui-button.links-create-bio {
+    width: auto;
+    padding: 0 14px;
+    gap: 6px;
+    font-size: var(--ui-t-sm);
+  }
+  .links-create-long {
+    display: none;
+  }
+  .links-create-short {
+    display: inline;
+  }
+  .links-c-check {
+    width: 40px;
+  }
+  .links-c-check .ui-checkbox::after {
+    inset: -13px;
+  }
+  .links-c-num {
+    width: 72px;
+  }
+  .links-c-menu {
+    width: 48px;
+  }
+  .ui-table.links-table td,
+  .links-skel-row td {
+    height: 58px;
+  }
+  .links-sub {
+    font-size: var(--ui-t-sm);
+  }
+  .links-bulk {
+    bottom: calc(72px + env(safe-area-inset-bottom));
+    width: 100%;
+    border-radius: var(--ui-r-lg);
+  }
+  .links-bulk-wide {
+    display: none;
+  }
+  .links-bulk-narrow {
+    display: flex;
+    margin-left: auto;
+  }
+  .links-preparing {
+    left: 16px;
+    right: 16px;
+    bottom: calc(72px + env(safe-area-inset-bottom));
+  }
+}
+
+/* Recently deleted dialog */
+.links-deleted { list-style: none; margin: 0; padding: 0; }
+.links-deleted-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--ui-s-3); padding: var(--ui-s-3) 0; border-top: 1px solid var(--ui-line); }
+.links-deleted-row:first-child { border-top: 0; }
+.links-deleted-main { min-width: 0; flex: 1 1 16rem; }
+.links-deleted-name { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; color: var(--ui-ink); }
+.links-deleted-title { margin-left: var(--ui-s-2); font-weight: 400; color: var(--ui-ink-2); }
+.links-deleted-meta { margin: 2px 0 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--ui-t-sm); color: var(--ui-ink-2); }

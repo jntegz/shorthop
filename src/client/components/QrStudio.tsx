@@ -404,8 +404,8 @@ export function QrStudio({
           variant="ghost"
           size="sm"
           onClick={() => setStyle(defaults.data?.style ?? DEFAULT_QR_STYLE)}
-          disabled={!defaults.data}
-          title="Back to the default design"
+          disabled={defaults.isPending}
+          title={defaults.isError ? "Your saved default couldn’t load; this uses the built-in design" : "Back to the default design"}
         >
           <RotateCcw /> Default design
         </Button>

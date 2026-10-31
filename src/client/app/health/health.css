@@ -1,0 +1,884 @@
+/* Link health: Destinations (/health) and Missed visits
+   (/misses). Health.tsx, Misses.tsx, parts.tsx. Prefix health-. Loaded
+   with the shell; only --ui-* tokens. */
+
+/* ---------------- Tab row between the two pages ---------------- */
+.health-tabs {
+  margin-bottom: var(--ui-s-5);
+}
+.health-tabs .ui-tab {
+  text-decoration: none;
+}
+.health-tab-alert {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: var(--ui-r-pill);
+  background: var(--ui-bad-wash);
+  color: var(--ui-bad);
+  font-size: var(--ui-t-xs);
+  font-weight: var(--ui-w-strong);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The period sits right under the tab row's rule: no second rule. */
+.ui-period-bar.health-period {
+  padding-top: 0;
+  border-top: 0;
+}
+.health-period .ui-range {
+  color: var(--ui-ink-2);
+}
+
+.health-notice {
+  margin-bottom: var(--ui-s-5);
+}
+
+/* ---------------- States: five filter buttons drawn as the KPI strip ---------------- */
+.health-states {
+  margin-bottom: var(--ui-s-3);
+}
+button.health-state {
+  margin: 0;
+  padding-left: 0;
+  padding-right: 0;
+  border-top: 0;
+  border-left: 0;
+  border-right: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  outline-offset: 4px;
+}
+button.health-state:hover:not([aria-pressed="true"])::after {
+  background: var(--ui-line-strong);
+}
+button.health-state[aria-pressed="true"]::after {
+  background: var(--ui-accent);
+}
+.health-state-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.ui-app .health-state-icon {
+  width: 15px;
+  height: 15px;
+  color: var(--ui-ink-3);
+}
+.health-state[data-tone="danger"] .health-state-icon {
+  color: var(--ui-bad);
+}
+.health-state[data-tone="warn"] .health-state-icon {
+  color: var(--ui-warn);
+}
+.health-state[data-tone="good"] .health-state-icon {
+  color: var(--ui-good);
+}
+/* A state nobody is in recedes; its number still reads (ink-3 ≥ 5.4:1). */
+.health-state.is-zero:not([aria-pressed="true"]) .ui-kpi-value {
+  color: var(--ui-ink-3);
+}
+.health-state.is-zero[data-tone] .health-state-icon {
+  color: var(--ui-ink-3);
+}
+.health-state .ui-kpi-note {
+  text-wrap: pretty;
+}
+.health-state.is-skel {
+  gap: 6px;
+}
+
+/* ---------------- Freshness and limits ---------------- */
+.health-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: var(--ui-s-5);
+  font-size: var(--ui-t-sm);
+  color: var(--ui-ink-2);
+}
+.health-fresh,
+.health-meta-line {
+  margin: 0;
+  max-width: 100ch;
+  text-wrap: pretty;
+}
+.health-fresh {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 8px;
+}
+.health-refresh {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.ui-app .health-refresh svg.lucide {
+  width: 13px;
+  height: 13px;
+}
+.health-refresh .is-spinning {
+  animation: ui-spin 0.9s linear infinite;
+}
+
+/* ---------------- (i) help ---------------- */
+.health-help {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin: -2px 0;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--ui-ink-3);
+  vertical-align: middle;
+  cursor: pointer;
+  transition: color var(--ui-dur-fast) ease, background-color var(--ui-dur-fast) ease;
+}
+.health-help:hover,
+.health-help[data-state="open"] {
+  color: var(--ui-ink);
+  background: var(--ui-hover);
+}
+:root[data-ui="app"] .health-help svg {
+  width: 15px;
+  height: 15px;
+}
+/* Touch: a 44 px target around the 22 px icon, without moving the line. */
+@media (max-width: 767px) {
+  .health-help::after {
+    content: "";
+    position: absolute;
+    inset: -11px;
+  }
+}
+.health-pop {
+  z-index: var(--ui-z-menu);
+  max-width: min(22rem, calc(100vw - 2rem));
+  padding: var(--ui-s-3) var(--ui-s-4);
+  border-radius: var(--ui-r-md);
+  background: var(--ui-panel);
+  color: var(--ui-ink);
+  box-shadow: var(--ui-shadow-menu);
+  font-family: var(--ui-font-ui);
+  font-size: var(--ui-t-sm);
+  line-height: 1.55;
+  transform-origin: var(--radix-popover-content-transform-origin);
+}
+.health-pop[data-state="open"] {
+  animation: ui-fade-in var(--ui-dur-fast) var(--ui-ease-out);
+}
+.health-pop-title {
+  margin: 0 0 4px;
+  font-weight: var(--ui-w-strong);
+}
+.health-pop-body {
+  margin: 0;
+  color: var(--ui-ink-2);
+  text-wrap: pretty;
+}
+.health-pop-example {
+  display: block;
+  margin-top: var(--ui-s-2);
+  padding: 4px 8px;
+  border-radius: var(--ui-r-sm);
+  background: var(--ui-sunken);
+  font-size: var(--ui-t-xs);
+  overflow-wrap: anywhere;
+}
+
+/* ---------------- Section head ---------------- */
+.health-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.health-section .ui-section-tools {
+  align-items: center;
+}
+.health-search {
+  width: 260px;
+}
+.health-search .ui-input {
+  border-radius: var(--ui-r-pill);
+  padding-left: 14px;
+  height: var(--ui-control-sm);
+}
+
+/* ---------------- Text bits ---------------- */
+.health-inline-link {
+  color: var(--ui-accent-ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+  text-decoration-color: color-mix(in oklab, currentColor 40%, transparent);
+  transition: text-decoration-color var(--ui-dur-fast) ease;
+}
+.ui-table a.health-inline-link {
+  color: var(--ui-accent-ink);
+  font-weight: var(--ui-w-medium);
+  text-decoration: underline;
+}
+.health-inline-link:hover {
+  text-decoration-color: currentColor;
+}
+.ui-app .health-inline-icon,
+.ui-dialog .health-inline-icon {
+  display: inline-block;
+  width: 13px;
+  height: 13px;
+  margin: 0 3px;
+  vertical-align: -1px;
+}
+.health-break {
+  overflow-wrap: anywhere;
+}
+.health-quiet {
+  color: var(--ui-ink-2);
+  font-size: var(--ui-t-sm);
+}
+.health-ok {
+  color: var(--ui-good);
+  font-size: var(--ui-t-sm);
+  font-weight: var(--ui-w-medium);
+}
+.health-slug {
+  font-weight: var(--ui-w-medium);
+  color: var(--ui-ink);
+  overflow-wrap: anywhere;
+}
+.health-phone-label {
+  display: none;
+}
+
+/* ---------------- Tables ---------------- */
+.health-table {
+  table-layout: fixed;
+}
+.health-table td {
+  height: auto;
+  padding-top: 10px;
+  padding-bottom: 10px;
+  vertical-align: top;
+  line-height: 1.45;
+}
+.health-table td.health-c-act {
+  padding-top: 5px;
+  padding-bottom: 5px;
+}
+.health-table .ui-badge {
+  vertical-align: 1px;
+}
+.health-acts {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+}
+.health-acts > .ui-button[data-variant="secondary"] {
+  margin-right: 4px;
+}
+.health-open {
+  margin-right: 8px;
+  font-size: var(--ui-t-sm);
+}
+
+/* Destinations */
+.health-dest-table .health-c-state {
+  width: 220px;
+}
+.health-dest-table .health-c-checked {
+  width: 150px;
+}
+.health-dest-table .health-c-act {
+  width: 300px;
+}
+.health-dest-link {
+  display: block;
+  min-width: 0;
+}
+.ui-table a.health-dest-link {
+  font-weight: inherit;
+}
+.health-url {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.health-url-host {
+  color: var(--ui-ink);
+  font-weight: var(--ui-w-medium);
+}
+.health-url-rest {
+  color: var(--ui-ink-2);
+}
+.health-ends {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  margin-top: 2px;
+  font-size: var(--ui-t-xs);
+  color: var(--ui-ink-3);
+}
+.health-ends .health-inline-icon {
+  flex: none;
+  margin-left: 0;
+}
+.health-ends-url {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.health-used {
+  display: block;
+  margin-top: 4px;
+  font-size: var(--ui-t-sm);
+  color: var(--ui-ink-3);
+  overflow-wrap: anywhere;
+}
+.ui-table a.health-used-link {
+  color: var(--ui-ink-2);
+  font-weight: var(--ui-w-medium);
+}
+.health-finding {
+  display: block;
+  margin-top: 4px;
+  font-size: var(--ui-t-sm);
+  color: var(--ui-ink-2);
+  text-wrap: pretty;
+}
+.health-checked-at {
+  display: block;
+  color: var(--ui-ink);
+}
+.health-checked-ms {
+  display: block;
+  font-size: var(--ui-t-sm);
+  color: var(--ui-ink-2);
+}
+.health-act-quiet[data-variant="ghost"] {
+  padding: 0 10px;
+}
+
+/* Misses */
+.health-miss-table .health-c-hits {
+  width: 132px;
+}
+.health-miss-table .health-c-bots {
+  width: 84px;
+}
+.health-miss-table .health-c-seen {
+  width: 96px;
+  white-space: nowrap;
+}
+.health-miss-table .health-c-why {
+  width: 200px;
+}
+.health-miss-table .health-c-act {
+  width: 196px;
+}
+.health-ignored-table .health-c-seen {
+  width: 130px;
+}
+.health-ignored-table .health-c-act {
+  width: 230px;
+}
+.health-live-table .health-c-time {
+  width: 150px;
+  white-space: nowrap;
+  color: var(--ui-ink-2);
+}
+.health-live-table .health-c-as {
+  width: 190px;
+}
+.health-live-table .health-c-device {
+  width: 34%;
+  color: var(--ui-ink-2);
+}
+
+/* Toolbar over a table: filters left, actions right. */
+.health-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ui-s-2) var(--ui-s-4);
+  margin-bottom: var(--ui-s-3);
+}
+.health-toolbar-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ui-s-2) var(--ui-s-5);
+  font-size: var(--ui-t-sm);
+}
+.health-toolbar-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ui-s-2);
+  margin-left: auto;
+}
+
+/* Loading rows */
+.health-rows-skel {
+  border-top: 1px solid var(--ui-line-strong);
+}
+.health-row-skel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ui-s-4);
+  height: 52px;
+  border-bottom: 1px solid var(--ui-line);
+}
+.health-states + .health-rows-skel,
+.ui-kpis + .health-rows-skel {
+  margin-top: var(--ui-s-6);
+}
+
+/* ---------------- Dialog forms ---------------- */
+.health-form {
+  display: flex;
+  flex-direction: column;
+}
+.health-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ui-s-2);
+  padding: var(--ui-s-4) 0;
+  border-top: 1px solid var(--ui-line);
+}
+.health-group:first-child {
+  padding-top: var(--ui-s-1);
+  border-top: 0;
+}
+.health-group:last-child {
+  padding-bottom: 0;
+}
+.health-group-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-weight: var(--ui-w-medium);
+}
+.health-group-note {
+  margin: 0;
+  max-width: 72ch;
+  font-size: var(--ui-t-sm);
+  color: var(--ui-ink-2);
+  text-wrap: pretty;
+}
+.health-group .ui-notice {
+  margin-top: var(--ui-s-1);
+}
+.health-seg {
+  align-self: flex-start;
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.health-every {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--ui-s-3);
+}
+.health-every-n {
+  width: 120px;
+}
+.health-every-unit {
+  width: 140px;
+}
+.health-limit {
+  max-width: 260px;
+}
+
+/* Fix dialog: facts, then four ways out under 1 px rules. */
+.health-facts {
+  display: grid;
+  gap: var(--ui-s-2);
+  margin: 0 0 var(--ui-s-4);
+  font-size: var(--ui-t-sm);
+}
+.health-facts > div {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: var(--ui-s-3);
+}
+.health-facts dt {
+  color: var(--ui-ink-3);
+  font-weight: var(--ui-w-medium);
+}
+.health-facts dd {
+  margin: 0;
+  min-width: 0;
+}
+.health-facts .health-ends {
+  display: block;
+  margin-top: 4px;
+}
+.health-fixes {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.health-fixes > li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ui-s-2) var(--ui-s-4);
+  padding: var(--ui-s-3) 0;
+  border-top: 1px solid var(--ui-line);
+}
+.health-fix-text {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+.health-fix-title {
+  margin: 0;
+  font-weight: var(--ui-w-medium);
+}
+.health-fix-desc {
+  margin: 2px 0 0;
+  font-size: var(--ui-t-sm);
+  color: var(--ui-ink-2);
+  text-wrap: pretty;
+}
+.health-fix-act {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ui-s-2);
+}
+.health-fix-pick {
+  flex: 0 1 340px;
+  flex-wrap: nowrap;
+  align-items: center;
+}
+.health-picker {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.health-picker .ui-select select {
+  height: var(--ui-control-sm);
+}
+
+/* Ignore dialog: two choices under rules, the chosen one's extra field under it. */
+.health-choices {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+.health-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--ui-s-3);
+  padding: var(--ui-s-3) 0;
+  cursor: pointer;
+}
+.health-choice-wrap,
+.health-choices > .health-choice + .health-choice {
+  border-top: 1px solid var(--ui-line);
+}
+.health-choice input {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 3px 0 0;
+  accent-color: var(--ui-accent-fill);
+  cursor: pointer;
+}
+.health-choice-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.health-choice-title {
+  font-weight: var(--ui-w-medium);
+}
+.health-choice-desc {
+  font-size: var(--ui-t-sm);
+  color: var(--ui-ink-2);
+}
+.health-choice-more {
+  padding: 0 0 var(--ui-s-3) calc(16px + var(--ui-s-3));
+}
+
+/* ---------------- Narrower screens ---------------- */
+/* Beside the sidebar the content is ~760–1100 px: row actions keep their
+   icons and names (as titles and for screen readers), not their words. */
+@media (max-width: 1279px) and (min-width: 768px) {
+  .health-act-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .health-act-quiet[data-variant="ghost"] {
+    width: var(--ui-control-sm);
+    padding: 0;
+  }
+  .health-dest-table .health-c-act {
+    width: 170px;
+  }
+  .health-dest-table .health-c-state {
+    width: 190px;
+  }
+}
+@container health-sec (min-width: 700px) and (max-width: 820px) {
+  .health-dest-table .health-c-checked {
+    display: none;
+  }
+}
+@container health-sec (min-width: 700px) and (max-width: 940px) {
+  .health-miss-table .health-c-hits {
+    width: 96px;
+  }
+  .health-miss-table .health-c-bots {
+    width: 64px;
+  }
+  .health-miss-table .health-c-why {
+    width: 150px;
+  }
+  .health-miss-table .health-c-seen {
+    display: none;
+  }
+  .health-live-table .health-c-device {
+    display: none;
+  }
+}
+
+/* ---------------- Phones ---------------- */
+@media (max-width: 767px) {
+  .health-tabs {
+    margin-bottom: var(--ui-s-4);
+  }
+  .health-tabs .ui-tablist {
+    gap: var(--ui-s-5);
+  }
+  .health-section .ui-section-tools {
+    width: 100%;
+  }
+  .health-search {
+    flex: 1 1 100%;
+    width: auto;
+  }
+  .health-search .ui-input {
+    height: var(--ui-touch);
+  }
+  .health-toolbar-acts {
+    margin-left: 0;
+  }
+}
+
+/* Rows become entries when the section is narrow (phones, and tablets
+   beside the sidebar): a size container, so the columns never crush. */
+.health-section {
+  container: health-sec / inline-size;
+}
+@container health-sec (max-width: 699px) {
+  .health-phone-label {
+    display: inline;
+  }
+
+  .health-table {
+    display: block;
+    table-layout: auto;
+  }
+  .health-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .health-table tbody {
+    display: block;
+  }
+  .health-table tbody tr {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px var(--ui-s-3);
+    padding: var(--ui-s-3) 2px;
+    border-bottom: 1px solid var(--ui-line);
+  }
+  .health-table.health-table tbody td {
+    display: block;
+    width: auto;
+    height: auto;
+    padding: 0;
+    border: 0;
+  }
+  .health-table tbody td:first-child,
+  .health-table tbody td[data-title] {
+    flex: 1 1 0;
+    min-width: 0;
+    padding-left: 0;
+  }
+  .health-table tbody td.health-c-act {
+    flex: 1 1 100%;
+    padding: 4px 0 0;
+  }
+  .health-acts {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    gap: var(--ui-s-2);
+  }
+  .health-acts > .ui-button[data-variant="secondary"] {
+    margin-right: 0;
+  }
+
+  /* Destinations: the URL and its links, then state, last check, actions. */
+  .health-dest-table tbody td.health-c-dest {
+    flex: 1 1 100%;
+  }
+  .health-dest-table tbody td.health-c-state,
+  .health-dest-table tbody td.health-c-checked {
+    flex: 1 1 100%;
+  }
+  .health-dest-table tbody td.health-c-checked.is-never {
+    display: none;
+  }
+  .health-dest-table .health-finding {
+    display: inline;
+    margin: 0 0 0 6px;
+  }
+  .health-dest-table .health-checked-at,
+  .health-dest-table .health-checked-ms {
+    display: inline;
+    font-size: var(--ui-t-sm);
+    color: var(--ui-ink-2);
+  }
+  .health-dest-table .health-checked-ms::before {
+    content: " · ";
+  }
+  .health-dest-table .health-checked-at + .health-checked-ms::before {
+    content: " · ";
+  }
+  .health-dest-table .health-checked-ms:only-child::before {
+    content: none;
+  }
+  .health-dest-table .health-acts .ui-button {
+    height: var(--ui-touch);
+  }
+  .health-dest-table .health-acts .ui-icon-button {
+    width: var(--ui-touch);
+  }
+
+  /* Misses: slug + human visits on line 1; bots, last seen, why on line 2. */
+  .health-miss-table tbody td.health-c-num[data-lead] {
+    flex: none;
+    text-align: right;
+    font-size: var(--ui-t-base);
+  }
+  .health-miss-table tbody td.health-c-num[data-label],
+  .health-miss-table tbody td.health-c-seen {
+    order: 4;
+    font-family: var(--ui-font-ui);
+    font-size: var(--ui-t-sm);
+    font-weight: var(--ui-w-body);
+    color: var(--ui-ink-2);
+    text-align: left;
+  }
+  .health-miss-table tbody tr::after {
+    content: "";
+    order: 3;
+    flex-basis: 100%;
+    height: 0;
+  }
+  .health-miss-table tbody td.health-c-why {
+    order: 4;
+  }
+  .health-miss-table tbody td.health-c-act {
+    order: 5;
+  }
+  .health-miss-table .ui-icon-button,
+  .health-ignored-table .ui-button {
+    min-width: var(--ui-touch);
+  }
+
+  .health-ignored-table tbody td.health-c-seen {
+    flex: none;
+    font-size: var(--ui-t-sm);
+    color: var(--ui-ink-2);
+  }
+
+  .health-live-table tbody td.health-c-time {
+    order: 4;
+    font-size: var(--ui-t-sm);
+  }
+  .health-live-table tbody td.health-c-as {
+    flex: none;
+  }
+  .health-live-table tbody td.health-c-device {
+    order: 4;
+    font-size: var(--ui-t-sm);
+  }
+  .health-live-table tbody tr::after {
+    content: "";
+    order: 3;
+    flex-basis: 100%;
+    height: 0;
+  }
+
+  .health-live-table tbody td.health-c-device::before {
+    content: "· ";
+  }
+  .health-act-label {
+    position: static;
+    width: auto;
+    height: auto;
+    overflow: visible;
+    clip-path: none;
+  }
+  .health-act-quiet[data-variant="ghost"] {
+    width: auto;
+    padding: 0 10px;
+  }
+}
+
+/* Phones: 44 px targets in dialogs and rows. */
+@media (max-width: 767px) {
+  .health-open {
+    display: inline-flex;
+    align-items: center;
+    min-height: var(--ui-touch);
+  }
+  .health-fix-pick {
+    flex: 1 1 100%;
+  }
+  .health-picker .ui-select select {
+    height: var(--ui-touch);
+  }
+  .health-facts > div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
+  .health-choice {
+    min-height: var(--ui-touch);
+  }
+  .health-choice input {
+    width: 20px;
+    height: 20px;
+    margin-top: 1px;
+  }
+  .health-choice-more {
+    padding-left: calc(20px + var(--ui-s-3));
+  }
+}

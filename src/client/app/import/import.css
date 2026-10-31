@@ -1,0 +1,281 @@
+/* Import links (import/Import.tsx). Prefix import-. Tokens only; loaded with the shell. */
+
+.import-source {
+  margin-bottom: var(--ui-s-4);
+}
+
+/* The file picker is a control, so it may be boxed: a dashed control edge,
+   the accent edge and wash while a file is dragged over it, the focus ring
+   when its (hidden) input has keyboard focus. */
+.import-drop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: var(--ui-s-6);
+  padding: var(--ui-s-6) var(--ui-s-5);
+  border: 1px dashed var(--ui-line-control);
+  border-radius: var(--ui-r-md);
+  text-align: center;
+  cursor: pointer;
+  transition: border-color var(--ui-dur-fast) ease, background-color var(--ui-dur-fast) ease;
+}
+.import-drop:hover {
+  border-color: var(--ui-ink-3);
+  background: var(--ui-hover);
+}
+.import-drop.is-over {
+  border-color: var(--ui-accent);
+  background: var(--ui-accent-wash);
+}
+.import-drop:has(input:focus-visible) {
+  outline: 2px solid var(--ui-focus);
+  outline-offset: 2px;
+}
+.ui-app .import-drop-icon,
+.import-drop-icon {
+  width: 28px;
+  height: 28px;
+  margin-bottom: var(--ui-s-1);
+  color: var(--ui-ink-3);
+}
+.import-drop.is-over .import-drop-icon {
+  color: var(--ui-accent-ink);
+}
+.import-drop-title {
+  font-weight: var(--ui-w-medium);
+  color: var(--ui-ink);
+  overflow-wrap: anywhere;
+}
+.import-drop.has-file .import-drop-title {
+  font-family: var(--ui-font-display);
+  font-size: var(--ui-t-md);
+  font-weight: var(--ui-w-strong);
+}
+.import-drop-sub {
+  max-width: 56ch;
+  font-size: var(--ui-t-sm);
+  color: var(--ui-ink-2);
+  text-wrap: pretty;
+}
+
+/* ---------------- Format help ---------------- */
+.import-code {
+  margin: 0 0 var(--ui-s-3);
+  padding: var(--ui-s-3) var(--ui-s-4);
+  overflow-x: auto;
+  border-radius: var(--ui-r-md);
+  background: var(--ui-sunken);
+  color: var(--ui-ink);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: var(--ui-t-xs);
+  line-height: 1.7;
+}
+.import-list {
+  margin: 0;
+  padding-left: 1.2em;
+  list-style: disc;
+  max-width: 80ch;
+  font-size: var(--ui-t-sm);
+  color: var(--ui-ink-2);
+}
+.import-list li + li {
+  margin-top: 6px;
+}
+.import-list strong {
+  color: var(--ui-ink);
+  font-weight: var(--ui-w-strong);
+}
+:is(.import-list, .import-text) code {
+  padding: 1px 4px;
+  border-radius: var(--ui-r-sm);
+  background: var(--ui-sunken);
+  color: var(--ui-ink);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.92em;
+}
+
+/* ---------------- Mapping ---------------- */
+.import-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--ui-s-4) var(--ui-s-5);
+}
+.import-grid.is-two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.import-group {
+  margin-top: var(--ui-s-5);
+  padding-top: var(--ui-s-4);
+  border-top: 1px solid var(--ui-line);
+}
+.import-h3 {
+  margin: 0 0 var(--ui-s-2);
+  font-family: var(--ui-font-display);
+  font-size: var(--ui-t-md);
+  font-weight: var(--ui-w-strong);
+}
+.import-h3-note {
+  font-family: var(--ui-font-ui);
+  font-size: var(--ui-t-sm);
+  font-weight: var(--ui-w-body);
+  color: var(--ui-ink-2);
+}
+.import-text {
+  margin: 0 0 var(--ui-s-4);
+  max-width: 72ch;
+  font-size: var(--ui-t-sm);
+  color: var(--ui-ink-2);
+  text-wrap: pretty;
+}
+.import-notice {
+  margin-top: var(--ui-s-4);
+}
+.import-notice a {
+  color: var(--ui-accent-ink);
+  text-underline-offset: 3px;
+}
+.import-preview td,
+.import-result-table td {
+  max-width: 0;
+}
+.import-slug {
+  width: 32%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--ui-w-medium);
+}
+.import-target {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ui-ink-2);
+}
+.import-preview .is-num {
+  width: 90px;
+}
+.ui-table td.is-num.import-none {
+  color: var(--ui-ink-3);
+  font-weight: var(--ui-w-medium);
+}
+.import-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ui-s-2) var(--ui-s-3);
+  margin-top: var(--ui-s-5);
+}
+.import-progress {
+  display: flex;
+  flex: 1 1 200px;
+  align-items: center;
+  gap: var(--ui-s-2);
+  max-width: 360px;
+  font-size: var(--ui-t-sm);
+  color: var(--ui-ink-2);
+}
+.import-progress-track {
+  position: relative;
+  flex: 1 1 auto;
+  height: 6px;
+  overflow: hidden;
+  border-radius: var(--ui-r-pill);
+  background: var(--ui-bar-track);
+}
+.import-progress-bar {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: inherit;
+  background: var(--ui-accent);
+  transition: width var(--ui-dur-slow) var(--ui-ease-move);
+}
+.import-progress-n,
+.import-count {
+  font-variant-numeric: tabular-nums;
+  font-size: var(--ui-t-sm);
+  color: var(--ui-ink-2);
+}
+
+/* ---------------- Pull from an API ---------------- */
+.import-pull {
+  margin-bottom: var(--ui-s-6);
+}
+.import-check {
+  margin-top: var(--ui-s-4);
+}
+
+/* ---------------- Result ---------------- */
+.import-pill .ui-select select {
+  width: auto;
+  border-radius: var(--ui-r-pill);
+  padding-left: 14px;
+}
+.import-results {
+  max-height: 24rem;
+  overflow: auto;
+  margin-top: var(--ui-s-3);
+  overscroll-behavior: contain;
+  border-radius: var(--ui-r-sm);
+}
+.import-results .ui-table-scroll {
+  overflow: visible;
+}
+.import-results thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--ui-canvas);
+}
+.import-result-table th:nth-child(2) {
+  width: 110px;
+}
+.import-msg {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ui-ink-2);
+}
+
+/* ---------------- Tablet ---------------- */
+@media (max-width: 1023px) {
+  .import-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* ---------------- Phone ---------------- */
+@media (max-width: 767px) {
+  .import-source .ui-segmented {
+    display: flex;
+    width: 100%;
+  }
+  .import-source .ui-segmented-opt {
+    flex: 1;
+  }
+  .import-drop {
+    padding: var(--ui-s-5) var(--ui-s-4);
+    margin-bottom: var(--ui-s-5);
+  }
+  .import-grid,
+  .import-grid.is-two {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .import-actions .ui-button {
+    flex: 1 1 auto;
+  }
+  .import-progress {
+    flex-basis: 100%;
+    max-width: none;
+  }
+  .import-slug {
+    width: 45%;
+  }
+  /* The note wraps under a short row instead of being cut. */
+  .import-msg {
+    white-space: normal;
+  }
+  .import-result-table th:nth-child(2) {
+    width: 96px;
+  }
+}

@@ -6,7 +6,7 @@ import { LINK_ACCESS_HOURS, LINK_PASSWORD_MAX, LINK_PASSWORD_MIN, MAX_CLICK_LIMI
 import { api, call, keys } from "../api";
 import { num } from "../lib/format";
 import { cn, copy } from "../lib/utils";
-import { Button, Input, Switch } from "./ui";
+import { Button, ConfirmDialog, Input, Switch } from "./ui";
 
 export type PasswordMode = "keep" | "set" | "remove";
 
@@ -21,15 +21,18 @@ function suggestPassword(): string {
 /** A capped link's counter, with a reset. */
 function CapCounter({ domain, slug, limit }: { domain: string; slug: string; limit: number }) {
   const qc = useQueryClient();
+  const [confirming, setConfirming] = useState(false);
   const q = useQuery({ queryKey: keys.cap(domain, slug), queryFn: () => call(api.links[":domain"][":slug"].cap.$get({ param: { domain, slug } })) });
   const reset = useMutation({
     mutationFn: () => call(api.links[":domain"][":slug"].cap.reset.$post({ param: { domain, slug } })),
     onSuccess: (r) => {
+      setConfirming(false);
       qc.setQueryData(keys.cap(domain, slug), r);
       toast.success("Click count reset", { description: `The link opens ${num(limit)} more times.` });
     },
     onError: (e) => toast.error(e.message),
   });
+  if (q.isError && !q.data) return <p className="text-xs text-muted">The visit count couldn’t load. <button type="button" className="text-accent underline" onClick={() => void q.refetch()}>Try again</button></p>;
   if (!q.data) return null;
   const used = Math.min(q.data.count, limit);
   return (
@@ -38,10 +41,20 @@ function CapCounter({ domain, slug, limit }: { domain: string; slug: string; lim
         <span className="text-muted">
           <span className="font-medium text-fg tabular">{num(q.data.count)}</span> of {num(limit)} used{q.data.count >= limit ? " · visitors now see the “limit reached” page" : ""}
         </span>
-        <button type="button" className="inline-flex items-center gap-1 font-medium text-accent hover:underline disabled:opacity-50" onClick={() => reset.mutate()} disabled={reset.isPending || q.data.count === 0}>
+        <button type="button" className="inline-flex items-center gap-1 font-medium text-accent hover:underline disabled:opacity-50" onClick={() => setConfirming(true)} disabled={reset.isPending || q.data.count === 0}>
           <RotateCcw className="size-3" /> Reset count
         </button>
       </div>
+      <ConfirmDialog
+        open={confirming}
+        onOpenChange={setConfirming}
+        title="Reset the visit count?"
+        description={`The count goes back to 0 and the link opens ${num(limit)} more times. The visits already counted stay in your statistics.`}
+        confirmLabel="Reset count"
+        tone="primary"
+        loading={reset.isPending}
+        onConfirm={() => reset.mutate()}
+      />
       <div className="h-1.5 overflow-hidden rounded-full bg-surface-2" aria-hidden>
         <div className={cn("h-full rounded-full", used >= limit ? "bg-danger" : "bg-accent")} style={{ width: `${(used / limit) * 100}%` }} />
       </div>

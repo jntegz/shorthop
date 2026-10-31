@@ -1,8 +1,12 @@
-import { ChevronDown, Link2, MessageSquareText, ShieldCheck, Split } from "lucide-react";
+import { ChevronDown, Link2, MessageSquareText, ShieldCheck, Sparkles, Split } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router";
 import { toast } from "sonner";
+import { checkoutProvider } from "../../shared/checkout";
+import { DEFAULT_BIO, validateBio, type BioPage } from "../../shared/bio";
+import { BioEditor } from "./BioEditor";
+import { PROVIDER_INFO } from "../../shared/sites";
 import { validateSlug } from "../../shared/slug";
 import { validatePreview, type LinkPreview } from "../../shared/preview";
 import { linkPasswordProblem, MAX_CLICK_LIMIT } from "../../shared/protection";
@@ -12,14 +16,14 @@ import type { LinkDTO } from "../../shared/types";
 import { api, call, keys, linkFromError } from "../api";
 import { fromLocalInput, toLocalInput } from "../lib/format";
 import { LINK_HELP } from "../lib/help";
-import { linkKey, linkState, useDomains, useLinkLabel } from "../lib/links";
+import { linkKey, linkPath, linkState, useDomains, useLinkLabel } from "../lib/links";
 import { useCan, useMe } from "../lib/me";
 import { cn, copy } from "../lib/utils";
 import { LinkProtection, type PasswordMode } from "./LinkProtection";
 import { LinkUtm } from "./LinkUtm";
 import { PreviewEditor } from "./PreviewEditor";
 import { RoutingEditor } from "./RoutingEditor";
-import { Button, Dialog, Field, InfoTip, Input, Segmented, Select, Switch, Textarea } from "./ui";
+import { Button, Combobox, Dialog, Field, InfoTip, Input, Segmented, Select, Switch, Textarea } from "./ui";
 
 interface Props {
   open: boolean;
@@ -30,6 +34,11 @@ interface Props {
   initialSlug?: string;
   /** Prefill the domain when creating; defaults to the primary domain. */
   initialDomain?: string;
+  /** Prefill the destination and title when creating (the bookmarklet, sharing to the admin). */
+  initialTarget?: string;
+  initialTitle?: string;
+  /** Creating only: open as a link-in-bio page instead of a redirect. */
+  asBio?: boolean;
   onSaved?: (link: LinkDTO) => void;
   /** Editing only: open with "Link no longer working" switched on (from a failed destination check). */
   markBroken?: boolean;
@@ -68,14 +77,16 @@ interface FormState {
   password: string;
   capOn: boolean;
   maxClicks: string;
+  /** A link-in-bio page instead of a redirect; null for an ordinary link. */
+  bio: BioPage | null;
 }
 
-function initial(link?: LinkDTO, slug = "", domain = ""): FormState {
+function initial(link?: LinkDTO, slug = "", domain = "", target = "", title = ""): FormState {
   return {
     domain: link?.domain ?? domain,
-    target: link?.target ?? "",
+    target: link?.target ?? target,
     slug: link?.slug ?? slug,
-    title: link?.title ?? "",
+    title: link?.title ?? title.slice(0, 300),
     tags: link?.tags.join(", ") ?? "",
     notes: link?.notes ?? "",
     expires: toLocalInput(link?.expiresAt ?? null),
@@ -96,33 +107,45 @@ function initial(link?: LinkDTO, slug = "", domain = ""): FormState {
     password: "",
     capOn: Boolean(link?.maxClicks),
     maxClicks: link?.maxClicks ? String(link.maxClicks) : "100",
+    bio: link?.bio ?? null,
   };
 }
 
-export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain, onSaved, markBroken }: Props) {
+export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain, initialTarget, initialTitle, asBio, onSaved, markBroken }: Props) {
   const qc = useQueryClient();
   const editing = Boolean(link);
   const { domains, primary, multiple } = useDomains();
   const label = useLinkLabel();
   const manageSettings = useCan()("settings.manage");
   const checkAll = useMe().data?.workspace.checkScope === "all";
-  const [f, setF] = useState<FormState>(() => initial(link, initialSlug, initialDomain));
+  const fallbackUrl = useMe().data?.workspace.fallbackUrl ?? "";
+  const [f, setF] = useState<FormState>(() => initial(link, initialSlug, initialDomain, initialTarget, initialTitle));
   const [touched, setTouched] = useState(false);
   const [advanced, setAdvanced] = useState(false);
   const [routingOpen, setRoutingOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [protectionOpen, setProtectionOpen] = useState(false);
+  /** A flagged destination the owner trusts: visitors aren't warned. */
+  const [trust, setTrust] = useState(link?.unsafe === "trusted");
+  useEffect(() => {
+    if (open) setTrust(link?.unsafe === "trusted");
+  }, [open, link]);
 
   useEffect(() => {
     if (open) {
-      setF({ ...initial(link, initialSlug, initialDomain), ...(link && markBroken ? { broken: true } : {}) });
+      const start = initial(link, initialSlug, initialDomain, initialTarget, initialTitle);
+      setF({
+        ...start,
+        ...(link && markBroken ? { broken: true } : {}),
+        ...(!link && asBio ? { bio: { ...DEFAULT_BIO, name: start.title }, target: start.target || fallbackUrl } : {}),
+      });
       setTouched(false);
       setAdvanced(Boolean(link));
       setRoutingOpen(Boolean(link?.routing));
       setPreviewOpen(false);
       setProtectionOpen(false);
     }
-  }, [open, link, initialSlug, initialDomain, markBroken]);
+  }, [open, link, initialSlug, initialDomain, initialTarget, initialTitle, asBio, markBroken]);
 
   const domain = f.domain || primary;
 
@@ -145,6 +168,29 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
     utmTemplate: f.utm && f.utmCustom ? (f.utmProblem ?? (f.utmTemplate ? validateUtmTemplate(f.utmTemplate) : "Fill in at least one parameter.")) : null,
     replacement: editing && f.broken && f.deadEnd === "link" && !f.replacement ? "Pick the link to send visitors to, or choose Error page." : null,
   };
+  // Other links already going to this destination: a warning, never a block.
+  const normalizedTarget = targetCheck?.ok ? targetCheck.url : "";
+  const [lookupTarget, setLookupTarget] = useState("");
+  useEffect(() => {
+    const t = setTimeout(() => setLookupTarget(normalizedTarget), 400);
+    return () => clearTimeout(t);
+  }, [normalizedTarget]);
+  const sameTarget = useQuery({
+    queryKey: [...keys.allLinks, "by-target", lookupTarget],
+    queryFn: () => call(api.links["by-target"].$get({ query: { url: lookupTarget } })),
+    enabled: open && Boolean(lookupTarget) && lookupTarget !== link?.target,
+    staleTime: 60_000,
+  });
+  const checkout = checkoutHint(normalizedTarget);
+  const aiOn = useMe().data?.workspace.aiAvailable ?? false;
+  const suggest = useMutation({
+    mutationFn: (url: string) => call(api.previews.ai.slug.$post({ json: { url } })),
+    onSuccess: (r) => {
+      if (!r.slugs.length) toast.info("No slug ideas this time. Try again, or type your own.");
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  const duplicates = (sameTarget.data?.links ?? []).filter((l) => !(link && l.domain === link.domain && l.slug === link.slug));
   const routingCheck = f.rules.length ? validateRouting({ rules: f.rules }, { selfHosts: domains }) : null;
   const routingErrors = routingCheck && !routingCheck.ok ? routingCheck.errors : [];
   const previewCheck = f.preview ? validatePreview(f.preview) : null;
@@ -152,12 +198,18 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
   const passwordError = f.passwordMode === "set" ? linkPasswordProblem(f.password) : null;
   const capNumber = Number(f.maxClicks);
   const capError = f.capOn && (!Number.isInteger(capNumber) || capNumber < 1 || capNumber > MAX_CLICK_LIMIT) ? `Enter a whole number from 1 to ${MAX_CLICK_LIMIT.toLocaleString("en")}.` : null;
+  const bioCheck = f.bio ? validateBio(f.bio) : null;
+  const bioProblems = bioCheck && !bioCheck.ok ? bioCheck.problems.map((p) => p.message) : [];
   const valid =
+    bioProblems.length === 0 &&
     !errors.target && !errors.slug && !errors.utmTemplate && !errors.replacement && routingErrors.length === 0 && previewProblems.length === 0 && !passwordError && !capError;
 
   const save = useMutation({
     mutationFn: async () => {
       const body = {
+        ...(link?.unsafe && f.target.trim() === link.target ? { trustDestination: trust } : {}),
+        // On create a redirect sends nothing; on edit, null turns a bio page back into a redirect.
+        ...(f.bio || editing ? { bio: f.bio } : {}),
         target: f.target.trim(),
         title: f.title.trim() || null,
         tags: f.tags,
@@ -220,12 +272,34 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
     <Dialog
       open={open}
       onOpenChange={onOpenChange}
-      title={link ? `Edit ${label(link)}` : "Create a new link"}
-      description={editing ? "Update your destination and link preferences." : "A shorter link. A lasting connection."}
-      wide={(routingOpen && f.rules.length) || (previewOpen && f.preview) ? "xl" : true}
+      title={link ? `Edit ${label(link)}` : f.bio ? "Create a bio page" : "Create a new link"}
+      description={editing ? "Update your destination and link preferences." : f.bio ? "A page of buttons at one short address, for a profile or a bio." : "A shorter link. A lasting connection."}
+      wide={(routingOpen && f.rules.length) || (previewOpen && f.preview) || f.bio ? "xl" : true}
     >
       <form onSubmit={submit} className="space-y-4" noValidate>
-        <Field label="Destination URL" htmlFor="target" hint="Where should this link take people?" info={LINK_HELP.target} error={touched || f.target ? errors.target : null}>
+        <Segmented<"redirect" | "bio">
+          label="Link type"
+          value={f.bio ? "bio" : "redirect"}
+          onChange={(t) =>
+            setF((s) =>
+              t === "bio"
+                ? { ...s, bio: s.bio ?? { ...DEFAULT_BIO, name: s.title }, target: s.target || fallbackUrl }
+                : { ...s, bio: null },
+            )
+          }
+          options={[
+            { value: "redirect", label: "Redirect" },
+            { value: "bio", label: "Bio page" },
+          ]}
+        />
+        {f.bio ? <BioEditor value={f.bio} onChange={(b) => set("bio", b)} domain={domain} slug={f.slug} problems={touched ? bioProblems : []} /> : null}
+        <Field
+          label={f.bio ? "Fallback address" : "Destination URL"}
+          htmlFor="target"
+          hint={f.bio ? "Where anything that can't show the page goes, such as an older Worker." : "Where should this link take people?"}
+          info={LINK_HELP.target}
+          error={touched || f.target ? errors.target : null}
+        >
           <Input
             id="target"
             type="url"
@@ -237,6 +311,29 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
             value={f.target}
             onChange={(e) => set("target", e.target.value)}
           />
+          {checkout ? <p className="mt-1.5 text-xs text-muted">{checkout}</p> : null}
+          {link?.unsafe && f.target.trim() === link.target ? (
+            <div className="mt-2 rounded-md border border-danger/30 bg-danger-soft px-3 py-2 text-xs text-danger">
+              Cloudflare's security service lists this destination as malware or phishing{trust ? "" : ", so visitors see a warning before going on"}.
+              <label className="mt-1.5 flex items-center gap-2 text-fg">
+                <input type="checkbox" checked={trust} onChange={(e) => setTrust(e.target.checked)} />I trust this destination: don't warn visitors
+              </label>
+            </div>
+          ) : null}
+          {duplicates.length && !errors.target ? (
+            <p className="mt-1.5 text-xs text-warn" role="status">
+              Already shortened as{" "}
+              {duplicates.slice(0, 3).map((d, i) => (
+                <span key={linkKey(d.domain, d.slug)}>
+                  {i ? ", " : ""}
+                  <Link to={linkPath(d)} className="font-medium underline underline-offset-2" onClick={() => onOpenChange(false)}>
+                    {label(d)}
+                  </Link>
+                </span>
+              ))}
+              {duplicates.length > 3 ? ` and ${duplicates.length - 3} more` : ""}. You can still create another (for example, to track a different channel).
+            </p>
+          ) : null}
         </Field>
 
         {!editing ? (
@@ -258,7 +355,7 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
             }
           >
             <Select id="domain" value={domain} onChange={(e) => set("domain", e.target.value)} disabled={!multiple}>
-              {(domains.length ? domains : [domain || "sh.example"]).map((d) => (
+              {(domains.length ? domains : [domain || "your-domain"]).map((d) => (
                 <option key={d} value={d}>
                   {d}
                 </option>
@@ -298,7 +395,28 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
                 autoComplete="off"
                 aria-invalid={Boolean(errors.slug)}
               />
+              {aiOn ? (
+                <button
+                  type="button"
+                  className="flex shrink-0 items-center gap-1 border-l border-line px-3 text-xs font-medium text-accent hover:bg-accent-soft disabled:opacity-50"
+                  disabled={!normalizedTarget || suggest.isPending}
+                  onClick={() => suggest.mutate(normalizedTarget)}
+                  title={normalizedTarget ? "Suggest slugs with Workers AI" : "Enter the destination first"}
+                >
+                  <Sparkles className="size-3.5" aria-hidden /> {suggest.isPending ? "Thinking…" : "Suggest"}
+                </button>
+              ) : null}
             </div>
+            {suggest.data?.slugs.length ? (
+              <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                <span className="text-xs text-muted">Ideas:</span>
+                {suggest.data.slugs.map((s) => (
+                  <button key={s} type="button" className="rounded-full border border-line px-2 py-0.5 font-mono text-xs hover:border-accent hover:text-accent" onClick={() => set("slug", s)}>
+                    {s}
+                  </button>
+                ))}
+              </div>
+            ) : null}
           </Field>
         ) : null}
 
@@ -441,23 +559,27 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
                   info={LINK_HELP.replacement}
                   error={touched ? errors.replacement : null}
                 >
-                  <Select id="replacement" value={f.replacement} onChange={(e) => set("replacement", e.target.value)} disabled={candidates.isPending}>
-                    <option value="">{candidates.isPending ? "Loading links…" : "Pick a link…"}</option>
-                    {f.replacement && !replacementOptions.some((l) => linkKey(l.domain, l.slug) === f.replacement) && !candidates.isPending ? (
-                      <option value={f.replacement}>{f.replacement} (deleted)</option>
-                    ) : null}
-                    {replacementOptions.map((l) => {
-                      const key = linkKey(l.domain, l.slug);
-                      const state = linkState(l);
-                      return (
-                        <option key={key} value={key}>
-                          {label(l)}
-                          {l.title ? ` · ${l.title}` : ""}
-                          {state === "active" ? "" : ` (${state === "broken" ? (l.replacement ? "replaced" : "retired") : state})`}
-                        </option>
-                      );
-                    })}
-                  </Select>
+                  <Combobox
+                    id="replacement"
+                    value={f.replacement}
+                    onChange={(v) => set("replacement", v)}
+                    disabled={candidates.isPending}
+                    placeholder={candidates.isPending ? "Loading links…" : candidates.isError && !candidates.data ? "Your links couldn’t load; close and reopen to retry" : "Search by slug or title…"}
+                    options={[
+                      ...(f.replacement && !replacementOptions.some((l) => linkKey(l.domain, l.slug) === f.replacement) && !candidates.isPending
+                        ? [{ value: f.replacement, label: f.replacement, note: "deleted" }]
+                        : []),
+                      ...replacementOptions.map((l) => {
+                        const state = linkState(l);
+                        return {
+                          value: linkKey(l.domain, l.slug),
+                          label: label(l),
+                          detail: l.title ?? undefined,
+                          note: state === "active" ? undefined : state === "broken" ? (l.replacement ? "replaced" : "retired") : state,
+                        };
+                      }),
+                    ]}
+                  />
                 </Field>
               )}
             </div>
@@ -529,4 +651,23 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
       </form>
     </Dialog>
   );
+}
+
+/** What happens to sales when a link points straight at a hosted checkout page. */
+function checkoutHint(target: string): string | null {
+  if (!target) return null;
+  let url: URL;
+  try {
+    url = new URL(target);
+  } catch {
+    return null;
+  }
+  const provider = checkoutProvider(url);
+  if (provider) {
+    return `A ${PROVIDER_INFO[provider].label} checkout: sales through it are credited to this link once ${PROVIDER_INFO[provider].label} is connected to one of your websites (Websites → Settings → Payment providers).`;
+  }
+  if (/(^|\.)paddle\.(io|com)$|(^|\.)paypal\.com$|\.onfastspring\.com$/.test(url.hostname)) {
+    return "This checkout can't carry a reference from a link, so its sales can't be credited to the link directly. Send buyers through a page of your tracked website instead.";
+  }
+  return null;
 }
