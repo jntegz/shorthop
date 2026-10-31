@@ -4,37 +4,53 @@
 [![Node 22.12+](https://img.shields.io/badge/node-%E2%89%A522.12-brightgreen.svg)](package.json)
 [![Runs on Cloudflare Workers](https://img.shields.io/badge/runs%20on-Cloudflare%20Workers-f38020.svg)](https://workers.cloudflare.com/)
 
-**Short links, website analytics and revenue attribution on your own domain, in one Cloudflare Worker you own.**
+**Short links on your own domain, and the paying customers they bring, in one Cloudflare Worker you own.**
 
-See which link, post, newsletter or AI answer brought each visitor, and each paying customer. No cookies, no IP addresses stored, no monthly bill: for most personal use it fits inside Cloudflare's free allowances.
+Put a link in a LinkedIn post or on a printed QR code, then see the clicks, the visits and the Stripe payment it led to. Shorthop runs in your own Cloudflare account, so no shortener's plan decides whether your links keep working or how much history you keep. It stores no IP addresses and sets no cookies. For most people it fits in Cloudflare's free allowances.
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/jntegz/shorthop)
-<br><sub>No terminal needed. On Cloudflare's setup page, only the admin password needs filling in. [What each field means](docs/SETUP.md#deploy-form)</sub>
+<br><sub>You don't need a terminal: Cloudflare's setup page asks only for an admin password. [What each field means](docs/SETUP.md#deploy-form) · Coming from Bitly, Rebrandly, Short.io or Dub? [Bring your links](#leaving-another-shortener)</sub>
 
-![The Shorthop overview: human clicks, daily unique visitors and bots over 30 days, compared with the previous period](docs/images/dashboard.png)
+![The Shorthop analytics home: human clicks, visitors and revenue over 30 days, the top links and their sources](docs/images/dashboard.png)
 
-[Why Shorthop](#why-shorthop) · [What's new](#whats-new-in-13) · [Features](#features) · [Screenshots](#screenshots) · [Install](#install) · [Common trip-ups](#things-new-users-commonly-trip-over) · [Documentation](#documentation) · [Costs](#costs) · [FAQ](#faq)
+[Why people switch](#why-people-switch-to-shorthop) · [What's new](#whats-new-in-20) · [Features](#features) · [Screenshots](#screenshots) · [Install](#install) · [Common trip-ups](#things-new-users-commonly-trip-over) · [Documentation](#documentation) · [Costs](#costs) · [FAQ](#faq)
+
+## Why people switch to Shorthop
+
+What users of hosted shorteners keep running into, and what Shorthop does instead:
+
+| What happens elsewhere | With Shorthop |
+|---|---|
+| Links and QR codes stop working when a plan lapses or an account is banned | Links live in your own Cloudflare account, on your domain. No shortener's billing sits between you and them. |
+| Free links get ads, or a page before the destination | A plain `302` to the destination, after one KV read |
+| Click history cut to 30 days on cheaper plans | Daily statistics stay in your own database until you delete them; individual clicks are kept for 90 days |
+| Exports locked to higher plans | Links (with every setting), statistics and payments as CSV or JSON, or everything as one backup, any time |
+| A monthly cap on changing where a link goes | Change any link whenever you like (Workers Free allows 1,000 saves a day). Every version is kept and can be restored |
+| Revenue tracking only on a top plan, or under a commercial license | Revenue from Stripe, Paddle, Lemon Squeezy, Dodo Payments, Creem, Gumroad, FastSpring and PayPal, matched to the link that brought each buyer. MIT-licensed |
+| Priced per seat | Admins, managers and users with their own permissions, at no cost (Cloudflare Access is free for up to 50 users) |
 
 ## Why Shorthop
 
-- **From click to customer.** A short link takes someone to your site; Shorthop follows that visit to the payment it led to. You see revenue per link, per channel, per campaign and per landing page, not just clicks.
-- **Your domain, your data.** Links live on `go.yourdomain.com`, and every number stays in your own Cloudflare account. No seats, no plan limits on links, no vendor reading your traffic.
-- **Private by design.** Cookieless by default: nothing stored in the visitor's browser, and no IP addresses kept. Unique visitors are counted with a daily hash that can't be traced back afterwards.
-- **Proof you can share.** Send a brand, client or sponsor a live, read-only statistics page for one link: clicks, countries, sources and devices, without your login or your destination URL. Useful for creators and influencers reporting campaign results.
+- **Revenue per link.** A short link takes someone to your site, and Shorthop follows that visit to the payment it led to. A link straight to a Stripe, Lemon Squeezy, Dodo, Creem or Gumroad checkout is credited too, with no website in between. Revenue is broken down by link, channel, campaign and landing page.
+- **Everything in your account.** Links live on `go.yourdomain.com`, and every number stays in your Cloudflare account. Back it all up as one ZIP whenever you like.
+- **Cookieless.** Nothing is stored in the visitor's browser and no IP addresses are kept. Unique visitors are counted with a daily hash that can't be traced back afterwards.
+- **Reports you can send.** Send a sponsor or client a live, read-only page for one link, or a campaign report for a tag or a set of links, with revenue if you choose. They never see your login or your destinations.
 - **Free to run.** One Worker on Cloudflare's free tier covers most personal use (100,000 requests a day). Install it with one button.
 
-## What's new in 1.3
+## What's new in 2.0
 
-- **Privacy requests:** find, export or erase everything stored about one visitor or customer, and let customer details expire after 1 to 7 years.
-- **`ENCRYPTION_KEY`:** an optional secret for stored webhook, share and payment secrets, so rotating `SESSION_SECRET` no longer makes them unreadable.
+- **A new admin.** Every page is rebuilt: analytics, links, websites, live hits and settings, in light and dark, with ⌘K to jump anywhere, `c` to create a link, and a layout made for phones.
+- **Revenue from links straight to a checkout:** Stripe Payment Links, Lemon Squeezy, Dodo, Creem and Gumroad.
+- **Campaign reports:** one read-only page for a tag or a set of links, optionally with revenue, for sponsors and clients.
+- **Leave another shortener in minutes:** import from Bitly, Rebrandly, Short.io or Dub by file or straight from their API, and move the links onto your domain.
+- **Backups:** everything in one ZIP, plus a weekly copy to R2.
+- **AI assistants:** create links and read statistics from Claude Code, Cursor or VS Code through an MCP server, or install the skill with `npx skills add jntegz/shorthop`. The admin also has an API reference, and Workers AI can suggest slugs and previews if you turn it on.
+- **Live map and click heatmap:** see where clicks come from right now, and the hours your audience clicks, so you know when to post. A new `link.clicked` webhook sends each click to your own tools.
+- **Bio pages:** a link-in-bio page whose buttons are your own short links, so every tap is counted.
+- **Safety:** a warning page before destinations Cloudflare flags as malware or phishing.
+- **Day to day:** bulk actions, a warning when a destination is already shortened, a bookmarklet and a share target, and error messages that say what failed.
 
-New in 1.2:
-
-- **Websites:** a small cookieless script (about 8 KB) for your own sites, with a live view of who's on the site right now.
-- **Revenue:** payments from **Stripe, Paddle, Lemon Squeezy, Dodo Payments, Creem, Gumroad, FastSpring and PayPal**, matched to the visit and the short link that brought each buyer.
-- **Insights:** peak hours, reading time and average scroll depth for buyers against non-buyers, page speed (Core Web Vitals), goals, funnels, path to purchase and customer value by first source.
-- **Shared statistics** for a single link, with an optional password and end date.
-- **Your colour:** pick the admin's accent colour (purple, blue, green, red or any colour).
+Earlier releases are in the [changelog](CHANGELOG.md).
 
 ## Features
 
@@ -42,27 +58,31 @@ New in 1.2:
 
 - **Fast redirects:** one KV read, then a `302`. Analytics is written after the response, so it never slows down or breaks a click.
 - **Several domains:** each short domain has its own slugs and stats. The admin can live on the primary domain or on a separate host.
-- **Admin at `/_admin`:** create, edit, disable, expire, tag and search links, with custom slugs and a live preview of the short link.
+- **Admin at `/_admin`:** create, edit, disable, expire, tag and search links, with custom slugs and a live preview of the short link. Select links to enable, disable, tag or delete them together, and rename or merge tags.
+- **Bio pages:** a link can be a link-in-bio page instead of a redirect, with buttons to your own short links or any address, short texts, section titles, social icons, a share panel and your own colours.
 - **Smart routing:** rules by device (iPhone & iPad, Android, desktop, other) and country, first match wins, with A/B splits across up to 10 weighted destinations. A simulator in the editor, and results per rule and variant on the link page. Bots and previews get the default destination; no cookies.
-- **Social previews:** your own title, description and image for LinkedIn, Slack, X, iMessage and other link previews, with mockups while you edit.
+- **Social previews:** your own title, description and image for LinkedIn, Slack, X, iMessage and other link previews, with mockups while you edit. Workers AI can suggest slugs and write the preview (optional).
 - **UTM builder:** one field per parameter, saved presets, and a preview of the URL visitors land on.
 - **QR studio:** colours with a contrast check, dot and corner shapes, a logo, frames with a caption, a live scan test, SVG or PNG up to 4096 px, print sheets, and a ZIP of every link's code. Scans count as their own source.
 - **Password-protected links and click limits:** visitors enter a password first, or a link stops after a set number of clicks, counted exactly by a Durable Object. Bots and previews don't count.
-- **Links that no longer work:** mark one as retired and pick a replacement. Visitors get a page with a button to it, or are sent on to your site after a few seconds. Unknown slugs get your own 404 page.
+- **Links that no longer work:** mark one as retired and pick a replacement. Visitors get a page with a button to it, or are sent on to your site after a few seconds. Unknown slugs get your own 404 page, in light and dark.
+- **Unsafe destinations:** a destination Cloudflare's security DNS flags as malware or phishing gets a warning page before the redirect. "I trust this destination" lifts it.
 - **Link history:** every change is saved as a version with who made it, and any earlier version can be restored. Deleted links can be brought back for 90 days.
-- **Turning a link off:** Disable asks where visitors go meanwhile: the 404 page, your site, or another of your links. Automatic checks pause while it's off.
-- **Import and export:** CSV import with column mapping, for moving from another shortener (old click counts are kept), and CSV export of links and daily stats.
+- **Import and export:** import from Bitly, Rebrandly, Short.io or Dub by their API or their CSV export (old click counts are kept), or any CSV. Export links as CSV, or as JSON with every setting for another Shorthop.
 
 ### Sharing statistics
 
 - **A public page for one link** at `/_share/<id>.<secret>`: clicks, daily visitors, countries, cities, sources, devices and more, read-only. Send it to a brand or sponsor as proof of the clicks a post or campaign got.
-- **You decide what they see:** an optional end date, password, and the longest period viewers may pick. Viewers can switch between light and dark (or add `?theme=dark` to the address). It never shows the destination, the link's history or revenue, and you can revoke it at any time.
+- **Campaign reports:** the same for a tag (links tagged later join in) or a chosen set of links, with a table per link and, if you turn it on, revenue per currency.
+- **You decide what they see:** an optional end date, password, and the longest period viewers may pick. Viewers can switch between light and dark (or add `?theme=dark` to the address). It never shows the destination or the link's history, and you can revoke it at any time.
 
 ### Analytics
 
 - **Per click:** country, region, city, device, OS, browser, referrer, source tag and language. Humans, bots and misses are counted separately.
+- **Live map:** a globe of the latest human clicks, at city level, with the top countries and links.
+- **When people click:** a weekday × hour heatmap in your own time zone, per link and for the whole account.
 - **Private by design:** no IP addresses or cookies are stored. Unique visitors are counted with a daily hash whose random salt is deleted once the day is over. See [visitor privacy](docs/PRIVACY.md).
-- **Any period:** today, 7, 30 or 90 days, 6 to 12 months, all time or any dates, compared with the previous period. Per link, or every link together on the Full statistics page.
+- **Any period:** today, 7, 30 or 90 days, 12 months, all time or any dates, compared with the previous period.
 - **Kept for good:** a daily job saves each day into D1, so stats outlive Analytics Engine's 90-day retention.
 
 ### Websites
@@ -81,6 +101,7 @@ New in 1.2:
 
 - **Payment providers:** **Stripe, Paddle, Lemon Squeezy, Dodo Payments, Creem, Gumroad, FastSpring and PayPal** send verified webhooks; switch on the ones you sell with, follow the steps, and press **Check connection**. Other billing can send payments through the API.
 - **Buyers matched to their visit:** each payment is tied to the visit that led to it (the checkout reference, the same customer, an email your server reported, or checkout timing), with how sure each match is. Revenue by channel, campaign, short link, landing page, country or device adds up to the total.
+- **Links straight to a checkout:** a short link to a Stripe Payment Link or a Lemon Squeezy, Dodo, Creem or Gumroad checkout carries a random reference, so the sale is credited to the link without a website in between.
 - **Buyers and non-buyers:** follow a customer's journey visit by visit, compare how buyers read your pages, see the path to purchase (time to buy, visits before buying) and customer value by the source that first found them.
 - **Subscriptions and refunds:** MRR, churn, new against renewal revenue; refunds and disputes follow their charge. Amounts are converted to the site's currency at the day's ECB rate. Past payments can be imported (all providers except PayPal).
 - **Revenue per short link:** short links to a tracked site carry a signed click token (`?sh_c=`), so each link shows the visits and revenue it brought.
@@ -91,60 +112,45 @@ New in 1.2:
 
 - **Link health:** destination checks for the links you pick (**Check that the destination works**, off by default) or for all links, once you turn automatic checking on and choose how often. **Never check this link** keeps a link out either way. A destination that fails 3 times in a row sends one email and gets a Fix dialog. Sites that refuse automated checks show as "can't check" and never alert.
 - **Missed visits:** a report of slugs people tried that don't exist, with scanners and bots kept apart, so you can create the link someone mistyped, send the path to an existing link, or ignore it for good (the ignored list exports and imports as CSV).
-- **System status:** setup checks for storage, analytics, email, domains and sign-in, with an alert email when something breaks.
+- **System status:** setup checks for storage, analytics, email, domains and sign-in, each with the command that fixes it, the version you run, and an alert email when something breaks.
+- **Backups:** Settings → General → Backup downloads every table as one ZIP, without secrets; bind an R2 bucket for a copy every week ([how](docs/SETUP.md#backup)).
 - **Weekly digest and alerts:** by Cloudflare Email Service, Resend, Emailit, Postmark, SendGrid, Mailgun, any other JSON email API, or a signed webhook. The digest lists each site's visitors and revenue too.
 
 ### People, automation and appearance
 
 - **People and roles:** with Cloudflare Access, add people as admins, managers or users, each with their own password and the permissions you tick. Pause someone until a date, sign them out everywhere, and let them reset a forgotten password by email. An optional Cloudflare Turnstile check guards the password pages.
-- **API at `/api`:** personal API keys for scripts, Zapier or Make and an [iOS Shortcut](docs/ios-shortcut.md). A key does only what it was given, can expire, and stops working when it's revoked.
-- **Webhooks:** signed events for links created, changed or deleted, destinations down or back, click milestones, payments and traffic spikes, with retries and a delivery log.
-- **Your colour:** Settings → Access → Appearance sets the accent of buttons, links and charts: purple, blue, green, red, or any custom colour. Each person picks their own; it's saved in their browser.
+- **API at `/api`:** personal API keys for scripts, Zapier or Make and an [iOS Shortcut](docs/ios-shortcut.md). A key does only what it was given, can expire, and stops working when it's revoked. The admin has a searchable API reference, and `/api/openapi.json` describes every endpoint.
+- **AI assistants:** an MCP server at `/api/mcp` lets Claude Code, Cursor or VS Code create links, read statistics and check revenue with your API key and its permissions. Or install the skill: `npx skills add jntegz/shorthop`.
+- **Webhooks:** signed events for links created, changed or deleted, clicks, destinations down or back, click milestones, payments and traffic spikes, with retries and a delivery log.
+- **Quick capture:** a "Shorten this page" bookmarklet, and Shorthop in your phone's share sheet once you install the admin as an app.
+- **Light, dark and your colour:** the admin follows your system or a switch next to Log out, and each person picks their own accent colour, saved in their browser.
 - **Works on a phone:** the admin is made for small screens too.
 
 ## Screenshots
 
-### Websites and revenue
-
-![Websites: each site with visitors over 7 days, revenue over 30 days, its top source, visitors online now and visits per day](docs/images/sites.png)
-
-![A site's dashboard: net revenue, the path to money from visitors to buyers, visits, engaged time and visits from short links](docs/images/site-dashboard.png)
-
-| Live: who's on the site now | Peak hours |
-|---|---|
-| ![Latest visits, refreshed every 15 seconds: country, source, channel and the pages read](docs/images/site-live.png) | ![A weekday by hour heatmap of visits with the three busiest hours outlined](docs/images/site-peak-hours.png) |
-| **Reading and scroll: buyers** | **Page speed** |
-| ![Reading time, average scroll and share who read 75% or more, for buyers](docs/images/site-reading.png) | ![Core Web Vitals per page: LCP, INP and CLS, good or needs improvement](docs/images/site-page-speed.png) |
-| **Funnels** | **Path to purchase** |
-| ![A funnel from blog posts to pricing to checkout, with drop-off, time per step and how many paid](docs/images/site-funnel.png) | ![Time to buy, visits before buying, and where customers first came from against the visit credited with the sale](docs/images/site-purchase-path.png) |
-| **Payments, matched to visits** | **Payment providers** |
-| ![Payments with provider, customer, the visit credited and how sure the match is](docs/images/site-payments.png) | ![Stripe, Paddle, Lemon Squeezy, Dodo Payments, Creem, Gumroad, FastSpring and PayPal, three of them receiving](docs/images/site-providers.png) |
-| **Install on any platform** | **Shared statistics for one link** |
-| ![The install card: the script tag, a check that it arrived, and the Next.js snippet](docs/images/site-install.png) | ![A public, read-only statistics page for one short link: clicks, daily visitors and countries](docs/images/share-stats.png) |
-
-**Pick your colour**
-
-![The same dashboard in purple, blue, green and red accents](docs/images/appearance.png)
-
-### Links
-
 | All links | One link |
 |---|---|
-| ![All links with tags, badges for smart, protected and limited links, click counts and status](docs/images/links.png) | ![A link page: actions, the destination check and its statistics](docs/images/link-detail.png) |
-| **Smart routing rules** | **Where routed visitors went** |
-| ![The smart routing editor: an A/B split for desktop visitors and the simulator](docs/images/routing.png) | ![Smart routing results: clicks per rule and per A/B variant](docs/images/routing-results.png) |
-| **Social preview** | **QR studio** |
-| ![The social preview editor with an uploaded image and a LinkedIn mockup](docs/images/social-preview.png) | ![The QR studio: purple dots, rounded corners and a caption, with a scan test](docs/images/qr.png) |
-| **Full statistics** | **Link health** |
-| ![Full statistics: countries, cities, sources, referrers, devices and operating systems](docs/images/stats.png) | ![Link health: destinations that work, one that doesn't with a Fix button, and one that can't be checked](docs/images/link-health.png) |
-| **People and roles** | **Short domains** |
-| ![Settings → People: an owner, an admin, a manager and users, one of them paused](docs/images/people.png) | ![Settings → Short domains: the domain list and a guided setup for a new domain](docs/images/settings-domains.png) |
+| ![All links with tags and badges, three selected for a bulk action](docs/images/links.png) | ![A link page: clicks, the revenue it brought and where visitors came from](docs/images/link-detail.png) |
+| **Websites** | **A site's dashboard** |
+| ![Websites: each site with visitors, revenue and its top source](docs/images/sites.png) | ![A site's dashboard: the path to money, revenue per short link and where visitors came from](docs/images/site-dashboard.png) |
+| **Live map** | **Campaign report** |
+| ![Recent hits on a globe: the latest clicks around the world, with top countries and links](docs/images/live-map.png) | ![A shared campaign report: every link in the campaign, clicks and revenue](docs/images/campaign-report.png) |
+| **Bio page editor** | **Import from another shortener** |
+| ![The link form as a bio page: buttons, social icons and a live preview](docs/images/bio-editor.png) | ![Import links: a Bitly export mapped, with its bit.ly links moving onto your domain](docs/images/import.png) |
+| **Smart routing** | **QR studio** |
+| ![The smart routing editor: an A/B split and a country rule](docs/images/routing.png) | ![The QR studio: a styled code with a caption and a scan test](docs/images/qr.png) |
+| **AI assistants** | **Dark** |
+| ![Settings: connect Claude Code, Cursor or VS Code to Shorthop's MCP server](docs/images/mcp.png) | ![The analytics home in the dark theme](docs/images/dark-mode.png) |
+
+| On a phone | A bio page |
+|---|---|
+| ![All links on a phone, with the tab bar](docs/images/mobile.png) | ![A public bio page whose buttons are short links](docs/images/bio-page.png) |
 
 What visitors see:
 
-| Password-protected link | Link no longer working | Unknown slug |
-|---|---|---|
-| ![The password page of a protected link](docs/images/link-password.png) | ![A retired link's page, pointing to its replacement](docs/images/link-retired.png) | ![The custom 404 page](docs/images/not-found.png) |
+| Password-protected link | Link no longer working | Unknown slug | Shared statistics |
+|---|---|---|---|
+| ![The password page of a protected link](docs/images/link-password.png) | ![A retired link's page, pointing to its replacement](docs/images/link-retired.png) | ![The custom 404 page](docs/images/not-found.png) | ![A public, read-only statistics page for one short link](docs/images/share-stats.png) |
 
 <sub>Screenshots from local development with made-up sites, links, customers and stats. Every domain is on the reserved `.example` TLD and every email address is an `example.com`/`.net`/`.org` address.</sub>
 
@@ -181,6 +187,15 @@ npm run setup
 
 The full manual, including every Cloudflare dashboard step, is in **[docs/SETUP.md](docs/SETUP.md)**.
 
+### Leaving another shortener
+
+1. Install Shorthop, and list your branded short domain in `SHORT_DOMAINS` without adding its route yet, so its DNS stays with the old service.
+2. **Import links → Another shortener's API:** pick Bitly, Rebrandly, Short.io or Dub and paste an API key. The key is used only while the page reads your links and is never saved. Or upload their CSV export; Shorthop recognises its columns.
+3. Links on the vendor's own domain (bit.ly, rebrand.ly, short.gy, dub.sh) move to your domain with the same back-half. Their old addresses keep pointing at the vendor.
+4. Check the destinations in Link health, then add the domain's route and deploy. The domain switches over with every link and printed QR code on it still working, now counted in your statistics.
+
+The order of the switch, and a dry run against your local copy first, are in [moving from another shortener](docs/SETUP.md#import).
+
 ### Things new users commonly trip over
 
 | You see | Why | What to do |
@@ -211,10 +226,11 @@ Read the [changelog](CHANGELOG.md)'s Upgrading notes for each version first.
 
 ## Documentation
 
-- **[Setup manual](docs/SETUP.md):** [requirements](docs/SETUP.md#what-you-need), [the Deploy to Cloudflare button](docs/SETUP.md#deploy-button), [domains](docs/SETUP.md#domains), [Cloudflare Access](docs/SETUP.md#access), [email](docs/SETUP.md#email), [websites and revenue](docs/SETUP.md#websites), [troubleshooting](docs/SETUP.md#troubleshooting), [updating](docs/SETUP.md#updating), [moving from another shortener](docs/SETUP.md#import), [uninstalling](docs/SETUP.md#uninstalling)
+- **[Setup manual](docs/SETUP.md):** [requirements](docs/SETUP.md#what-you-need), [the Deploy to Cloudflare button](docs/SETUP.md#deploy-button), [domains](docs/SETUP.md#domains), [Cloudflare Access](docs/SETUP.md#access), [email](docs/SETUP.md#email), [websites and revenue](docs/SETUP.md#websites), [troubleshooting](docs/SETUP.md#troubleshooting), [updating](docs/SETUP.md#updating), [backups](docs/SETUP.md#backup), [moving from another shortener](docs/SETUP.md#import), [uninstalling](docs/SETUP.md#uninstalling)
 - **[Cloudflare free tier](docs/CLOUDFLARE-FREE-TIER.md):** what each service allows and what Shorthop uses
 - **[iOS Shortcut](docs/ios-shortcut.md):** shorten a link from the share sheet
 - **[Visitor privacy](docs/PRIVACY.md):** what Shorthop records about visitors, for your privacy notice
+- **[Design system](docs/DESIGN.md):** the admin's tokens, components and layout rules, for contributors
 - **[Security](SECURITY.md):** reporting a vulnerability, protections and a hardening checklist
 - **[Contributing](CONTRIBUTING.md):** reporting bugs, running it locally and opening a pull request, under the [Code of Conduct](CODE_OF_CONDUCT.md)
 
@@ -288,6 +304,7 @@ npm run types            # then regenerate worker-configuration.d.ts
 | `DIGEST_FROM`, `DIGEST_TO` | var | Sender and the only recipient of the digest and alerts |
 | `DIGEST_MAILGUN_DOMAIN`, `DIGEST_MAILGUN_REGION` | var | Mailgun only |
 | `DIGEST_CUSTOM_AUTH`, `DIGEST_CUSTOM_BODY` | var | Custom email API only, optional: auth header and JSON body template ([docs/SETUP.md](docs/SETUP.md#custom)) |
+| `SAFETY_DNS` | var | `off` makes no lookups at Cloudflare's security DNS (the unsafe-destination warning). Anything else, or unset: on |
 | `DEV_AUTH_BYPASS` | var | `1` only in `.dev.vars`: skips Access on localhost. Ignored on any other host |
 | `DEV_AUTH_EMAIL` | var | With `DEV_AUTH_BYPASS` only: see the admin as this person from Settings → People. Empty: an owner |
 | `API_TOKEN` | secret | Optional, from before personal API keys: a Bearer token for `/api`, limited by `API_TOKEN_SCOPE`. New installs don't get one |
@@ -300,12 +317,14 @@ npm run types            # then regenerate worker-configuration.d.ts
 | `RESEND_API_KEY`, `EMAILIT_API_KEY`, `POSTMARK_API_KEY`, `SENDGRID_API_KEY`, `MAILGUN_API_KEY` | secret | Each provider's own API key. An older `DIGEST_API_KEY` still works, for the provider named in `DIGEST_PROVIDER` only |
 | `DIGEST_CUSTOM_URL`, `DIGEST_CUSTOM_API_KEY` | secret | Custom email API only: HTTPS endpoint and key |
 | `DIGEST_WEBHOOK_URL`, `DIGEST_WEBHOOK_SECRET` | secret | Webhook endpoint and its HMAC key |
+| `AI` | binding | Optional Workers AI, for slug and preview suggestions. Commented out in the config template |
+| `BACKUPS` | binding | Optional R2 bucket for the weekly backup. Commented out in the config template |
 
 ## How requests are routed
 
 | Path | Handled by |
 |---|---|
-| `/{slug}` | KV lookup of `<domain>/<slug>`, then a 302 (to the destination smart routing picks), or the 404 page (logged as a miss). A password-protected link shows its password form first (POST to the same path); a link at its click limit shows a "limit reached" page; preview crawlers get the link's social preview. A link marked "no longer working" gets a 410 page: a button to its replacement link, or, without a usable one, a redirect after a few seconds to the site set in Settings |
+| `/{slug}` | KV lookup of `<domain>/<slug>`, then a 302 (to the destination smart routing picks), a bio page, or the 404 page (logged as a miss). A destination Cloudflare flags gets a warning page first. A password-protected link shows its password form first (POST to the same path); a link at its click limit shows a "limit reached" page; preview crawlers get the link's social preview. A link marked "no longer working" gets a 410 page: a button to its replacement link, or, without a usable one, a redirect after a few seconds to the site set in Settings |
 | `/_og/<key>` | An uploaded social-preview image. Also served on `ADMIN_HOST`, for the editor |
 | `/_t/script.js` | The website analytics script, on every host (CORS `*`, cached an hour) |
 | `/_t/e` | Its collector: one event per POST. The Origin and page must belong to the site, bots are dropped, and `COLLECT_LIMITER` brakes floods per network |
@@ -320,6 +339,8 @@ npm run types            # then regenerate worker-configuration.d.ts
 | `/_admin`, `/_admin/**` | Access JWT (unless password-only) and the password session, then the admin app with a strict CSP |
 | `/_admin/assets/*`, `/robots.txt`, `/favicon.ico` | Static assets, served without running the Worker |
 | `/_admin/api/*` | The API for the admin app: CSRF check, identity and session |
+| `/api/mcp` | The MCP server for AI assistants: JSON-RPC over HTTP, each tool calling the API with the caller's key |
+| `/api/openapi.json` | The API described as OpenAPI 3.0 |
 | `/api/*` | The same API with a personal API key, or the `API_TOKEN` secret (read and create only, unless `API_TOKEN_SCOPE` is `full`) |
 | `/health` | `ok` |
 
@@ -346,14 +367,20 @@ src/worker/webhooks.ts     signed webhook events, retries and the delivery log
 src/worker/click-cap.ts    the click-limit Durable Object
 src/worker/health.ts       System status, setup checks and alert emails
 src/worker/version.ts      the running version and the newest release (System status)
+src/worker/mcp.ts          the MCP server; openapi.ts: the API catalog and openapi.json
+src/worker/backup.ts       full backups and the weekly copy to R2
+src/worker/safety.ts       the unsafe-destination lookup at Cloudflare's security DNS
+src/worker/import/         reading links from Bitly, Rebrandly, Short.io and Dub
 src/worker/api/            links, stats, settings, checks, previews, UTM, QR, webhooks, people, keys, shares and sites routes
 src/worker/web/            websites: the event collector, sessions, queries, funnels, insights, alerts, privacy requests
 src/worker/revenue/        payment webhooks per provider, matching payments to visits, currency rates, imports
 src/worker/share.ts        the shared statistics page
 src/tracker/tracker.js     the website script served at /_t/script.js
-src/client/                admin app (React, Vite, Tailwind, TanStack Query, Recharts)
+src/client/app/            admin app: shell, pages and the component kit (React, Vite, TanStack Query; docs/DESIGN.md)
+src/client/components/     link editor dialogs (link form, routing, previews, QR studio, bio editor; Tailwind)
 test/                      Workers-runtime tests; test/node: setup tests
-docs/                      SETUP.md, CLOUDFLARE-FREE-TIER.md, PRIVACY.md, ios-shortcut.md, images/ (README screenshots)
+skills/shorthop/           the Agent Skills package (npx skills add jntegz/shorthop)
+docs/                      SETUP.md, CLOUDFLARE-FREE-TIER.md, PRIVACY.md, DESIGN.md, ios-shortcut.md, images/ (README screenshots)
 ```
 
 ## Design notes
@@ -389,6 +416,15 @@ Yes. On the link's page, create a shared statistics page and send its address. T
 
 **Does website tracking work with my site builder?**
 If it lets you add a script to the page head, yes: HTML, Next.js, WordPress, Shopify, Webflow, Framer, Wix, Squarespace, Ghost and others. The site's Settings & setup page shows the steps for each, and tells you live when the first visit arrives.
+
+**Can I use it with my AI assistant?**
+Yes. Settings → API, MCP & webhooks has the setup for Claude Code, Cursor and VS Code: they connect to `/api/mcp` with a personal API key and can do whatever that key is allowed to. For agents that use Agent Skills, `npx skills add jntegz/shorthop` installs Shorthop's.
+
+**What if Cloudflare flags one of my destinations?**
+New and changed destinations are checked at Cloudflare's security DNS. A flagged one shows visitors a warning page with a "Continue anyway" link instead of redirecting, and the link is marked in the admin. If you know the site is fine, choose **I trust this destination** in the link form. `SAFETY_DNS = "off"` turns the lookups off.
+
+**Will my Bitly QR codes keep working?**
+Codes on your own branded domain will. Import the links, point the domain to Shorthop, and the same addresses resolve. Codes that contain a `bit.ly` address keep pointing at Bitly.
 
 **Can I use it without Cloudflare?**
 No. Shorthop is built on Workers, KV, D1 and Analytics Engine directly.
