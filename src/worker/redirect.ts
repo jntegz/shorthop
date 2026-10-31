@@ -5,16 +5,21 @@ import { isProbePath, isRoutableSlug } from "../shared/slug";
 import { buildLocation, renderUtm, splitOwnParams } from "../shared/target";
 import { isPreviewCrawler } from "../shared/preview";
 import { pickRoute, routeCountry, routeDevice } from "../shared/routing";
-import { detectBot, detectDevice, detectOs, logHit, PREFETCH, referrerHostOf, resolveSource, siteHostOf } from "./analytics";
+import { detectBot, detectBrowser, detectDevice, detectOs, logHit, PREFETCH, referrerHostOf, resolveSource, siteHostOf } from "./analytics";
+import { checkoutProvider, withCheckoutRef, type CheckoutProvider } from "../shared/checkout";
+import { newSessionId } from "./web/sessions";
 import { deadLinkResponse, isUsableReplacement } from "./dead-link";
 import { isKvLink, KV_TIMEOUT_MS, kvKey, OFF_HOME, splitKey, withTimeout, type KvLink, type KvRule } from "./db";
-import { notFoundResponse } from "./not-found";
+import { notFoundResponse, PAGE_HEADERS } from "./not-found";
+import { shortOrigin } from "./domains";
 import { capAdmit } from "./click-cap";
 import { hasAccess, tryPassword } from "./link-password";
 import { previewResponse } from "./preview";
-import { limitPage, passwordPage, unavailablePage, unlockedPage } from "./protection-pages";
+import { limitPage, passwordPage, unavailablePage, unlockedPage, unsafePage } from "./protection-pages";
+import { renderBio, type BioPage } from "../shared/bio";
 import { ipBucket } from "./session";
-import { trackedSiteFor } from "./web/sites";
+import { connectedCheckoutProviders, trackedSiteFor } from "./web/sites";
+import { sendClickWebhooks } from "./webhooks";
 import { CLICK_PARAM, signClickToken } from "./web/token";
 
 const MIN_CACHE_TTL = 30;
@@ -209,6 +214,12 @@ export async function handleRedirect(request: Request, env: Env, ctx: ExecutionC
     }
   }
 
+  // A link-in-bio page: shown here instead of redirecting; its buttons are links of their own.
+  if (link.bio) {
+    ctx.waitUntil(logHit(request, env, url, { domain, slug, kind: "hit", sourceTag: own.sourceTag, qr: own.qr }));
+    return bioResponse(env, request, link.bio, domain, slug);
+  }
+
   const routed = link.ro?.length ? chooseRoute(request, link.ro) : null;
   const target = routed?.url ?? link.u;
   let location = target;
@@ -237,8 +248,20 @@ export async function handleRedirect(request: Request, env: Env, ctx: ExecutionC
   } catch (err) {
     console.error(JSON.stringify({ message: "click token failed", domain, slug, error: String(err) }));
   }
+  try {
+    location = await tagForCheckout(request, env, ctx, url, location, domain, slug, own.sourceTag, own.qr);
+  } catch (err) {
+    console.error(JSON.stringify({ message: "checkout reference failed", domain, slug, error: String(err) }));
+  }
+
+  // A flagged destination: people see a warning with a way through; nothing is sent on automatically.
+  if (link.w === 1 && request.method !== "HEAD") {
+    ctx.waitUntil(logHit(request, env, url, { domain, slug, kind: "hit", sourceTag: own.sourceTag, qr: own.qr }));
+    return unsafePage(env, domain, slug, location);
+  }
 
   ctx.waitUntil(logHit(request, env, url, { domain, slug, kind: "hit", sourceTag: own.sourceTag, qr: own.qr, route: link.ro?.length ? (routed?.key ?? "-") : undefined }));
+  ctx.waitUntil(clickWebhooks(request, env, url, domain, slug, own.sourceTag, own.qr));
   // Preview crawlers read the owner's preview; everyone else is redirected.
   if (link.og && isPreviewCrawler(request.headers.get("User-Agent") ?? "")) {
     return previewResponse(link.og, shortUrl, location, domain, request.method === "HEAD");
@@ -265,4 +288,108 @@ async function tagForTrackedSite(request: Request, env: Env, url: URL, location:
   const { source } = resolveSource(sourceTag, qr, ua, referrerHostOf(request.headers.get("Referer"), url.hostname));
   const token = await signClickToken(env.SESSION_SECRET, { domain, slug, source, at: Math.floor(Date.now() / 1000) });
   return buildLocation(location, [], `${CLICK_PARAM}=${token}`);
+}
+
+/**
+ * A link straight to a hosted checkout (Stripe Payment Links, Lemon Squeezy,
+ * Dodo, Creem, Gumroad) carries a random reference in the checkout URL, and
+ * the click is recorded under it (link_clicks). When the provider's webhook
+ * brings the reference back, the sale is credited to this link
+ * (sessionFromLinkClick in src/worker/revenue/match.ts). Only for people, and
+ * only when that provider is connected on a site; no IP or visitor hash is kept.
+ */
+async function tagForCheckout(
+  request: Request,
+  env: Env,
+  ctx: ExecutionContext,
+  url: URL,
+  location: string,
+  domain: string,
+  slug: string,
+  sourceTag: string | null,
+  qr: boolean,
+): Promise<string> {
+  let provider: CheckoutProvider | null;
+  try {
+    provider = checkoutProvider(new URL(location));
+  } catch {
+    return location;
+  }
+  if (!provider) return location;
+  const ua = request.headers.get("User-Agent") ?? "";
+  const cf = request.cf as { asn?: number; country?: string; region?: string; city?: string } | undefined;
+  if (detectBot(request, ua, Number(cf?.asn ?? 0))) return location;
+  if (!(await connectedCheckoutProviders(env.DB)).has(provider)) return location;
+  const ref = newSessionId();
+  const tagged = withCheckoutRef(location, ref);
+  if (tagged === location) return location; // The owner set their own reference.
+  const { source } = resolveSource(sourceTag, qr, ua, referrerHostOf(request.headers.get("Referer"), url.hostname));
+  ctx.waitUntil(
+    env.DB.prepare(
+      `INSERT INTO link_clicks (ref, domain, slug, provider, source, country, region, city, device, os, browser, clicked_at)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)`,
+    )
+      .bind(
+        ref,
+        domain,
+        slug,
+        provider,
+        source,
+        cf?.country ?? "",
+        cf?.region ?? "",
+        cf?.city ?? "",
+        detectDevice(ua, request.headers.get("Sec-CH-UA-Mobile")),
+        detectOs(ua, request.headers.get("Sec-CH-UA-Platform")),
+        detectBrowser(ua),
+        Math.floor(Date.now() / 1000),
+      )
+      .run()
+      .then(
+        () => undefined,
+        (err: unknown) => console.error(JSON.stringify({ message: "checkout click record failed", domain, slug, error: String(err) })),
+      ),
+  );
+  return tagged;
+}
+
+/** link.clicked for a person's click (src/worker/webhooks.ts): nothing when no webhook asks for it. */
+async function clickWebhooks(request: Request, env: Env, url: URL, domain: string, slug: string, sourceTag: string | null, qr: boolean): Promise<void> {
+  try {
+    const ua = request.headers.get("User-Agent") ?? "";
+    const cf = request.cf as { asn?: number; country?: string; city?: string } | undefined;
+    if (detectBot(request, ua, Number(cf?.asn ?? 0))) return;
+    const referrer = referrerHostOf(request.headers.get("Referer"), url.hostname);
+    await sendClickWebhooks(env, {
+      domain,
+      slug,
+      at: Math.floor(Date.now() / 1000),
+      country: cf?.country ?? "",
+      city: cf?.city ?? "",
+      device: detectDevice(ua, request.headers.get("Sec-CH-UA-Mobile")),
+      os: detectOs(ua, request.headers.get("Sec-CH-UA-Platform")),
+      browser: detectBrowser(ua),
+      source: resolveSource(sourceTag, qr, ua, referrer).source,
+      referrer,
+    });
+  } catch (err) {
+    console.error(JSON.stringify({ message: "click webhooks failed", domain, slug, error: String(err) }));
+  }
+}
+
+function bioResponse(env: Env, request: Request, bio: BioPage, domain: string, slug: string): Response {
+  const html = renderBio(bio, {
+    domain,
+    linkHref: (l) => `${shortOrigin(env, request, l.domain)}/${encodeURIComponent(l.slug)}?s=bio`,
+    // The page's own address, without tags such as ?s=, for "Share this page".
+    pageUrl: `${shortOrigin(env, request, domain)}/${encodeURIComponent(slug)}`,
+  });
+  return new Response(request.method === "HEAD" ? null : html, {
+    status: 200,
+    headers: {
+      ...PAGE_HEADERS,
+      // Indexable, unlike error pages: a bio page is meant to be found. Cached briefly at the browser.
+      "Cache-Control": "public, max-age=60",
+      "X-Robots-Tag": "all",
+    },
+  });
 }

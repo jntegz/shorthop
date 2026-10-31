@@ -23,6 +23,8 @@ export default defineConfig(async () => {
             // Tests that need the password login set ADMIN_PASSWORD_HASH themselves.
             ADMIN_PASSWORD_HASH: "",
             SESSION_SECRET: "test-session-secret-0123456789abcdef",
+            // No lookups at Cloudflare's security DNS from tests; test/unsafe-links.test.ts turns them on with a mock.
+            SAFETY_DNS: "off",
           },
         },
       }),

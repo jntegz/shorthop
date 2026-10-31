@@ -6,18 +6,21 @@ import { validateQrStyle } from "../../shared/qr";
 import { capCount, capReset } from "../click-cap";
 import { hashLinkPassword } from "../link-password";
 import { parseRouting, splitChanged, validateRouting, type RouteRule, type Routing, type RoutingError } from "../../shared/routing";
-import { createLinkSchema, importSchema, linkParamSchema, versionParamSchema, listQuerySchema, resyncQuerySchema, updateLinkSchema } from "../../shared/schemas";
+import { pullLinks, VendorError } from "../import/vendors";
+import { anyFlagged, UNSAFE_FLAGGED, UNSAFE_NONE, UNSAFE_TRUSTED } from "../safety";
+import { validateBio, type BioPage } from "../../shared/bio";
+import { bulkSchema, byTargetQuerySchema, pullSchema, createLinkSchema, exportQuerySchema, importSchema, linkParamSchema, normalizeTags, tagParamSchema, tagRenameSchema, versionParamSchema, listQuerySchema, resyncQuerySchema, updateLinkSchema } from "../../shared/schemas";
 import { isCheckProblem, isChecked, MONITOR_DEFAULT, MONITOR_NEVER, MONITOR_ON, type CheckStatus } from "../../shared/link-check";
 import { can } from "../../shared/permissions";
 import { generateSlug, validateSlug } from "../../shared/slug";
 import { normalizeTarget, validateUtmTemplate } from "../../shared/target";
-import type { CapDTO, ImportResult, ImportRowResult, LinkDTO, LinkListItem } from "../../shared/types";
+import type { BulkResult, CapDTO, ImportResult, ImportRowResult, LinkDTO, LinkListItem } from "../../shared/types";
 import { fullTokenScope, TOKEN_SCOPE_ERROR } from "../auth";
 import { getDefaultUtm, getLink, kvKey, nowSec, OFF_HOME, publish, toDTO, type LinkRow } from "../db";
 import { configuredDomains, domainsOf, isConfiguredDomain, NO_DOMAIN_ERROR, selfHosts, shortOrigin } from "../domains";
 import { csv, validate, type AppEnv } from "../hono";
 import { planLimits } from "../plan";
-import { changedFields, emit, emitAll, linkPayload } from "../webhooks";
+import { changedFields, emit, emitAll, linkPayload, type Event } from "../webhooks";
 import { deletedLinks, getVersion, listVersions, SNAPSHOT_SQL, versionStmt } from "../history";
 import { clicksByLink } from "../stats-data";
 import { checkedSql, getCheckSettings } from "../link-check";
@@ -36,19 +39,20 @@ const notConfigured = (domain: string) => `domain: "${domain}" is not one of you
 function insertStmt(db: D1Database, r: LinkRow): D1PreparedStatement {
   return db
     .prepare(
-      `INSERT INTO links (domain, slug, target, active, expires_at, utm, utm_template, pass_query, title, tags, notes, source, imported_clicks, broken, replacement, off_redirect, monitor, routing, preview, qr, password_hash, max_clicks, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO links (domain, slug, target, active, expires_at, utm, utm_template, pass_query, title, tags, notes, source, imported_clicks, broken, replacement, off_redirect, monitor, routing, preview, qr, password_hash, max_clicks, unsafe, unsafe_at, bio, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .bind(r.domain, r.slug, r.target, r.active, r.expires_at, r.utm, r.utm_template, r.pass_query, r.title, r.tags, r.notes, r.source, r.imported_clicks, r.broken, r.replacement, r.off_redirect, r.monitor, r.routing, r.preview, r.qr, r.password_hash, r.max_clicks, r.created_at, r.updated_at);
+    .bind(r.domain, r.slug, r.target, r.active, r.expires_at, r.utm, r.utm_template, r.pass_query, r.title, r.tags, r.notes, r.source, r.imported_clicks, r.broken, r.replacement, r.off_redirect, r.monitor, r.routing, r.preview, r.qr, r.password_hash, r.max_clicks, r.unsafe ?? 0, r.unsafe_at ?? null, r.bio ?? null, r.created_at, r.updated_at);
 }
 
 function updateStmt(db: D1Database, r: LinkRow): D1PreparedStatement {
   return db
     .prepare(
       `UPDATE links SET target = ?, active = ?, expires_at = ?, utm = ?, utm_template = ?, pass_query = ?,
-       title = ?, tags = ?, notes = ?, broken = ?, replacement = ?, off_redirect = ?, monitor = ?, routing = ?, preview = ?, qr = ?, password_hash = ?, max_clicks = ?, updated_at = ? WHERE domain = ? AND slug = ? RETURNING *`,
+       title = ?, tags = ?, notes = ?, broken = ?, replacement = ?, off_redirect = ?, monitor = ?, routing = ?, preview = ?, qr = ?, password_hash = ?, max_clicks = ?,
+       unsafe = COALESCE(?, unsafe), unsafe_at = COALESCE(?, unsafe_at), bio = ?, updated_at = ? WHERE domain = ? AND slug = ? RETURNING *`,
     )
-    .bind(r.target, r.active, r.expires_at, r.utm, r.utm_template, r.pass_query, r.title, r.tags, r.notes, r.broken, r.replacement, r.off_redirect, r.monitor, r.routing, r.preview, r.qr, r.password_hash, r.max_clicks, r.updated_at, r.domain, r.slug);
+    .bind(r.target, r.active, r.expires_at, r.utm, r.utm_template, r.pass_query, r.title, r.tags, r.notes, r.broken, r.replacement, r.off_redirect, r.monitor, r.routing, r.preview, r.qr, r.password_hash, r.max_clicks, r.unsafe ?? null, r.unsafe_at ?? null, r.bio ?? null, r.updated_at, r.domain, r.slug);
 }
 
 /** Publishes a saved link to KV; false when that failed (it's saved in D1 either way: answer 502 with the link). */
@@ -153,6 +157,7 @@ function withSnapshot(row: LinkRow, s: Snapshot, now = nowSec()): LinkRow {
     qr: s.qr ?? null,
     password_hash: s.password_hash ?? null,
     max_clicks: s.max_clicks ?? null,
+    bio: s.bio ?? null,
     updated_at: now,
   };
 }
@@ -177,16 +182,92 @@ function restoreProblem(c: Context<AppEnv>, r: LinkRow): string | null {
   return null;
 }
 
+/**
+ * The bio JSON to store: unchanged when not sent, null to turn it off,
+ * otherwise checked, and its buttons' short links must exist (here, now).
+ */
+async function bioFor(c: Context<AppEnv>, input: BioPage | null | undefined, prev: string | null): Promise<{ ok: true; json: string | null } | { ok: false; error: string }> {
+  if (input === undefined) return { ok: true, json: prev };
+  if (input === null) return { ok: true, json: null };
+  const checked = validateBio(input);
+  if (!checked.ok) return { ok: false, error: `bio: ${checked.problems[0]!.message}` };
+  const linked = checked.bio.blocks.flatMap((b) => ("link" in b ? [linkKey(b.link.domain, b.link.slug)] : []));
+  if (linked.length) {
+    const { results } = await c.env.DB.prepare("SELECT domain || '/' || slug AS k FROM links WHERE (domain || '/' || slug) IN (SELECT value FROM json_each(?1))")
+      .bind(JSON.stringify(linked))
+      .all<{ k: string }>();
+    const found = new Set(results.map((r) => r.k));
+    const missing = linked.find((k) => !found.has(k));
+    if (missing) return { ok: false, error: `bio: ${missing} doesn't exist.` };
+  }
+  return { ok: true, json: JSON.stringify(checked.bio) };
+}
+
+/** A link's destinations: its target and every enabled routing variant. */
+function destinationsOf(target: string, routing: string | null): string[] {
+  const rules = parseRouting(routing)?.rules.filter((r) => r.enabled) ?? [];
+  return [target, ...rules.flatMap((r) => r.variants.map((v) => v.url))];
+}
+
 /** stat_shares rows that still work (not revoked, not expired), for the links list. */
 const ACTIVE_SHARE = "revoked_at IS NULL AND (expires_at IS NULL OR expires_at > unixepoch())";
+
+/** The links list's filters as SQL (shared by the list and its export). */
+/** Escapes LIKE wildcards for a pattern used with ESCAPE '\'. */
+const likeEscape = (s: string) => s.replace(/[\\%_]/g, (m) => `\\${m}`);
+
+function listFilter(f: { domain?: string; q?: string; tag?: string; status: string }, scope: Parameters<typeof checkedSql>[0]): { where: string[]; params: (string | number)[] } {
+  const where: string[] = [];
+  const params: (string | number)[] = [];
+  if (f.domain) {
+    params.push(f.domain);
+    where.push(`domain = ?${params.length}`);
+  }
+  if (f.q) {
+    params.push(`%${likeEscape(f.q)}%`);
+    const n = params.length;
+    where.push(`(slug LIKE ?${n} ESCAPE '\\' OR target LIKE ?${n} ESCAPE '\\' OR title LIKE ?${n} ESCAPE '\\' OR notes LIKE ?${n} ESCAPE '\\')`);
+  }
+  if (f.tag) {
+    params.push(`%,${likeEscape(f.tag)},%`);
+    where.push(`(',' || tags || ',') LIKE ?${params.length} ESCAPE '\\'`);
+  }
+  const now = nowSec();
+  if (f.status === "active") where.push(`active = 1 AND (expires_at IS NULL OR expires_at > ${now}) AND broken = 0`);
+  if (f.status === "broken") where.push(`active = 1 AND (expires_at IS NULL OR expires_at > ${now}) AND broken = 1`);
+  if (f.status === "disabled") where.push("active = 0");
+  if (f.status === "expired") where.push(`expires_at IS NOT NULL AND expires_at <= ${now}`);
+  if (f.status === "shared") where.push(`(domain, slug) IN (SELECT domain, slug FROM stat_shares WHERE ${ACTIVE_SHARE})`);
+  if (f.status === "bio") where.push("bio IS NOT NULL");
+  if (f.status === "failing") {
+    where.push(`active = 1 AND (expires_at IS NULL OR expires_at > ${now}) AND broken = 0 AND ${checkedSql(scope)}`);
+    where.push(
+      "(domain, slug) IN (SELECT domain, slug FROM link_destinations WHERE url IN (SELECT target FROM target_checks WHERE status IN ('warning', 'down')))",
+    );
+  }
+  return { where, params };
+}
+
+/** Renames (to) or removes (to = null) a tag across links: D1 only, since tags aren't published. */
+async function retag(c: Context<AppEnv>, from: string, to: string | null): Promise<{ changed: number }> {
+  const pattern = `%,${from.replace(/[\\%_]/g, (m) => `\\${m}`)},%`;
+  const { results } = await c.env.DB.prepare("SELECT * FROM links WHERE (',' || tags || ',') LIKE ? ESCAPE '\\'").bind(pattern).all<LinkRow>();
+  if (!results.length) return { changed: 0 };
+  const now = nowSec();
+  const identity = c.get("identity");
+  const updates = results.map((r) => {
+    const tags = normalizeTags(r.tags.split(",").flatMap((t) => (t === from ? (to ? [to] : []) : [t])));
+    return { before: r, after: { ...r, tags: tags.join(","), updated_at: now } };
+  });
+  await c.env.DB.batch(updates.flatMap(({ after }) => [updateStmt(c.env.DB, after), versionStmt(c.env.DB, after, "update", identity)]));
+  await emitAll(c.env, updates.map(({ before, after }) => ({ type: "link.updated", data: { link: linkPayload(after), changes: changedFields(before, after) } })), { ctx: c.executionCtx });
+  return { changed: updates.length };
+}
 
 const PUBLISH_FAILED = "Saved, but publishing to KV failed. Save it again in a minute, or use “Republish all links” in Settings → General.";
 
 /** Rows GET /links returns at most. */
 const LIST_LIMIT = 5000;
-
-/** Escapes LIKE wildcards for a pattern used with ESCAPE '\'. */
-const likeEscape = (s: string) => s.replace(/[\\%_]/g, (m) => `\\${m}`);
 
 /** Publishes a link D1 already holds, trying once more after a short pause (KV writes can fail transiently). */
 async function publishSaved(env: Env, row: LinkRow): Promise<void> {
@@ -202,34 +283,8 @@ async function publishSaved(env: Env, row: LinkRow): Promise<void> {
 export const linksApi = new Hono<AppEnv>()
   .get("/links", validate("query", listQuerySchema), async (c) => {
     const { domain, q, tag, status, sort, period } = c.req.valid("query");
-    const where: string[] = [];
-    const params: (string | number)[] = [];
-    if (domain) {
-      params.push(domain);
-      where.push(`domain = ?${params.length}`);
-    }
-    if (q) {
-      params.push(`%${likeEscape(q)}%`);
-      const n = params.length;
-      where.push(`(slug LIKE ?${n} ESCAPE '\\' OR target LIKE ?${n} ESCAPE '\\' OR title LIKE ?${n} ESCAPE '\\' OR notes LIKE ?${n} ESCAPE '\\')`);
-    }
-    if (tag) {
-      params.push(`%,${likeEscape(tag)},%`);
-      where.push(`(',' || tags || ',') LIKE ?${params.length} ESCAPE '\\'`);
-    }
-    const now = nowSec();
     const { scope } = await getCheckSettings(c.env.DB);
-    if (status === "active") where.push(`active = 1 AND (expires_at IS NULL OR expires_at > ${now}) AND broken = 0`);
-    if (status === "broken") where.push(`active = 1 AND (expires_at IS NULL OR expires_at > ${now}) AND broken = 1`);
-    if (status === "disabled") where.push("active = 0");
-    if (status === "expired") where.push(`expires_at IS NOT NULL AND expires_at <= ${now}`);
-    if (status === "shared") where.push(`(domain, slug) IN (SELECT domain, slug FROM stat_shares WHERE ${ACTIVE_SHARE})`);
-    if (status === "failing") {
-      where.push(`active = 1 AND (expires_at IS NULL OR expires_at > ${now}) AND broken = 0 AND ${checkedSql(scope)}`);
-      where.push(
-        "(domain, slug) IN (SELECT domain, slug FROM link_destinations WHERE url IN (SELECT target FROM target_checks WHERE status IN ('warning', 'down')))",
-      );
-    }
+    const { where, params } = listFilter({ domain, q, tag, status }, scope);
     // Click counts are statistics: only for people who may see those.
     const seesClicks = can(c.get("actor"), "stats.view");
     const counts = seesClicks
@@ -286,6 +341,113 @@ export const linksApi = new Hono<AppEnv>()
     return c.json({ links });
   })
 
+  /** Links that already go to this destination (the link form warns before making another). */
+  .get("/links/by-target", validate("query", byTargetQuerySchema), async (c) => {
+    const target = normalizeTarget(c.req.valid("query").url, { allowHttp: true, selfHosts: selfHosts(c.env, c.req.raw) });
+    if (!target.ok) return c.json({ links: [] });
+    const { results } = await c.env.DB.prepare("SELECT * FROM links WHERE target = ? ORDER BY created_at LIMIT 10").bind(target.url).all<LinkRow>();
+    return c.json({ links: results.map((r) => dto(c, r)) });
+  })
+
+  /**
+   * One action on many links: enable, disable, add or remove a tag, delete.
+   * Each change keeps a version and sends its webhook, as one at a time would.
+   * The plan caps a request (bulkRows); the admin sends a big selection in parts.
+   */
+  .post("/links/bulk", validate("json", bulkSchema), async (c) => {
+    const { links, action, tag: rawTag } = c.req.valid("json");
+    const actor = c.get("actor");
+    const needs = action === "delete" ? "links.delete" : "links.edit";
+    if (!can(actor, needs)) return c.json({ error: `This needs the ${needs} permission.`, code: "forbidden" }, 403);
+    const { bulkRows } = planLimits(c.env);
+    if (links.length > bulkRows) {
+      return c.json({ error: `Change at most ${bulkRows} links per request on this Workers plan; send the rest in further requests.`, code: "too_many_rows" }, 413);
+    }
+    const tag = normalizeTags([rawTag ?? ""])[0] ?? "";
+    const { results } = await c.env.DB.prepare(
+      `SELECT * FROM links WHERE (domain, slug) IN (SELECT json_extract(value, '$.domain'), json_extract(value, '$.slug') FROM json_each(?))`,
+    )
+      .bind(JSON.stringify(links))
+      .all<LinkRow>();
+    const found = new Map(results.map((r) => [linkKey(r.domain, r.slug), r]));
+    const result: BulkResult = { changed: 0, unchanged: 0, failed: [] };
+    const seen = new Set<string>();
+    const rows: LinkRow[] = [];
+    for (const l of links) {
+      const key = linkKey(l.domain, l.slug);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const row = found.get(key);
+      if (row) rows.push(row);
+      else result.failed.push({ ...l, error: "Link not found" });
+    }
+    const identity = c.get("identity");
+    const now = nowSec();
+
+    if (action === "delete") {
+      // KV first, as for one link: a failure leaves the link in D1 to delete again.
+      const removed = await Promise.all(
+        rows.map(async (r) => {
+          try {
+            await c.env.LINKS.delete(kvKey(r.domain, r.slug));
+            return r;
+          } catch (err) {
+            console.error(JSON.stringify({ message: "kv delete failed", domain: r.domain, slug: r.slug, error: String(err) }));
+            result.failed.push({ domain: r.domain, slug: r.slug, error: "Couldn't remove it from KV; try again." });
+            return null;
+          }
+        }),
+      );
+      const gone = removed.filter((r): r is LinkRow => r !== null);
+      if (gone.length) {
+        await c.env.DB.batch(
+          gone.flatMap((r) => [
+            c.env.DB.prepare("DELETE FROM links WHERE domain = ? AND slug = ?").bind(r.domain, r.slug),
+            versionStmt(c.env.DB, r, "delete", identity),
+            c.env.DB.prepare("UPDATE stat_shares SET revoked_at = ? WHERE domain = ? AND slug = ? AND revoked_at IS NULL").bind(now, r.domain, r.slug),
+          ]),
+        );
+        await emitAll(c.env, gone.map((r) => ({ type: "link.deleted", data: { link: linkPayload(r) } })), { ctx: c.executionCtx });
+      }
+      result.changed = gone.length;
+      return c.json(result);
+    }
+
+    const changed: { before: LinkRow; after: LinkRow }[] = [];
+    for (const r of rows) {
+      const next: LinkRow = { ...r, updated_at: now };
+      if (action === "enable" || action === "disable") next.active = action === "enable" ? 1 : 0;
+      else {
+        const current = r.tags ? r.tags.split(",") : [];
+        const tags = action === "addTag" ? normalizeTags([...current, tag]) : current.filter((t) => t !== tag);
+        next.tags = tags.join(",");
+      }
+      if (next.active === r.active && next.tags === r.tags) result.unchanged++;
+      else changed.push({ before: r, after: next });
+    }
+    if (changed.length) {
+      await c.env.DB.batch(changed.flatMap(({ after }) => [updateStmt(c.env.DB, after), versionStmt(c.env.DB, after, "update", identity)]));
+      // Tags aren't part of the published record; turning a link on or off is.
+      if (action === "enable" || action === "disable") {
+        const defaultUtm = await getDefaultUtm(c.env.DB);
+        await Promise.all(
+          changed.map(async ({ after }) => {
+            try {
+              await publish(c.env, after, defaultUtm);
+            } catch (err) {
+              console.error(JSON.stringify({ message: "kv publish failed", domain: after.domain, slug: after.slug, error: String(err) }));
+              result.failed.push({ domain: after.domain, slug: after.slug, error: "Saved, but publishing failed; use Republish all links in Settings." });
+            }
+          }),
+        );
+      }
+      const events: Event[] = changed.map(({ before, after }) => ({ type: "link.updated", data: { link: linkPayload(after), changes: changedFields(before, after) } }));
+      await emitAll(c.env, events, { ctx: c.executionCtx });
+    }
+    result.changed = changed.length;
+    return c.json(result);
+  })
+
   .post("/links", validate("json", createLinkSchema), async (c) => {
     if (!configuredDomains(c.env).length) return c.json({ error: NO_DOMAIN_ERROR, code: "no_domain" }, 409);
     const body = c.req.valid("json");
@@ -302,10 +464,17 @@ export const linksApi = new Hono<AppEnv>()
     if (!routing.ok) return c.json({ error: routing.error, details: routing.details }, 400);
     const preview = previewFor(body.preview, null);
     if (!preview.ok) return c.json({ error: preview.error }, 400);
+    const bio = await bioFor(c, body.bio, null);
+    if (!bio.ok) return c.json({ error: bio.error }, 400);
 
     const now = nowSec();
+    // Malware or phishing, per Cloudflare's security DNS: saved, but visitors are warned first.
+    const flagged = await anyFlagged(c.env, destinationsOf(target.url, routing.json));
     const base: Omit<LinkRow, "slug"> = {
       domain,
+      unsafe: flagged ? UNSAFE_FLAGGED : UNSAFE_NONE,
+      unsafe_at: now,
+      bio: bio.json,
       target: target.url,
       active: body.active === false ? 0 : 1,
       expires_at: body.expiresAt ?? null,
@@ -412,6 +581,9 @@ export const linksApi = new Hono<AppEnv>()
     const preview = previewFor(body.preview, row.preview);
     if (!preview.ok) return c.json({ error: preview.error }, 400);
     next.preview = preview.json;
+    const bio = await bioFor(c, body.bio, row.bio ?? null);
+    if (!bio.ok) return c.json({ error: bio.error }, 400);
+    next.bio = bio.json;
     if (body.password !== undefined) next.password_hash = body.password === null ? null : await hashLinkPassword(c.env, body.password);
     if (body.maxClicks !== undefined) next.max_clicks = body.maxClicks;
     if (body.qr !== undefined) {
@@ -440,9 +612,18 @@ export const linksApi = new Hono<AppEnv>()
       next.off_redirect = o === "home" ? OFF_HOME : o ? linkKey(o.domain, o.slug) : null;
     }
 
+    // New destinations are looked up again; trusting a flagged one is the owner's call.
+    const destinationsChanged = next.target !== row.target || next.routing !== row.routing;
+    if (destinationsChanged) {
+      next.unsafe = (await anyFlagged(c.env, destinationsOf(next.target, next.routing))) ? UNSAFE_FLAGGED : UNSAFE_NONE;
+      next.unsafe_at = nowSec();
+    }
+    if (body.trustDestination !== undefined && (next.unsafe ?? 0) !== UNSAFE_NONE) next.unsafe = body.trustDestination ? UNSAFE_TRUSTED : UNSAFE_FLAGGED;
+    const unsafeChanged = (next.unsafe ?? 0) !== (row.unsafe ?? 0);
+
     // A new limit counts from now; changing an existing one keeps the count.
     if (row.max_clicks === null && next.max_clicks !== null) await resetCounter(c.env, next);
-    const changed = !sameSnapshot(snapshotOf(row), snapshotOf(next));
+    const changed = !sameSnapshot(snapshotOf(row), snapshotOf(next)) || unsafeChanged;
     return saveEdit(c, next, changed ? versionStmt(c.env.DB, next, "update", c.get("identity"), { at: next.updated_at }) : null, async (saved) => {
       if (changed) await emit(c.env, "link.updated", { link: linkPayload(saved), changes: changedFields(row, saved) }, { ctx: c.executionCtx });
     });
@@ -563,9 +744,20 @@ export const linksApi = new Hono<AppEnv>()
     return c.json({ tags });
   })
 
+  /** Renames a tag on every link that has it (or merges it into an existing one). */
+  .post("/tags/rename", validate("json", tagRenameSchema), async (c) => {
+    const { from, to: raw } = c.req.valid("json");
+    const to = normalizeTags([raw])[0];
+    if (!to) return c.json({ error: "Name the new tag" }, 400);
+    return c.json(await retag(c, from, to));
+  })
+
+  /** Removes a tag from every link that has it. */
+  .delete("/tags/:tag", validate("param", tagParamSchema), async (c) => c.json(await retag(c, c.req.valid("param").tag, null)))
+
   .post("/import", validate("json", importSchema), async (c) => {
     if (!configuredDomains(c.env).length) return c.json({ error: NO_DOMAIN_ERROR, code: "no_domain" }, 409);
-    const { rows, mode, dryRun, defaultDomain } = c.req.valid("json");
+    const { rows, mode, dryRun, defaultDomain, from } = c.req.valid("json");
     // Each row costs a KV write, and an invocation has 50 subrequests on Workers Free (src/worker/plan.ts).
     const { importRows, deliveriesNow } = planLimits(c.env);
     if (rows.length > importRows) {
@@ -585,6 +777,8 @@ export const linksApi = new Hono<AppEnv>()
     const seen = new Set<string>();
     const seenLower = new Map<string, string>();
     const fallbackDomain = defaultDomain || domainsOf(c.env).primary;
+    /** Rows that brought their own settings: an overwrite replaces those too. */
+    const withConfig = new Set<string>();
     const domainFor = (r: (typeof rows)[number]) => r.domain || fallbackDomain;
 
     const { results: existing } = await c.env.DB.prepare(
@@ -634,46 +828,85 @@ export const linksApi = new Hono<AppEnv>()
       const batchClash = seenLower.get(lowerKey);
       if (batchClash && batchClash !== r.slug) notes.push(`Differs only in case from "${batchClash}" in this import`);
       seenLower.set(lowerKey, r.slug);
+      // Another workspace's JSON export carries each link's settings: check them as a save would.
+      const cfg = r.config;
+      let routing: string | null = null;
+      let preview: string | null = null;
+      let qrStyle: string | null = null;
+      if (cfg) {
+        const rt = routingFor(c, cfg.routing ?? undefined, null);
+        if (!rt.ok) {
+          fail(rt.error);
+          continue;
+        }
+        const pv = previewFor(cfg.preview ?? undefined, null);
+        if (!pv.ok) {
+          fail(pv.error);
+          continue;
+        }
+        if (cfg.qr) {
+          const qr = validateQrStyle(cfg.qr);
+          if (!qr.ok) {
+            fail(`qr: ${qr.error}`);
+            continue;
+          }
+          qrStyle = JSON.stringify(qr.style);
+        }
+        const utmProblem = cfg.utmTemplate ? validateUtmTemplate(cfg.utmTemplate) : null;
+        if (utmProblem) {
+          fail(`utmTemplate: ${utmProblem}`);
+          continue;
+        }
+        routing = rt.json;
+        preview = pv.json;
+      }
       valid.push({
         domain,
         slug: r.slug,
         target: target.url,
-        active: 1,
-        expires_at: null,
-        utm: 0,
-        utm_template: null,
-        pass_query: 0,
+        active: cfg?.active === false ? 0 : 1,
+        expires_at: cfg?.expiresAt ?? null,
+        utm: cfg?.utm ? 1 : 0,
+        utm_template: cfg?.utmTemplate || null,
+        pass_query: cfg?.passQuery ? 1 : 0,
         title: r.title || null,
         tags: (r.tags ?? []).join(","),
-        notes: "",
+        notes: cfg?.notes ?? "",
         source: "import",
         imported_clicks: r.clicks ?? null,
+        import_from: from ?? null,
         broken: 0,
         replacement: null,
         off_redirect: null,
         monitor: MONITOR_DEFAULT,
-        routing: null,
-        preview: null,
-        qr: null,
+        routing,
+        preview,
+        qr: qrStyle,
         password_hash: null,
-        max_clicks: null,
+        max_clicks: cfg?.maxClicks ?? null,
         created_at: r.createdAt ?? now,
         updated_at: now,
       });
+      if (cfg) withConfig.add(key);
       results.push({ domain, slug: r.slug, status: exists ? "updated" : "created", message: notes.join("; ") || undefined });
     }
 
     if (!dryRun && valid.length > 0) {
       // Skip mode never overwrites, even a link created since the check above.
+      // Settings from a JSON export (?22 = 1) replace the existing link's; otherwise they're kept.
+      const fromConfig = (col: string) => `${col} = CASE WHEN ?22 = 1 THEN excluded.${col} ELSE links.${col} END`;
       const onConflict =
         mode === "overwrite"
           ? `DO UPDATE SET target = excluded.target, title = COALESCE(excluded.title, links.title),
            imported_clicks = COALESCE(excluded.imported_clicks, links.imported_clicks), source = 'import',
+           import_from = COALESCE(excluded.import_from, links.import_from),
+           ${["active", "expires_at", "utm", "utm_template", "pass_query", "notes", "routing", "preview", "qr", "max_clicks"].map(fromConfig).join(", ")},
            updated_at = excluded.updated_at`
           : "DO NOTHING";
       const stmt = c.env.DB.prepare(
-        `INSERT INTO links (domain, slug, target, active, expires_at, utm, utm_template, pass_query, title, tags, notes, source, imported_clicks, monitor, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO links (domain, slug, target, active, expires_at, utm, utm_template, pass_query, title, tags, notes, source, imported_clicks, monitor,
+           routing, preview, qr, max_clicks, import_from, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
          ON CONFLICT (domain, slug) ${onConflict}`,
       );
       const keysJson = JSON.stringify(valid.map((r) => [r.domain, r.slug]));
@@ -694,8 +927,15 @@ export const linksApi = new Hono<AppEnv>()
             r.source,
             r.imported_clicks,
             r.monitor,
+            r.routing,
+            r.preview,
+            r.qr,
+            r.max_clicks,
+            r.import_from ?? null,
             r.created_at,
             r.updated_at,
+            // ?22 only appears in the overwrite statement.
+            ...(mode === "overwrite" ? [withConfig.has(linkKey(r.domain, r.slug)) ? 1 : 0] : []),
           ),
         ),
         // A version per imported link, with what D1 now holds (an overwrite keeps the link's other settings).
@@ -751,6 +991,23 @@ export const linksApi = new Hono<AppEnv>()
     return c.json(result);
   })
 
+  /**
+   * One page of links from Bitly, Rebrandly, Short.io or Dub, for the import
+   * page to preview and import like a file. The key is used for this request
+   * only: never stored, never logged, never sent back.
+   */
+  .post("/import/pull", validate("json", pullSchema), async (c) => {
+    const { vendor, apiKey, cursor, clicks } = c.req.valid("json");
+    try {
+      const page = await pullLinks(vendor, apiKey, cursor ?? null, planLimits(c.env).pullCalls, { clicks });
+      return c.json(page);
+    } catch (err) {
+      if (err instanceof VendorError) return c.json({ error: err.message }, err.status);
+      console.error(JSON.stringify({ message: "import pull failed", vendor, error: String(err) }));
+      return c.json({ error: "Reading the links failed. Try again." }, 502);
+    }
+  })
+
   .post("/resync", validate("query", resyncQuerySchema), async (c) => {
     // Republishes links to KV in pages sized to the Workers plan (one KV write
     // each; src/worker/plan.ts). Call again with `next` until it is null.
@@ -770,15 +1027,25 @@ export const linksApi = new Hono<AppEnv>()
     return c.json({ published: results.length, next: results.length === page && last ? linkKey(last.domain, last.slug) : null });
   })
 
-  .get("/export/links.csv", async (c) => {
-    const { results } = await c.env.DB.prepare("SELECT * FROM links ORDER BY created_at").all<LinkRow>();
+  .get("/export/links.csv", validate("query", exportQuerySchema), async (c) => {
+    const { links: picked, ...filter } = c.req.valid("query");
+    const { scope } = await getCheckSettings(c.env.DB);
+    const { where, params } = listFilter(filter, scope);
+    if (picked) {
+      // A selection: "domain/slug" keys, comma-separated.
+      params.push(JSON.stringify(picked.split(",").filter(Boolean)));
+      where.push(`(domain || '/' || slug) IN (SELECT value FROM json_each(?${params.length}))`);
+    }
+    const { results } = await c.env.DB.prepare(`SELECT * FROM links ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY created_at`)
+      .bind(...params)
+      .all<LinkRow>();
     // An out-of-range date (an import from elsewhere) is left blank rather than failing the export.
     const iso = (s: number | null) => {
       const d = new Date((s ?? NaN) * 1000);
       return Number.isFinite(d.getTime()) ? d.toISOString() : "";
     };
     const body = csv([
-      ["domain", "slug", "short_url", "target", "active", "expires_at", "utm", "utm_template", "pass_query", "title", "tags", "notes", "source", "imported_clicks", "created_at", "updated_at", "broken", "replacement", "monitor", "routing", "preview", "qr", "password_protected", "max_clicks"],
+      ["domain", "slug", "short_url", "target", "active", "expires_at", "utm", "utm_template", "pass_query", "title", "tags", "notes", "source", "imported_clicks", "created_at", "updated_at", "broken", "replacement", "monitor", "routing", "preview", "qr", "password_protected", "max_clicks", "off_redirect"],
       ...results.map((r) => [
         r.domain,
         r.slug,
@@ -804,10 +1071,52 @@ export const linksApi = new Hono<AppEnv>()
         r.qr,
         r.password_hash ? 1 : 0,
         r.max_clicks,
+        r.off_redirect,
       ]),
     ]);
     return c.body(body, 200, {
       "Content-Type": "text/csv; charset=utf-8",
       "Content-Disposition": `attachment; filename="shorthop-links-${new Date().toISOString().slice(0, 10)}.csv"`,
+    });
+  })
+
+  /**
+   * Every link with its settings, for another workspace's import: the rows are
+   * import rows, settings in `config`. Clicks are the lifetime total (counted
+   * here, plus any imported before). Passwords are never exported.
+   */
+  .get("/export/links.json", async (c) => {
+    const [{ results }, counted] = await Promise.all([
+      c.env.DB.prepare("SELECT * FROM links ORDER BY created_at").all<LinkRow>(),
+      can(c.get("actor"), "stats.view") ? clicksByLink(c.env, "all") : Promise.resolve(new Map<string, number>()),
+    ]);
+    const links = results.map((r) => {
+      const clicks = (r.imported_clicks ?? 0) + (counted.get(linkKey(r.domain, r.slug)) ?? 0);
+      return {
+        domain: r.domain,
+        slug: r.slug,
+        target: r.target,
+        title: r.title,
+        tags: r.tags ? r.tags.split(",") : [],
+        clicks: clicks || null,
+        createdAt: r.created_at,
+        config: {
+          notes: r.notes,
+          active: r.active === 1,
+          expiresAt: r.expires_at,
+          utm: r.utm === 1,
+          utmTemplate: r.utm_template,
+          passQuery: r.pass_query === 1,
+          routing: parseRouting(r.routing),
+          preview: parsePreview(r.preview),
+          qr: r.qr ? (JSON.parse(r.qr) as Record<string, unknown>) : null,
+          maxClicks: r.max_clicks,
+        },
+      };
+    });
+    const body = JSON.stringify({ format: "shorthop-links", version: 1, exportedAt: new Date().toISOString(), links }, null, 1);
+    return c.body(body, 200, {
+      "Content-Type": "application/json; charset=utf-8",
+      "Content-Disposition": `attachment; filename="shorthop-links-${new Date().toISOString().slice(0, 10)}.json"`,
     });
   });

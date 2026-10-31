@@ -34,6 +34,13 @@ import { bucketEdges, localDate, localMidnight } from "../../shared/tz";
 import { aeAvailable, aeQuery, webDataset } from "../ae";
 import { aeFirstDay } from "./rollup";
 
+/**
+ * Visits that happened on the site. A short link's click straight to a checkout
+ * becomes a visit only so its sale is credited (via = 'checkout'); it counts in
+ * revenue, never in traffic. Needs the sessions table aliased "s".
+ */
+export const ON_SITE = "s.via = ''";
+
 const utcDayOf = (sec: number) => dateFromDaySec(Math.floor(sec / 86400) * 86400);
 
 export const NOT_MATCHED = "(not matched)";
@@ -155,7 +162,7 @@ export async function totals(db: D1Database, site: SiteDTO, start: number, end: 
            COUNT(DISTINCT CASE WHEN s.goals > 0 THEN s.visitor_id END) AS goal_visitors,
            COUNT(DISTINCT CASE WHEN s.checkout_at IS NOT NULL THEN s.visitor_id END) AS checkout_visitors,
            COUNT(DISTINCT CASE WHEN s.link_slug != '' THEN s.visitor_id END) AS link_visitors
-         FROM web_sessions s WHERE s.site_id = ?1 AND s.started_at >= ?2 AND s.started_at < ?3${f.sql}`,
+         FROM web_sessions s WHERE s.site_id = ?1 AND s.started_at >= ?2 AND s.started_at < ?3 AND ${ON_SITE}${f.sql}`,
       )
       .bind(site.id, start, end, ...f.binds),
     db.prepare(moneySql(f)).bind(site.id, start, end, ...f.binds),
@@ -203,7 +210,7 @@ export async function series(db: D1Database, site: SiteDTO, w: Window, f: Filter
         `${cte} SELECT b.i AS i, COUNT(DISTINCT s.visitor_id) AS visitors, COUNT(*) AS sessions, SUM(s.pageviews) AS pageviews,
            SUM(s.engaged_ms) AS engaged, SUM(CASE WHEN s.goals > 0 THEN 1 ELSE 0 END) AS converted
          FROM b JOIN web_sessions s ON s.site_id = ?1 AND s.started_at >= b.lo AND s.started_at < b.hi
-         WHERE s.started_at >= ?2 AND s.started_at < ?3${f.sql} GROUP BY b.i`,
+         WHERE s.started_at >= ?2 AND s.started_at < ?3 AND ${ON_SITE}${f.sql} GROUP BY b.i`,
       )
       .bind(site.id, w.start, w.end, ...f.binds),
     db
@@ -245,7 +252,7 @@ export async function spikesIn(db: D1Database, siteId: string, w: Window): Promi
 }
 
 export async function onlineNow(db: D1Database, siteId: string, now = Math.floor(Date.now() / 1000)): Promise<number> {
-  const row = await db.prepare("SELECT COUNT(DISTINCT visitor_id) AS n FROM web_sessions WHERE site_id = ?1 AND last_seen_at > ?2").bind(siteId, now - ONLINE_SEC).first<{ n: number }>();
+  const row = await db.prepare(`SELECT COUNT(DISTINCT visitor_id) AS n FROM web_sessions s WHERE site_id = ?1 AND last_seen_at > ?2 AND ${ON_SITE}`).bind(siteId, now - ONLINE_SEC).first<{ n: number }>();
   return row?.n ?? 0;
 }
 
@@ -263,7 +270,7 @@ export async function breakdown(db: D1Database, site: SiteDTO, dim: SiteDim, w: 
     db
       .prepare(
         `SELECT ${col} AS value, COUNT(DISTINCT s.visitor_id) AS visitors, COUNT(*) AS sessions, SUM(s.pageviews) AS pageviews
-         FROM web_sessions s WHERE s.site_id = ?1 AND s.started_at >= ?2 AND s.started_at < ?3${f.sql}
+         FROM web_sessions s WHERE s.site_id = ?1 AND s.started_at >= ?2 AND s.started_at < ?3 AND ${ON_SITE}${f.sql}
          GROUP BY value ORDER BY visitors DESC LIMIT ${Math.floor(limit)}`,
       )
       .bind(site.id, w.start, w.end, ...f.binds),
@@ -531,7 +538,7 @@ export function sessionDTO(r: SessionRow): SessionDTO {
 
 /** The latest visits, newest first (the live list). */
 export async function recentSessions(d1: D1Database, siteId: string, limit: number): Promise<SessionDTO[]> {
-  const { results } = await d1.prepare(`SELECT * FROM web_sessions WHERE site_id = ?1 ORDER BY last_seen_at DESC LIMIT ${Math.floor(limit)}`).bind(siteId).all<SessionRow>();
+  const { results } = await d1.prepare(`SELECT * FROM web_sessions s WHERE site_id = ?1 AND ${ON_SITE} ORDER BY last_seen_at DESC LIMIT ${Math.floor(limit)}`).bind(siteId).all<SessionRow>();
   return results.map(sessionDTO);
 }
 
@@ -634,13 +641,13 @@ export async function siteSummaries(d1: D1Database, sites: SiteDTO[], now = Math
            COUNT(DISTINCT CASE WHEN started_at >= ?4 THEN visitor_id END) AS v7,
            COUNT(DISTINCT CASE WHEN started_at >= ?5 AND started_at < ?4 THEN visitor_id END) AS prev7,
            COUNT(DISTINCT visitor_id) AS v30
-         FROM web_sessions WHERE started_at >= ?1 GROUP BY site_id`,
+         FROM web_sessions s WHERE started_at >= ?1 AND ${ON_SITE} GROUP BY site_id`,
       )
       .bind(now - 30 * DAY, now - DAY, now - ONLINE_SEC, now - 7 * DAY, now - 14 * DAY),
     // Hours, so each site's days can be cut in its own time zone below.
-    d1.prepare("SELECT site_id, started_at / 3600 AS h, COUNT(*) AS n FROM web_sessions WHERE started_at >= ?1 GROUP BY site_id, h").bind(now - 15 * DAY),
-    d1.prepare("SELECT site_id, source, COUNT(*) AS n FROM web_sessions WHERE started_at >= ?1 GROUP BY site_id, source").bind(now - 7 * DAY),
-    d1.prepare("SELECT site_id, MAX(last_seen_at) AS at FROM web_sessions GROUP BY site_id"),
+    d1.prepare(`SELECT site_id, started_at / 3600 AS h, COUNT(*) AS n FROM web_sessions s WHERE started_at >= ?1 AND ${ON_SITE} GROUP BY site_id, h`).bind(now - 15 * DAY),
+    d1.prepare(`SELECT site_id, source, COUNT(*) AS n FROM web_sessions s WHERE started_at >= ?1 AND ${ON_SITE} GROUP BY site_id, source`).bind(now - 7 * DAY),
+    d1.prepare(`SELECT site_id, MAX(last_seen_at) AS at FROM web_sessions s WHERE ${ON_SITE} GROUP BY site_id`),
     d1
       .prepare(
         `SELECT p.site_id AS site_id,
@@ -700,4 +707,31 @@ export async function siteSummaries(d1: D1Database, sites: SiteDTO[], now = Math
     if (e) Object.assign(e, { revenue30d: n(r.revenue), revenuePrev30d: n(r.prev), customers30d: n(r.customers) });
   }
   return out;
+}
+
+/**
+ * Revenue credited to a set of short links (a campaign report): one query,
+ * per link and site currency, between since and until (unix seconds).
+ */
+export async function campaignRevenue(
+  d1: D1Database,
+  links: readonly { domain: string; slug: string }[],
+  since: number,
+  until: number,
+): Promise<{ domain: string; slug: string; currency: string; revenue: number; payments: number }[]> {
+  if (!links.length) return [];
+  const { results } = await d1
+    .prepare(
+      `SELECT s.link_domain AS domain, s.link_slug AS slug, st.currency AS currency,
+         SUM(COALESCE(p.amount_site_minor, 0)) AS revenue, SUM(CASE WHEN p.kind = 'charge' THEN 1 ELSE 0 END) AS payments
+       FROM payments p
+       JOIN web_sessions s ON s.id = p.credited_session_id
+       JOIN sites st ON st.id = p.site_id
+       WHERE p.test_mode = 0 AND p.occurred_at >= ?2 AND p.occurred_at < ?3
+         AND (s.link_domain || '/' || s.link_slug) IN (SELECT value FROM json_each(?1))
+       GROUP BY s.link_domain, s.link_slug, st.currency`,
+    )
+    .bind(JSON.stringify(links.map((l) => `${l.domain}/${l.slug}`)), since, until)
+    .all<{ domain: string; slug: string; currency: string; revenue: number; payments: number }>();
+  return results.map((r) => ({ ...r, revenue: Number(r.revenue ?? 0), payments: Number(r.payments ?? 0) }));
 }

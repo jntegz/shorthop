@@ -1,13 +1,30 @@
 // Response shapes of the admin API, shared by the Worker and the SPA.
 
 import type { HistoryAction, StoredSnapshot } from "./history";
+import type { BioPage } from "./bio";
 import type { CheckProblem, CheckScope, CheckState } from "./link-check";
 import type { Actor, Permission, Role } from "./permissions";
 import type { LinkPreview } from "./preview";
 import type { QrStyle } from "./qr";
 import type { Routing } from "./routing";
 
+/** "import" is every imported link (the name is older than the other sources). */
 export type LinkSource = "native" | "import";
+
+/** Shorteners the import can pull from by API. */
+export const IMPORT_VENDORS = ["bitly", "rebrandly", "shortio", "dub"] as const;
+export type ImportVendor = (typeof IMPORT_VENDORS)[number];
+/** Where an imported link came from: a vendor, a CSV, or another Shorthop's JSON export. */
+export const IMPORT_SOURCES = [...IMPORT_VENDORS, "csv", "json"] as const;
+export type ImportSource = (typeof IMPORT_SOURCES)[number];
+export const IMPORT_SOURCE_LABEL: Record<ImportSource, string> = {
+  bitly: "Bitly",
+  rebrandly: "Rebrandly",
+  shortio: "Short.io",
+  dub: "Dub",
+  csv: "the imported file",
+  json: "the other workspace",
+};
 
 export interface LinkDTO {
   /** The short domain the link lives on; slugs are unique per domain. */
@@ -27,6 +44,12 @@ export interface LinkDTO {
   notes: string;
   source: LinkSource;
   importedClicks: number | null;
+  /** Imported links: where from (null for links made here, and for older imports without a record). */
+  importFrom: ImportSource | null;
+  /** Cloudflare's security DNS flags the destination ("flagged": visitors are warned), or the owner trusts it anyway. */
+  unsafe: "flagged" | "trusted" | null;
+  /** A link-in-bio page shown instead of redirecting; null for an ordinary link. */
+  bio: BioPage | null;
   /** Marked "no longer working": visitors see a notice instead of the target. */
   broken: boolean;
   /** The link that notice points to; null sends visitors to the site set in Settings. */
@@ -161,6 +184,8 @@ export interface WebhookDTO {
   description: string;
   events: string[];
   active: boolean;
+  /** link.clicked only for links with one of these tags; empty for every link. */
+  clickTags: string[];
   createdAt: number;
   /** False after its encryption key (ENCRYPTION_KEY or SESSION_SECRET) changed: rotate the secret. */
   secretReadable: boolean;
@@ -198,6 +223,18 @@ export interface ImportRowResult {
   slug: string;
   status: "created" | "updated" | "skipped" | "error";
   message?: string;
+}
+
+export const BULK_ACTIONS = ["enable", "disable", "addTag", "removeTag", "delete"] as const;
+export type BulkAction = (typeof BULK_ACTIONS)[number];
+
+export interface BulkResult {
+  /** Links the action changed. */
+  changed: number;
+  /** Links already that way (enabling an enabled link). */
+  unchanged: number;
+  /** Links that weren't found, or whose change failed. */
+  failed: { domain: string; slug: string; error: string }[];
 }
 
 export interface ImportResult {
@@ -264,6 +301,11 @@ export interface ComparisonDTO {
   previous: Totals & { from: string; to: string };
   /** Daily totals of the previous period, oldest first, for the chart overlay. */
   series: SeriesPoint[];
+}
+
+/** Several links' statistics together (a campaign report), with each link's own totals. */
+export interface CampaignStatsDTO extends Omit<LinkStatsDTO, "domain" | "slug"> {
+  links: (Totals & { domain: string; slug: string })[];
 }
 
 export interface LinkStatsDTO {
@@ -455,6 +497,10 @@ export interface MeDTO {
     demo: DemoDTO | null;
     /** Rows one import request may carry: sized to the Workers plan's subrequest limit. */
     importRows: number;
+    /** Links one bulk action may change on this Workers plan. */
+    bulkRows: number;
+    /** Workers AI is bound: slug and preview suggestions are offered. */
+    aiAvailable: boolean;
     /** Which links Link health checks (the link form explains its switches by it). */
     checkScope: CheckScope;
     /** Where "the main site" sends visitors (FALLBACK_URL). */
@@ -673,4 +719,16 @@ export interface ShareDTO {
   revokedAt: number | null;
   views: number;
   lastViewedAt: number | null;
+  /** What it shows: one link, every link with a tag, or a picked set (campaign reports). */
+  scope: "link" | "tag" | "set";
+  /** Campaign reports: the page heading. */
+  title: string | null;
+  tag: string | null;
+  /** scope "set": "domain/slug" of each link. */
+  links: string[] | null;
+  /** Campaign reports: revenue credited to the links is shown. */
+  showRevenue: boolean;
 }
+
+/** Most links a campaign report covers. */
+export const MAX_REPORT_LINKS = 50;

@@ -7,6 +7,7 @@ import { isProbePath } from "../shared/slug";
 import {
   DIMS,
   type BreakdownRow,
+  type CampaignStatsDTO,
   type ComparisonDTO,
   type Dim,
   type AccountStatsDTO,
@@ -20,7 +21,9 @@ import {
   type TopLink,
   type Totals,
 } from "../shared/types";
-import { aeAvailable, queryTotalsByLink, type LinkFilter } from "./ae";
+import { aeAvailable, queryHourly, queryTotalsByLink, type LinkFilter } from "./ae";
+import { localSlot } from "./web/insights";
+import type { PeakHoursDTO } from "../shared/sites";
 import { getSetting, jsonChunks, nowSec } from "./db";
 import { getMissPolicy, ignoredMisses, isCleared, isProbeCleared, keptByPolicy, missesCleared, missKind } from "./misses";
 import { collectFromAE } from "./rollup";
@@ -113,13 +116,28 @@ class Aggregate {
 
 const COMBO_DIMS = ["country", "device", "source"] as const;
 
-type Link = Required<LinkFilter>;
+type Link = { domain: string; slug: string };
+/** One link, several (a campaign report), or every link when undefined. */
+type Scope = Link | readonly Link[] | undefined;
 
-async function addD1(env: Env, agg: Aggregate, w: Windows, link: Link | undefined, withDims: boolean) {
+/** The D1 condition for a scope, with its values bound from ?3. */
+function scopeSql(scope: Scope): { sql: string; binds: string[] } {
+  if (scope === undefined) return { sql: "", binds: [] };
+  if (Array.isArray(scope)) return { sql: " AND (domain || '/' || slug) IN (SELECT value FROM json_each(?3))", binds: [JSON.stringify(scope.map((l) => `${l.domain}/${l.slug}`))] };
+  const one = scope as Link;
+  return { sql: " AND domain = ?3 AND slug = ?4", binds: [one.domain, one.slug] };
+}
+
+function aeFilter(scope: Scope): LinkFilter | undefined {
+  if (scope === undefined) return undefined;
+  return Array.isArray(scope) ? { links: scope } : (scope as Link);
+}
+
+async function addD1(env: Env, agg: Aggregate, w: Windows, link: Scope, withDims: boolean) {
   if (!w.d1) return;
-  const slugSql = link === undefined ? "" : " AND domain = ?3 AND slug = ?4";
-  const bind = (s: D1PreparedStatement) =>
-    link === undefined ? s.bind(w.d1!.from, w.d1!.to) : s.bind(w.d1!.from, w.d1!.to, link.domain, link.slug);
+  const scoped = scopeSql(link);
+  const slugSql = scoped.sql;
+  const bind = (s: D1PreparedStatement) => s.bind(w.d1!.from, w.d1!.to, ...scoped.binds);
   const stmts = [
     bind(
       env.DB.prepare(
@@ -152,9 +170,9 @@ async function addD1(env: Env, agg: Aggregate, w: Windows, link: Link | undefine
   for (const r of dims?.results ?? []) agg.addDim(r.dim as Dim, String(r.value ?? ""), Number(r.clicks), Number(r.bots));
 }
 
-async function addAE(env: Env, agg: Aggregate, w: Windows, link: Link | undefined, withDims: boolean) {
+async function addAE(env: Env, agg: Aggregate, w: Windows, link: Scope, withDims: boolean) {
   if (!w.ae) return;
-  const { stats, dims } = await collectFromAE(env, w.ae.fromSec, w.ae.toSec, { link, dims: withDims, misses: false });
+  const { stats, dims } = await collectFromAE(env, w.ae.fromSec, w.ae.toSec, { link: aeFilter(link), dims: withDims, misses: false });
   for (const r of stats) for (const d of COMBO_DIMS) agg.addDim(d, r[d], r.clicks, r.bots);
   for (const r of dims) {
     if (r.dim === "total") agg.addSeries(r.date, r.clicks, r.uniques, r.bots);
@@ -178,7 +196,7 @@ async function safeAE(fn: () => Promise<void>): Promise<boolean> {
  * so a period that includes today isn't measured against full days; the
  * previous one ends the day before the selected period starts.
  */
-async function comparison(env: Env, period: Period, from: string, series: SeriesPoint[], now: Date, link?: Link): Promise<ComparisonDTO | null> {
+async function comparison(env: Env, period: Period, from: string, series: SeriesPoint[], now: Date, link?: Scope): Promise<ComparisonDTO | null> {
   if (period.range === "all" || period.range === "today") return null;
   const today = utcDate(now);
   const done = series.filter((p) => p.date < today);
@@ -187,12 +205,12 @@ async function comparison(env: Env, period: Period, from: string, series: Series
   const days = daysBetween(from, to) + 1;
   const prevTo = addDays(from, -1);
   const prevFrom = addDays(prevTo, -(days - 1));
-  const filter = link ? " AND domain = ?3 AND slug = ?4" : "";
+  const scoped = scopeSql(link);
   const { results } = await env.DB.prepare(
     `SELECT date, SUM(clicks) AS clicks, SUM(uniques) AS uniques, SUM(bots) AS bots FROM daily_dims
-     WHERE dim = 'total' AND date BETWEEN ?1 AND ?2${filter} GROUP BY date`,
+     WHERE dim = 'total' AND date BETWEEN ?1 AND ?2${scoped.sql} GROUP BY date`,
   )
-    .bind(prevFrom, prevTo, ...(link ? [link.domain, link.slug] : []))
+    .bind(prevFrom, prevTo, ...scoped.binds)
     .all<SeriesPoint>();
   const byDate = new Map(results.map((r) => [r.date, r]));
   const prevSeries: SeriesPoint[] = [];
@@ -222,6 +240,61 @@ export async function linkStats(env: Env, domain: string, slug: string, period: 
     series,
     dims,
     comparison: await comparison(env, period, w.from, series, now, link),
+  };
+}
+
+/**
+ * Statistics of several links together (a campaign or sponsor report), with
+ * each link's own totals. Daily visitors are added up per link, so a person
+ * who clicked two of the links counts twice.
+ */
+export async function multiLinkStats(env: Env, links: readonly Link[], period: Period, now = new Date()): Promise<CampaignStatsDTO> {
+  const w = await windows(env, period, now);
+  const agg = new Aggregate();
+  const perLink = new Map<string, Totals & Link>(links.map((l) => [linkKey(l.domain, l.slug), { domain: l.domain, slug: l.slug, clicks: 0, uniques: 0, bots: 0 }]));
+  const addLink = (domain: string, slug: string, clicks: number, uniques: number, bots: number) => {
+    const t = perLink.get(linkKey(domain, slug));
+    if (!t) return;
+    t.clicks += clicks;
+    t.uniques += uniques;
+    t.bots += bots;
+  };
+  const scoped = scopeSql(links);
+  const d1Links = async () => {
+    if (!w.d1 || !links.length) return;
+    const { results } = await env.DB.prepare(
+      `SELECT domain, slug, SUM(clicks) AS clicks, SUM(uniques) AS uniques, SUM(bots) AS bots FROM daily_dims
+       WHERE dim = 'total' AND date BETWEEN ?1 AND ?2${scoped.sql} GROUP BY domain, slug`,
+    )
+      .bind(w.d1.from, w.d1.to, ...scoped.binds)
+      .all<{ domain: string; slug: string; clicks: number; uniques: number; bots: number }>();
+    for (const r of results) addLink(r.domain, r.slug, r.clicks, r.uniques, r.bots);
+  };
+  const ae = async () => {
+    if (!w.ae || !links.length) return;
+    const { stats, dims } = await collectFromAE(env, w.ae.fromSec, w.ae.toSec, { link: { links }, dims: true, misses: false });
+    for (const r of stats) for (const d of COMBO_DIMS) agg.addDim(d, r[d], r.clicks, r.bots);
+    for (const r of dims) {
+      if (r.dim === "total") {
+        agg.addSeries(r.date, r.clicks, r.uniques, r.bots);
+        addLink(r.domain, r.slug, r.clicks, r.uniques, r.bots);
+      } else if ((DIMS as readonly string[]).includes(r.dim)) agg.addDim(r.dim as Dim, r.value, r.clicks, r.bots);
+    }
+  };
+  const [, , aeOk] = links.length
+    ? await Promise.all([addD1(env, agg, w, links, true), d1Links(), safeAE(ae)])
+    : [undefined, undefined, true];
+  const series = agg.seriesList(w.from, w.to);
+  return {
+    range: period.range,
+    from: w.from,
+    to: w.to,
+    aeAvailable: w.aeAvailable && aeOk,
+    totals: agg.totals(),
+    series,
+    dims: Object.fromEntries(DIMS.map((d) => [d, agg.breakdown(d)])) as Record<Dim, BreakdownRow[]>,
+    comparison: links.length ? await comparison(env, period, w.from, series, now, links) : null,
+    links: [...perLink.values()].sort((a, b) => b.clicks - a.clicks || a.slug.localeCompare(b.slug)),
   };
 }
 
@@ -428,4 +501,29 @@ export async function clicksByLink(env: Env, range: Range, now = new Date()): Pr
     }
   });
   return out;
+}
+
+/**
+ * Clicks by weekday and hour in the viewer's time zone, for one link or all:
+ * from Analytics Engine (the rollups keep days, not hours), so 89 days at most.
+ */
+export async function clickPeakHours(env: Env, link: Link | undefined, days: number, tz: string, now = new Date()): Promise<PeakHoursDTO & { aeAvailable: boolean; days: number }> {
+  const span = Math.min(Math.max(1, Math.floor(days)), 89);
+  const cells = Array.from({ length: 7 }, () => new Array<number>(24).fill(0));
+  if (!aeAvailable(env)) return { metric: "visits", cells, top: [], total: 0, aeAvailable: false, days: span };
+  const to = Math.floor(now.getTime() / 1000) + 60;
+  const rows = await queryHourly(env, to - span * 86400, to, link);
+  let total = 0;
+  for (const r of rows) {
+    // The hour's middle, so a half-hour zone lands in the right local hour.
+    const { day, hour } = localSlot(r.h + 1800, tz);
+    cells[day]![hour]! += r.v;
+    total += r.v;
+  }
+  const top = cells
+    .flatMap((row, day) => row.map((value, hour) => ({ day, hour, value })))
+    .filter((c) => c.value > 0)
+    .sort((a, b) => b.value - a.value)
+    .slice(0, 3);
+  return { metric: "visits", cells, top, total, aeAvailable: true, days: span };
 }

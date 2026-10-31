@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { addDays, isDay, isoWeek, periodBounds, rangeBounds } from "../src/shared/dates";
 import { DEFAULT_DEAD_LINK, normalizeDeadLink, renderDeadLink } from "../src/shared/dead-link";
-import { DEFAULT_NOT_FOUND } from "../src/shared/not-found";
-import { normalizeTags } from "../src/shared/schemas";
+import { DEFAULT_NOT_FOUND, normalizeNotFound, renderNotFound } from "../src/shared/not-found";
+import { normalizeTags, notFoundSchema } from "../src/shared/schemas";
 import { generateSlug, isProbePath, isRoutableSlug, validateSlug } from "../src/shared/slug";
 import { buildLocation, normalizeTarget, renderUtm, splitOwnParams, validateUtmTemplate } from "../src/shared/target";
 import { csvCell } from "../src/worker/hono";
@@ -163,5 +163,35 @@ describe("dead-link page", () => {
     const html = renderDeadLink(page, DEFAULT_NOT_FOUND, { domain: "sh.example", address: "sh.example/x", imageSrc: null }, { kind: "gone", redirectUrl: 'https://a.example/?q="1"' });
     expect(html).toContain("&#60;b&#62;bye&#60;/b&#62; in 9");
     expect(html).toContain('content="9;url=https://a.example/?q=&#34;1&#34;"');
+  });
+});
+
+describe("page dark mode", () => {
+  const opts = { domain: "sh.example", address: "sh.example/x", fallbackUrl: "https://example.com", imageSrc: null };
+
+  it("follows the visitor's dark mode by default", () => {
+    const html = renderNotFound(normalizeNotFound({}), opts);
+    expect(html).toContain("@media (prefers-color-scheme: dark)");
+    expect(html).toContain(`--bg:${DEFAULT_NOT_FOUND.darkBackground}`);
+  });
+
+  it("stays light when the owner turns the dark version off", () => {
+    const html = renderNotFound(normalizeNotFound({ dark: false }), opts);
+    expect(html).not.toContain("prefers-color-scheme");
+    expect(html).not.toContain(DEFAULT_NOT_FOUND.darkBackground);
+  });
+
+  it("previews one scheme without the media query", () => {
+    const dark = renderNotFound(normalizeNotFound({}), { ...opts, scheme: "dark" });
+    expect(dark).not.toContain("prefers-color-scheme");
+    expect(dark).toContain(`--bg:${DEFAULT_NOT_FOUND.darkBackground}`);
+  });
+
+  it("replaces bad dark colors and accepts pages saved before dark mode", () => {
+    expect(normalizeNotFound({ darkCard: "red" }).darkCard).toBe(DEFAULT_NOT_FOUND.darkCard);
+    const { dark: _d, darkBackground: _b, darkCard: _c, darkText: _t, darkAccent: _a, image: _i, ...old } = DEFAULT_NOT_FOUND;
+    const parsed = notFoundSchema.parse(old);
+    expect(parsed.dark).toBe(true);
+    expect(parsed.darkBackground).toBe(DEFAULT_NOT_FOUND.darkBackground);
   });
 });

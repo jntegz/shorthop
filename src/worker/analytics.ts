@@ -358,8 +358,15 @@ export function buildDataPoint(
       cap(input.domain),
       input.route ?? "",
     ],
-    doubles: [1, c.isBot ? 1 : 0, Number(cf?.asn ?? 0)],
+    // double4/5: where the visitor is, to the nearest 0.1° (about 11 km, city level), for the live map. 0, 0 when unknown.
+    doubles: [1, c.isBot ? 1 : 0, Number(cf?.asn ?? 0), coarse(cf?.latitude), coarse(cf?.longitude)],
   };
+}
+
+/** A coordinate rounded to a tenth of a degree; 0 when Cloudflare didn't send one. */
+export function coarse(v: string | number | undefined | null): number {
+  const n = typeof v === "number" ? v : Number.parseFloat(String(v ?? ""));
+  return Number.isFinite(n) ? Math.round(n * 10) / 10 : 0;
 }
 
 /** Records one hit. Never throws: analytics must not affect redirects. */

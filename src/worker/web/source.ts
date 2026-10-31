@@ -151,9 +151,7 @@ export function attributionOf(landing: URL | null, referrerHost: string, click: 
   const ref = cap(q?.get("ref") ?? q?.get("via") ?? null, 100);
 
   if (click) {
-    // The link's own source tag (or where the click came from) names it.
-    const fromLink = LINK_SOURCES[click.source] ?? (click.source ? known(click.source)?.name ?? click.source : "");
-    return { source: fromLink || `${click.domain}/${click.slug}`, channel: "Short link", utm, link: { domain: click.domain, slug: click.slug } };
+    return { source: shortLinkSource(click.source, click.domain, click.slug), channel: "Short link", utm, link: { domain: click.domain, slug: click.slug } };
   }
 
   for (const [param, name] of CLICK_IDS) {
@@ -192,4 +190,10 @@ function directSource(landing: URL | null, hints: DirectHints): string {
 /** True when a landing carries campaign information that should start a new session. */
 export function hasCampaign(a: Attribution): boolean {
   return Boolean(a.link || a.utm.source || a.utm.campaign || a.channel === "Paid");
+}
+
+/** A visit from a short link is named by the link's source tag (or where the click came from), else the link. */
+export function shortLinkSource(source: string, domain: string, slug: string): string {
+  const fromLink = LINK_SOURCES[source] ?? (source ? known(source)?.name ?? source : "");
+  return fromLink || `${domain}/${slug}`;
 }

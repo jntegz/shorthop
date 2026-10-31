@@ -3,11 +3,12 @@
 // ends when it expires, is revoked, or the link is deleted.
 
 import { Hono } from "hono";
-import { createShareSchema, linkParamSchema, shareParamSchema, updateShareSchema } from "../../shared/schemas";
+import { can } from "../../shared/permissions";
+import { createCampaignShareSchema, createShareSchema, linkParamSchema, normalizeTags, shareParamSchema, updateShareSchema } from "../../shared/schemas";
 import { getLink, nowSec } from "../db";
 import { validate, type AppEnv } from "../hono";
 import { hashLinkPassword } from "../link-password";
-import { MAX_SHARES_PER_LINK, newShareSecret, shareOrigin, shareToDTO, type ShareRow } from "../share";
+import { MAX_CAMPAIGN_SHARES, MAX_SHARES_PER_LINK, newShareSecret, shareOrigin, shareToDTO, type ShareRow } from "../share";
 import { newKeyId, sha256Hex } from "../users";
 import { encryptSecret } from "../webhooks";
 
@@ -46,6 +47,11 @@ export const sharesApi = new Hono<AppEnv>()
       revoked_at: null,
       views: 0,
       last_viewed_at: null,
+      scope: "link",
+      tag: null,
+      links: null,
+      title: null,
+      show_revenue: 0,
     };
     // Capped in the same statement, so parallel requests can't pass the limit.
     const res = await c.env.DB.prepare(
@@ -56,6 +62,55 @@ export const sharesApi = new Hono<AppEnv>()
       .bind(row.id, domain, slug, row.secret_hash, row.secret_enc, row.password_hash, row.expires_at, row.range_limit, row.show_recent, row.created_by, now, MAX_SHARES_PER_LINK)
       .run();
     if (!res.meta.changes) return c.json({ error: `A link can have at most ${MAX_SHARES_PER_LINK} active shares. Revoke one first.` }, 409);
+    return c.json({ share: await shareToDTO(c.env, row, shareOrigin(c.env, c.req.raw)) }, 201);
+  })
+
+  /** Campaign reports: shares of every link with a tag, or of a picked set. */
+  .get("/shares", async (c) => {
+    const { results } = await c.env.DB.prepare("SELECT * FROM stat_shares WHERE scope != 'link' ORDER BY created_at DESC LIMIT 100").all<ShareRow>();
+    const origin = shareOrigin(c.env, c.req.raw);
+    return c.json({ shares: await Promise.all(results.map((r) => shareToDTO(c.env, r, origin))) });
+  })
+
+  .post("/shares", validate("json", createCampaignShareSchema), async (c) => {
+    const body = c.req.valid("json");
+    if (body.showRevenue && !can(c.get("actor"), "revenue.view")) return c.json({ error: "Showing revenue needs the revenue.view permission.", code: "forbidden" }, 403);
+    if (!c.env.SESSION_SECRET) return c.json({ error: "Sharing needs the SESSION_SECRET secret (docs/SETUP.md#secrets)." }, 503);
+    const now = nowSec();
+    if (body.expiresAt && body.expiresAt <= now) return c.json({ error: "expiresAt: Pick a time in the future." }, 400);
+    const tag = body.scope === "tag" ? (normalizeTags([body.tag ?? ""])[0] ?? null) : null;
+    if (body.scope === "tag" && !tag) return c.json({ error: "tag: Pick a tag." }, 400);
+    const links = body.scope === "set" ? [...new Set((body.links ?? []).map((l) => `${l.domain}/${l.slug}`))] : null;
+    const secret = newShareSecret();
+    const row: ShareRow = {
+      id: newKeyId(),
+      domain: "",
+      slug: "",
+      secret_hash: await sha256Hex(secret),
+      secret_enc: await encryptSecret(c.env, "share", secret),
+      password_hash: body.password ? await hashLinkPassword(c.env, body.password) : null,
+      expires_at: body.expiresAt ?? null,
+      range_limit: body.rangeLimit ?? null,
+      show_recent: body.showRecent ? 1 : 0,
+      created_by: c.get("identity"),
+      created_at: now,
+      revoked_at: null,
+      views: 0,
+      last_viewed_at: null,
+      scope: body.scope,
+      tag,
+      links: links ? JSON.stringify(links) : null,
+      title: body.title,
+      show_revenue: body.showRevenue ? 1 : 0,
+    };
+    const res = await c.env.DB.prepare(
+      `INSERT INTO stat_shares (id, domain, slug, secret_hash, secret_enc, password_hash, expires_at, range_limit, show_recent, created_by, created_at, scope, tag, links, title, show_revenue)
+       SELECT ?1, '', '', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14
+       WHERE (SELECT COUNT(*) FROM stat_shares WHERE scope != 'link' AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?9)) < ?15`,
+    )
+      .bind(row.id, row.secret_hash, row.secret_enc, row.password_hash, row.expires_at, row.range_limit, row.show_recent, row.created_by, now, row.scope, row.tag, row.links, row.title, row.show_revenue, MAX_CAMPAIGN_SHARES)
+      .run();
+    if (!res.meta.changes) return c.json({ error: `At most ${MAX_CAMPAIGN_SHARES} reports can be shared at once. Stop one first.` }, 409);
     return c.json({ share: await shareToDTO(c.env, row, shareOrigin(c.env, c.req.raw)) }, 201);
   })
 

@@ -543,6 +543,26 @@ Installed with the button? Run the **Update Shorthop** workflow ([updates](#upda
 
 **Knowing when there's a new version.** Dashboard → System status shows the version you're running, and says when a newer release is out (it asks GitHub once a day, when the page is opened). To get an email for each release, open the repository on GitHub and choose **Watch → Custom → Releases**.
 
+<a id="backup"></a>
+## Backups
+
+Settings → General → **Backup** downloads everything as one ZIP: every table as JSON, your links with their settings (`links.json`), and the not-found and "no longer working" pages (`kv.json`). Secrets are never in it: passwords, API keys, and webhook and payment secrets. People's details (emails, names) are left out unless you tick them, which needs the **See revenue** permission.
+
+For a copy every week without doing anything, bind an R2 bucket as `BACKUPS`:
+
+```sh
+npx wrangler r2 bucket create shorthop-backups
+```
+
+then uncomment the `r2_buckets` entry in `wrangler.jsonc` (a Deploy-button copy: add `[[r2_buckets]]` with `binding = "BACKUPS"` and `bucket_name = "shorthop-backups"` to `wrangler.toml`) and deploy. On Sundays from 04:00 UTC the half-hourly runs write a backup to the bucket, a few pages at a time, and keep the newest eight. R2 needs an R2 subscription in the dashboard; its free allowance covers this many times over.
+
+<a id="restore"></a>
+### Restore a backup
+
+- **Links and their settings:** import `links.json` from the ZIP (Import links → a file). Slugs that already exist are skipped unless you choose Overwrite.
+- **Everything, into an empty database:** apply the migrations, then load each `tables/<name>.json` in the order `manifest.json` lists them (restore order), for example with a small script that turns each file into `INSERT` statements and runs them with `npx wrangler d1 execute <your-db-name> --remote --file=restore.sql`. Put `kv.json`'s two entries back with `npx wrangler kv key put --binding LINKS cfg:not-found '<json>'` (and `cfg:dead-link`), then run Settings → General → **Republish all links**.
+- **Secrets aren't in backups:** set `ADMIN_PASSWORD_HASH`, `SESSION_SECRET`, `ENCRYPTION_KEY` and the mail and payment secrets again, create new API keys, re-enter webhook secrets, and send people new invites so they choose new passwords.
+
 <a id="import"></a>
 ## Moving from another shortener
 
@@ -552,7 +572,7 @@ Imported links keep `http://` destinations and get no UTM tags, so they behave a
 
 ```sh
 npm run setup -- local && npm run db:migrate:local && npm run dev     # in one terminal
-SHORTHOP_TOKEN=<a key from the local admin's Settings → API & webhooks> npx tsx scripts/import.ts --base http://localhost:5173 --data data/links.json
+SHORTHOP_TOKEN=<a key from the local admin's Settings → API, MCP & webhooks> npx tsx scripts/import.ts --base http://localhost:5173 --data data/links.json
 npx tsx scripts/check-slugs.ts --base http://localhost:5173 --data data/links.json --live --probe
 ```
 

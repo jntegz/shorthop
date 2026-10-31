@@ -47,7 +47,8 @@ interface OpenRow {
   link_slug: string;
 }
 
-const newSessionId = () => {
+/** A visit id: random, 16 URL-safe characters. Also the reference a checkout carries back (sh_ref). */
+export const newSessionId = () => {
   const bytes = crypto.getRandomValues(new Uint8Array(12));
   let s = btoa(String.fromCharCode(...bytes));
   s = s.replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");

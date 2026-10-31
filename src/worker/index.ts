@@ -6,6 +6,8 @@ import { SERVED_BY_HEADER } from "./dns-check";
 import { resolveSite } from "./domains";
 import { runSiteAlerts } from "./web/alerts";
 import { isCleanupRun, isRevenueRun, isWebRollupRun, scheduledCleanup, scheduledDaily, scheduledDigest, scheduledLinkChecks, scheduledRevenue, scheduledWebRollup } from "./health";
+import { isBackupRun, scheduledBackup } from "./backup";
+import { planLimits } from "./plan";
 import { PREVIEW_IMAGE_PATH } from "../shared/preview";
 import { servePreviewImage } from "./preview";
 import { loginApp } from "./login";
@@ -85,6 +87,8 @@ export default {
       if (isCleanupRun(now)) run("cleanup run", scheduledCleanup(env, now));
       else if (isWebRollupRun(now)) run("website rollup run", scheduledWebRollup(env, now));
       else if (isRevenueRun(now)) run("revenue run", scheduledRevenue(env));
+      // Sunday mornings copy the weekly backup to R2, when a bucket is bound (BACKUPS).
+      else if (isBackupRun(now) && (env as { BACKUPS?: unknown }).BACKUPS) run("backup run", scheduledBackup(env, now, planLimits(env).backupCalls));
       else run("link checks run", scheduledLinkChecks(env));
     } else if (controller.cron === ROLLUP_CRON && now.getUTCHours() !== 1) run("site alerts run", runSiteAlerts(env, Math.floor(now.getTime() / 1000)));
     else run("daily run", scheduledDaily(env, now));

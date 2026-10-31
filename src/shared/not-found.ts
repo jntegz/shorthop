@@ -21,6 +21,12 @@ export interface NotFoundPage {
   card: string;
   text: string;
   accent: string;
+  /** Visitors whose device is set to dark mode see the dark colors below. */
+  dark: boolean;
+  darkBackground: string;
+  darkCard: string;
+  darkText: string;
+  darkAccent: string;
   image: NotFoundImage | null;
 }
 
@@ -41,8 +47,16 @@ export const DEFAULT_NOT_FOUND: NotFoundPage = {
   card: "#ffffff",
   text: "#222438",
   accent: "#6554c0",
+  dark: true,
+  darkBackground: "#0f1116",
+  darkCard: "#171a21",
+  darkText: "#e7e9ef",
+  darkAccent: "#9a8cf0",
   image: null,
 };
+
+export const PAGE_COLOR_KEYS = ["background", "card", "text", "accent", "darkBackground", "darkCard", "darkText", "darkAccent"] as const;
+export type PageColorKey = (typeof PAGE_COLOR_KEYS)[number];
 
 export const HEX_COLOR_RE = /^#[0-9a-f]{6}$/i;
 
@@ -57,7 +71,7 @@ function onColor(hex: string): string {
 /** Keeps a stored or draft page safe to render: bad colors fall back to the defaults. */
 export function normalizeNotFound(p: Partial<NotFoundPage> | null | undefined): NotFoundPage {
   const v = { ...DEFAULT_NOT_FOUND, ...p };
-  const color = (k: "background" | "card" | "text" | "accent") => (HEX_COLOR_RE.test(v[k]) ? v[k] : DEFAULT_NOT_FOUND[k]);
+  const color = (k: PageColorKey) => (typeof v[k] === "string" && HEX_COLOR_RE.test(v[k]) ? v[k] : DEFAULT_NOT_FOUND[k]);
   return {
     heading: String(v.heading || DEFAULT_NOT_FOUND.heading),
     message: String(v.message ?? ""),
@@ -67,6 +81,11 @@ export function normalizeNotFound(p: Partial<NotFoundPage> | null | undefined): 
     card: color("card"),
     text: color("text"),
     accent: color("accent"),
+    dark: v.dark !== false,
+    darkBackground: color("darkBackground"),
+    darkCard: color("darkCard"),
+    darkText: color("darkText"),
+    darkAccent: color("darkAccent"),
     image: v.image && typeof v.image.v === "number" && (NOT_FOUND_IMAGE_TYPES as readonly string[]).includes(v.image.type) ? v.image : null,
   };
 }
@@ -91,8 +110,17 @@ export interface PageCard {
 }
 
 /** The full HTML document for a card in the not-found page's style. */
-export function renderPageCard(p: NotFoundPage, opts: { domain: string; imageSrc: string | null }, card: PageCard): string {
+export function renderPageCard(p: NotFoundPage, opts: { domain: string; imageSrc: string | null; scheme?: "light" | "dark" }, card: PageCard): string {
   const message = escapeHtml(card.message).replace(/\r?\n/g, "<br>");
+  const light = `--bg:${p.background}; --card:${p.card}; --fg:${p.text}; --accent:${p.accent}; --on-accent:${onColor(p.accent)}; --danger:#b93845; color-scheme:light;`;
+  const dark = `--bg:${p.darkBackground}; --card:${p.darkCard}; --fg:${p.darkText}; --accent:${p.darkAccent}; --on-accent:${onColor(p.darkAccent)}; --danger:#f07a85; color-scheme:dark;`;
+  // scheme: the admin's preview shows one of the two; visitors get the one their device asks for.
+  const palette =
+    opts.scheme === "dark" && p.dark
+      ? `:root { ${dark} }`
+      : opts.scheme || !p.dark
+        ? `:root { ${light} }`
+        : `:root { ${light} }\n  @media (prefers-color-scheme: dark) { :root { ${dark} } }`;
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -101,8 +129,8 @@ export function renderPageCard(p: NotFoundPage, opts: { domain: string; imageSrc
 <meta name="robots" content="noindex">
 ${card.refresh ? `<meta http-equiv="refresh" content="${card.refresh.seconds};url=${escapeHtml(card.refresh.url)}">\n` : ""}<title>${escapeHtml(card.title)} · ${escapeHtml(opts.domain)}</title>
 <style>
-  :root { --bg:${p.background}; --card:${p.card}; --fg:${p.text}; --accent:${p.accent}; --on-accent:${onColor(p.accent)};
-          --muted:color-mix(in srgb, var(--fg) 68%, var(--card)); --line:color-mix(in srgb, var(--fg) 12%, var(--card)); }
+  ${palette}
+  :root { --muted:color-mix(in srgb, var(--fg) 68%, var(--card)); --line:color-mix(in srgb, var(--fg) 12%, var(--card)); }
   * { box-sizing:border-box; }
   body { margin:0; min-height:100vh; display:grid; place-items:center; padding:24px 16px; background:var(--bg); color:var(--fg);
          font:16px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
@@ -127,7 +155,7 @@ ${card.refresh ? `<meta http-equiv="refresh" content="${card.refresh.seconds};ur
   form input:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
   form button { font:inherit; font-weight:600; border:0; border-radius:12px; padding:12px 20px; background:var(--accent); color:var(--on-accent); cursor:pointer; }
   form button:focus-visible { outline:2px solid var(--fg); outline-offset:3px; }
-  .err { margin:0 0 4px; padding:10px 12px; border-radius:12px; background:color-mix(in srgb, #b93845 10%, var(--card)); color:#b93845; font-size:14px; text-align:left; }
+  .err { margin:0 0 4px; padding:10px 12px; border-radius:12px; background:color-mix(in srgb, var(--danger) 12%, var(--card)); color:var(--danger); font-size:14px; text-align:left; }
   .legal { margin:28px 0 0; font-size:12px; }
   .legal a { color:var(--muted); }
   @media (max-width:420px) { main { padding:32px 22px 28px; } .code { font-size:72px; } h1 { font-size:21px; } }
@@ -157,7 +185,7 @@ ${card.refresh ? `<meta http-equiv="refresh" content="${card.refresh.seconds};ur
  * The full HTML document. `address` is what the visitor asked for
  * ("sh.example/gg"); `imageSrc` is where the page's image is served from.
  */
-export function renderNotFound(p: NotFoundPage, opts: { domain: string; address: string | null; fallbackUrl: string; imageSrc: string | null }): string {
+export function renderNotFound(p: NotFoundPage, opts: { domain: string; address: string | null; fallbackUrl: string; imageSrc: string | null; scheme?: "light" | "dark" }): string {
   return renderPageCard(p, opts, {
     title: "Link not found",
     code: "404",

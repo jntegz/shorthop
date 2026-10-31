@@ -24,7 +24,12 @@ function shell(title: string, main: string, head = ""): string {
 <meta name="robots" content="noindex">
 <title>${escapeHtml(title)}</title>${head}
 <style>
-  :root { --bg:#f8f9fc; --fg:#222438; --muted:#656b80; --accent:#6554c0; --card:#fff; --line:#e6e8ef; color-scheme: light; }
+  :root { --bg:#f8f9fc; --fg:#222438; --muted:#656b80; --accent:#6554c0; --card:#fff; --line:#e6e8ef; --field:#fff; --on-accent:#fff;
+          --err:#b93845; --err-bg:#fff0f1; --ok:#23765a; --ok-bg:#edf8f2; color-scheme: light; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0f1116; --fg:#e7e9ef; --muted:#a6acbb; --accent:#9a8cf0; --card:#171a21; --line:#2d323e; --field:#0f1116; --on-accent:#111;
+            --err:#f07a85; --err-bg:#3a1b20; --ok:#5cc898; --ok-bg:#13291f; color-scheme: dark; }
+  }
   * { box-sizing: border-box; }
   body { margin:0; min-height:100vh; display:grid; place-items:center; padding:24px; background:var(--bg); color:var(--fg);
          font: 16px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
@@ -32,19 +37,19 @@ function shell(title: string, main: string, head = ""): string {
   .mark { font-weight:700; letter-spacing:-0.01em; color:var(--accent); font-size:14px; }
   h1 { font-size:22px; margin:12px 0 8px; letter-spacing:-0.01em; }
   p { margin:0 0 20px; color:var(--muted); }
-  a.btn { display:inline-block; background:var(--accent); color:#fff; text-decoration:none; padding:10px 16px; border-radius:10px; font-weight:600; }
+  a.btn { display:inline-block; background:var(--accent); color:var(--on-accent); text-decoration:none; padding:10px 16px; border-radius:10px; font-weight:600; }
   a.btn:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
   form { display:grid; gap:12px; margin:0; }
   label { font-size:14px; font-weight:600; }
-  input { font:inherit; width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:10px; background:#fff; color:var(--fg); }
+  input { font:inherit; width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:10px; background:var(--field); color:var(--fg); }
   input[readonly] { background:var(--bg); color:var(--muted); }
   input:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
-  button { font:inherit; font-weight:600; border:0; border-radius:10px; padding:11px 16px; background:var(--accent); color:#fff; cursor:pointer; margin-top:4px; }
+  button { font:inherit; font-weight:600; border:0; border-radius:10px; padding:11px 16px; background:var(--accent); color:var(--on-accent); cursor:pointer; margin-top:4px; }
   button:focus-visible { outline:2px solid var(--fg); outline-offset:2px; }
-  .err { color:#b93845; background:#fff0f1; border-radius:10px; padding:10px 12px; margin:0 0 16px; }
+  .err { color:var(--err); background:var(--err-bg); border-radius:10px; padding:10px 12px; margin:0 0 16px; }
   .alt { margin:16px 0 0; font-size:14px; }
   .alt a { color:var(--accent); }
-  .ok { color:#23765a; background:#edf8f2; border-radius:10px; padding:10px 12px; margin:0 0 16px; }
+  .ok { color:var(--ok); background:var(--ok-bg); border-radius:10px; padding:10px 12px; margin:0 0 16px; }
   .cf-turnstile { min-height:65px; }
 </style>
 </head>
@@ -102,7 +107,7 @@ function loginHeaders(turnstile: TurnstileWidget, extra: Record<string, string> 
 }
 
 function widget(turnstile: TurnstileWidget): string {
-  return turnstile ? `<div class="cf-turnstile" data-sitekey="${escapeHtml(turnstile.siteKey)}" data-theme="light"></div>` : "";
+  return turnstile ? `<div class="cf-turnstile" data-sitekey="${escapeHtml(turnstile.siteKey)}" data-theme="auto"></div>` : "";
 }
 
 function widgetScript(turnstile: TurnstileWidget): string {

@@ -206,8 +206,29 @@ export async function trackedSiteFor(db: D1Database, host: string): Promise<stri
   return tracked.list.find((t) => hostBelongs(host, t.domains))?.siteId ?? null;
 }
 
+let checkoutProviders: { set: ReadonlySet<string>; at: number } | null = null;
+
+/**
+ * Payment providers with an enabled connection on any site: a short link to
+ * their hosted checkout gets a reference. Cached like the tracked sites; a slow
+ * or failing D1 means no reference this time.
+ */
+export async function connectedCheckoutProviders(db: D1Database): Promise<ReadonlySet<string>> {
+  if (!checkoutProviders || Date.now() - checkoutProviders.at >= SITE_TTL_MS) {
+    try {
+      const { results } = await withTimeout(db.prepare("SELECT DISTINCT provider FROM payment_connections WHERE enabled = 1").all<{ provider: string }>(), 500, "payment providers read");
+      checkoutProviders = { set: new Set(results.map((r) => r.provider)), at: Date.now() };
+    } catch (err) {
+      console.error(JSON.stringify({ message: "payment providers read failed", error: String(err) }));
+      checkoutProviders = { set: checkoutProviders?.set ?? new Set(), at: Date.now() };
+    }
+  }
+  return checkoutProviders.set;
+}
+
 export function resetSiteCaches(): void {
   siteCache.clear();
+  checkoutProviders = null;
   tracked = null;
 }
 

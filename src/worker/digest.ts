@@ -11,6 +11,7 @@ import { isProbePath } from "../shared/slug";
 import { getSetting, setSettingStmt } from "./db";
 import { domainsOf } from "./domains";
 import { MailerError, mailerStatus, sendMail, withMailSettings } from "./mailer";
+import { ON_SITE } from "./web/queries";
 import { runRollup } from "./rollup";
 import { checkedSql, getCheckSettings } from "./link-check";
 import { ignoredMisses, missesCleared } from "./misses";
@@ -52,7 +53,7 @@ async function websitesOfWeek(db: D1Database, from: string, to: string): Promise
   const { results } = await db
     .prepare(
       `SELECT st.id, st.name, st.currency,
-         (SELECT COUNT(DISTINCT visitor_id) FROM web_sessions WHERE site_id = st.id AND started_at >= ?1 AND started_at < ?2) AS visitors,
+         (SELECT COUNT(DISTINCT visitor_id) FROM web_sessions s WHERE site_id = st.id AND started_at >= ?1 AND started_at < ?2 AND ${ON_SITE}) AS visitors,
          (SELECT SUM(COALESCE(amount_site_minor, 0)) FROM payments WHERE site_id = st.id AND test_mode = 0 AND occurred_at >= ?1 AND occurred_at < ?2) AS revenue,
          (SELECT SUM(COALESCE(amount_site_minor, 0)) FROM payments WHERE site_id = st.id AND test_mode = 0 AND occurred_at >= ?3 AND occurred_at < ?1) AS previous,
          (SELECT COUNT(*) FROM payments WHERE site_id = st.id AND test_mode = 0 AND kind = 'charge' AND occurred_at >= ?1 AND occurred_at < ?2) AS payments,

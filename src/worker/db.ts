@@ -1,12 +1,13 @@
 // D1 link records and their KV read copies.
 
 import { linkKey, splitKey } from "../shared/domains";
+import { parseBio, type BioPage } from "../shared/bio";
 import { MONITOR_NEVER, MONITOR_ON } from "../shared/link-check";
 import { parsePreview, PREVIEW_IMAGE_PATH } from "../shared/preview";
 import { parseQrStyle } from "../shared/qr";
 import { parseRouting, type RouteDevice } from "../shared/routing";
 import type { KvPreview } from "./preview";
-import type { LinkDTO, LinkSource } from "../shared/types";
+import { IMPORT_SOURCES, type ImportSource, type LinkDTO, type LinkSource } from "../shared/types";
 
 /** links.off_redirect for "send visitors to the main site". */
 export const OFF_HOME = "home";
@@ -25,6 +26,14 @@ export interface LinkRow {
   notes: string;
   source: LinkSource;
   imported_clicks: number | null;
+  /** Imported links: where from (src/shared/types.ts IMPORT_SOURCES). Absent on rows built in code. */
+  import_from?: string | null;
+  /** 1: Cloudflare's security DNS flags the destination; 2: the owner trusts it anyway (src/worker/safety.ts). */
+  unsafe?: number;
+  /** When the destinations were last looked up. */
+  unsafe_at?: number | null;
+  /** Link-in-bio page JSON (src/shared/bio.ts): shown instead of redirecting. */
+  bio?: string | null;
   /** 1 when marked "no longer working". */
   broken: number;
   /** "domain/slug" of the link shown instead, when broken. */
@@ -75,6 +84,10 @@ export interface KvLink {
   pw?: string;
   /** click limit, counted by the ClickCap Durable Object */
   mc?: number;
+  /** the destination is flagged as malware or phishing: visitors see a warning first */
+  w?: 1;
+  /** a link-in-bio page, shown instead of redirecting (u stays as the fallback) */
+  bio?: BioPage;
 }
 
 /** A routing rule as the redirect needs it: no names, enabled rules only. */
@@ -138,6 +151,9 @@ function toKv(row: LinkRow, defaultUtm: string): KvLink {
   }
   if (row.password_hash) kv.pw = row.password_hash;
   if (row.max_clicks) kv.mc = row.max_clicks;
+  if (row.unsafe === 1) kv.w = 1;
+  const bio = parseBio(row.bio);
+  if (bio) kv.bio = bio;
   const preview = parsePreview(row.preview);
   if (preview) {
     const img = preview.image;
@@ -173,6 +189,9 @@ export function toDTO(row: LinkRow, origin: string): LinkDTO {
     notes: row.notes,
     source: row.source,
     importedClicks: row.imported_clicks,
+    importFrom: (IMPORT_SOURCES as readonly string[]).includes(row.import_from ?? "") ? (row.import_from as ImportSource) : null,
+    unsafe: row.unsafe === 1 ? "flagged" : row.unsafe === 2 ? "trusted" : null,
+    bio: parseBio(row.bio),
     broken: row.broken === 1,
     replacement: splitKey(row.replacement),
     offRedirect: row.off_redirect === OFF_HOME ? "home" : splitKey(row.off_redirect),

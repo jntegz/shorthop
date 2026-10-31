@@ -13,6 +13,14 @@ export interface PlanLimits {
   bulkPage: number;
   /** Rows one import request may carry: one KV write each, plus the import's own queries. */
   importRows: number;
+  /** Links one bulk action (enable, disable, tag, delete) changes: up to one KV call each. */
+  bulkRows: number;
+  /** Calls one import pull may make to another shortener's API (a page each, or a click total). */
+  pullCalls: number;
+  /** Calls one weekly-backup run may make: a D1 read and an R2 write per page of a table. */
+  backupCalls: number;
+  /** Destinations one half-hourly run looks up at the security DNS (links never checked, such as imports). */
+  unsafeLookups: number;
   /** Webhook deliveries one request attempts right away after an action; the cron sends the rest. */
   deliveriesNow: number;
   /** Outbound requests one destination-check run may spend (a redirect hop is one). */
@@ -40,6 +48,10 @@ export interface PlanLimits {
 export const PAID: PlanLimits = {
   bulkPage: 200,
   importRows: 100,
+  bulkRows: 100,
+  pullCalls: 200,
+  backupCalls: 400,
+  unsafeLookups: 20,
   deliveriesNow: 10,
   checkBudget: 40,
   checkLimit: 25,
@@ -58,6 +70,10 @@ export const PAID: PlanLimits = {
 export const FREE: PlanLimits = {
   bulkPage: 40,
   importRows: 20,
+  bulkRows: 20,
+  pullCalls: 40,
+  backupCalls: 40,
+  unsafeLookups: 3,
   deliveriesNow: 2,
   checkBudget: 20,
   checkLimit: 10,

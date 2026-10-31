@@ -21,6 +21,7 @@ export const HISTORY_FIELDS = [
   "monitor",
   "tags",
   "notes",
+  "bio",
 ] as const;
 export type HistoryField = (typeof HISTORY_FIELDS)[number];
 
@@ -50,6 +51,8 @@ export interface Snapshot {
   /** The password hash in storage; the admin only sees a fingerprint of it. */
   password_hash?: string | null;
   max_clicks?: number | null;
+  /** Link-in-bio page JSON, or null. Versions saved before bio pages existed lack it. */
+  bio?: string | null;
 }
 
 /** What's stored: the restorable fields plus what re-creating a deleted link needs. */
@@ -122,6 +125,7 @@ export function snapshotOf<T extends StoredSnapshot>(row: T): StoredSnapshot {
     qr: row.qr ?? null,
     password_hash: row.password_hash ?? null,
     max_clicks: row.max_clicks ?? null,
+    bio: row.bio ?? null,
     source: row.source,
     imported_clicks: row.imported_clicks,
     created_at: row.created_at,
@@ -135,6 +139,7 @@ export const FIELD_LABEL: Record<HistoryField, string> = {
   qr: "QR code design",
   password_hash: "Password",
   max_clicks: "Click limit",
+  bio: "Bio page",
   title: "Title",
   active: "Active",
   expires_at: "Expires",

@@ -125,7 +125,7 @@ export async function servePreviewImage(env: Env, url: URL, ctx: ExecutionContex
 export async function prunePreviewImages(env: Env, now = nowSec()): Promise<number> {
   const { results } = await env.DB.prepare(
     `SELECT key FROM preview_images p WHERE created_at < ?1
-     AND NOT EXISTS (SELECT 1 FROM links WHERE instr(preview, p.key) > 0 OR instr(qr, p.key) > 0)
+     AND NOT EXISTS (SELECT 1 FROM links WHERE instr(preview, p.key) > 0 OR instr(qr, p.key) > 0 OR instr(bio, p.key) > 0)
      AND NOT EXISTS (SELECT 1 FROM settings WHERE key = 'qr_default' AND instr(value, p.key) > 0)
      AND NOT EXISTS (SELECT 1 FROM link_versions WHERE instr(snapshot, p.key) > 0)
      LIMIT ?2`,

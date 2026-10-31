@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { aiAvailable } from "../ai";
 import { MAX_FAILS } from "../../shared/login-policy";
 import { hashPassword, parsePasswordHash } from "../../shared/password";
 import { passwordChangeSchema } from "../../shared/schemas";
@@ -40,6 +41,8 @@ export const meApi = new Hono<AppEnv>()
         adminHost: configuredAdminHost(c.env),
         demo,
         importRows: planLimits(c.env).importRows,
+        bulkRows: planLimits(c.env).bulkRows,
+        aiAvailable: aiAvailable(c.env),
         checkScope: checks.scope,
         fallbackUrl: c.env.FALLBACK_URL,
       },

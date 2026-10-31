@@ -76,3 +76,27 @@ export async function unavailablePage(env: Env, domain: string, slug: string): P
   });
   return new Response(html, { status: 503, headers: { ...PAGE_HEADERS, "Retry-After": "5" } });
 }
+
+/**
+ * A link whose destination Cloudflare's security DNS lists as malware or
+ * phishing (src/worker/safety.ts): visitors are told, and may still go on.
+ */
+export async function unsafePage(env: Env, domain: string, slug: string, destination: string): Promise<Response> {
+  const style = await publicNotFoundPage(env);
+  let host = destination;
+  try {
+    host = new URL(destination).hostname;
+  } catch {
+    // Show it as it is.
+  }
+  const html = renderPageCard(style, { domain, imageSrc: null }, {
+    title: "Warning",
+    code: "⚠️",
+    heading: "This link may not be safe",
+    address: null,
+    message: `It leads to ${host}, which Cloudflare's security service lists as malware or phishing. Only continue if you trust it.`,
+    button: { label: "Continue anyway", href: destination },
+    note: address(domain, slug),
+  });
+  return new Response(html, { status: 200, headers: { ...PAGE_HEADERS, "Cache-Control": "no-store" } });
+}

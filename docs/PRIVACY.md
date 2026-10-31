@@ -11,6 +11,7 @@ Each request to a short domain becomes one Analytics Engine data point, written 
 | Time, short domain and slug (or the missed path) | The request |
 | Event: click, bot or miss | Shorthop's classification |
 | Country, region, city, continent | Cloudflare's IP geolocation |
+| The city's position, rounded to 0.1° (about 11 km), for the live map | Cloudflare's IP geolocation |
 | Network operator (ASN and its name) and Cloudflare data center | Cloudflare |
 | Device type, operating system, browser, preferred language | The `User-Agent`, client hints and `Accept-Language` headers |
 | Referring website (host name only) and source tag (`?s=`) | The `Referer` header and the link |
@@ -66,6 +67,8 @@ With a payment provider connected, its webhooks send each payment. Shorthop keep
 
 Payments are matched to a visit by the reference passed through checkout, the return page after payment, the same customer, an identified email, or checkout timing. **Identified emails** come from `shorthop("identify", …)` on your site or from your server's API, stored with the visitor ID and an optional name and user ID. A site can match by email only to identities your server sent.
 
+A short link that goes straight to a hosted checkout (Stripe Payment Links, Lemon Squeezy, Dodo, Creem or Gumroad), on a provider connected to one of your sites, adds a random **checkout reference** to the checkout address. Shorthop keeps it with the link, the source, the country, region and city, and the device, operating system and browser, never an IP address or visitor hash, for 90 days. When the provider's webhook brings the reference back with a payment, the click becomes a visit credited to the link. Paddle, PayPal and FastSpring links can't carry a reference in the address.
+
 Only people with the **See revenue** permission see payments, revenue and customers.
 
 **Customer data retention** (Settings & setup → Privacy) removes, every night, the customer's email, customer ID and visitor from payments older than the period you choose, the customer ID from subscriptions that ended before it, and identified visitors who haven't been back since. Amounts, dates and the visit each payment is credited to stay, so revenue reports still add up. Your payment provider keeps its own records.
@@ -99,7 +102,9 @@ None of these carry visitor data.
 
 - **Destination checks** fetch your links' destinations, once you turn them on. They send a `ShorthopLinkCheck/1.0` user agent.
 - **"Start from the destination"** in the social-preview editor fetches that destination's page to read its preview.
-- **Webhooks** send link data (slug, destination, title, tags, click milestones) to the endpoints you configure, signed with your secret. The `site.payment` webhook sends a payment's amount and source, and the customer's email when known.
+- **Webhooks** send link data (slug, destination, title, tags, click milestones) to the endpoints you configure, signed with your secret. The `site.payment` webhook sends a payment's amount and source, and the customer's email when known. The optional `link.clicked` webhook sends each human click's time, country, city, device, operating system, browser and source, never an IP address or visitor hash.
+- **Unsafe-destination check:** when a link is created or its destination changes, the destination's host name (only the host) is looked up at Cloudflare's security resolver (`security.cloudflare-dns.com`), which says whether Cloudflare flags it as malware or phishing. `SAFETY_DNS="off"` turns this off.
+- **Workers AI (optional):** with the `AI` binding, "Suggest" and "Write with AI" in the link form send the destination's address, title and description to a model on your own Cloudflare account.
 - **Payment providers:** importing past payments, and checking PayPal's webhook signatures, call the provider's API with your connection's keys.
 - **Exchange rates:** once a day, the day's ECB rates from `api.frankfurter.dev`.
 - **Version check:** at most once a day, when someone opens System status, the latest release from GitHub's API.

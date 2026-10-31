@@ -69,11 +69,16 @@ export function domainLiteral(domain: string): string {
   return `'${domain}'`;
 }
 
-/** Narrows a query to one domain, or to one link (domain and slug). */
+/** Narrows a query to one domain, to one link (domain and slug), or to a set of links. */
 export interface LinkFilter {
   domain?: string;
   slug?: string;
+  /** Several links at once (a campaign report); at most MAX_FILTER_LINKS. */
+  links?: readonly { domain: string; slug: string }[];
 }
+
+/** The most links one query filters on: each is a literal in the SQL. */
+export const MAX_FILTER_LINKS = 50;
 
 function where(fromSec: number, toSec: number, filter: LinkFilter | undefined, extra: string): string {
   const parts = [
@@ -83,6 +88,10 @@ function where(fromSec: number, toSec: number, filter: LinkFilter | undefined, e
   ];
   if (filter?.slug !== undefined) parts.push(`index1 = ${slugLiteral(filter.slug)}`);
   if (filter?.domain !== undefined) parts.push(`blob17 = ${domainLiteral(filter.domain)}`);
+  if (filter?.links) {
+    if (!filter.links.length || filter.links.length > MAX_FILTER_LINKS) throw new Error("Refusing to query that many links");
+    parts.push(`(${filter.links.map((l) => `(index1 = ${slugLiteral(l.slug)} AND blob17 = ${domainLiteral(l.domain)})`).join(" OR ")})`);
+  }
   return parts.filter(Boolean).join(" AND ");
 }
 
@@ -371,4 +380,42 @@ ORDER BY ts DESC LIMIT ${Math.min(Math.max(1, Math.floor(limit)), 200)} FORMAT J
     botName: str(r.bot),
     visitor: str(r.visitor),
   }));
+}
+
+export interface AeLiveRow {
+  ts: number;
+  domain: string;
+  slug: string;
+  country: string;
+  city: string;
+  device: string;
+  lat: number;
+  lon: number;
+}
+
+/**
+ * Human clicks with a location in the last `minutes`, for the live map: city
+ * level only (coarse() in analytics.ts), never a visitor code. Clicks from
+ * before locations were recorded have none and are left out.
+ */
+export async function queryLive(env: Env, minutes: number, opts: { domain?: string; limit?: number } = {}): Promise<AeLiveRow[]> {
+  const limit = opts.limit ?? 300;
+  const now = Date.now() / 1000;
+  const rows = await aeQuery<Raw>(
+    env,
+    `SELECT toUnixTimestamp(timestamp) AS ts, blob17 AS domain, index1 AS slug, blob2 AS country, blob4 AS city, blob8 AS device, double4 AS lat, double5 AS lon
+FROM ${dataset(env)} WHERE ${where(now - Math.min(Math.max(1, Math.floor(minutes)), 1440) * 60, now + 60, opts.domain ? { domain: opts.domain } : undefined, "blob1 = 'click' AND (double4 != 0 OR double5 != 0)")}
+ORDER BY ts DESC LIMIT ${Math.min(Math.max(1, Math.floor(limit)), 500)} FORMAT JSON`,
+  );
+  return rows.map((r) => ({ ts: num(r.ts), domain: domainOf(env, r.domain), slug: str(r.slug), country: str(r.country), city: str(r.city), device: str(r.device), lat: num(r.lat), lon: num(r.lon) }));
+}
+
+/** Human clicks per UTC hour (unix seconds of the hour's start), for the weekday × hour heatmap. */
+export async function queryHourly(env: Env, fromSec: number, toSec: number, filter?: LinkFilter): Promise<{ h: number; v: number }[]> {
+  const rows = await aeQuery<Raw>(
+    env,
+    `SELECT toUnixTimestamp(toStartOfHour(timestamp)) AS h, ${CLICKS} AS v FROM ${dataset(env)}
+WHERE ${where(fromSec, toSec, filter, "blob1 = 'click'")} GROUP BY h LIMIT ${ROW_LIMIT} FORMAT JSON`,
+  );
+  return rows.map((r) => ({ h: num(r.h), v: num(r.v) }));
 }

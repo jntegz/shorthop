@@ -21,7 +21,7 @@ import {
 } from "../../shared/sites";
 import { tzOffsetSec } from "../../shared/tz";
 import { aeAvailable, aeQuery, webDataset } from "../ae";
-import { AMOUNT, CUSTOMER, NEW_CHARGE, type Filters, type Window } from "./queries";
+import { AMOUNT, CUSTOMER, NEW_CHARGE, ON_SITE, type Filters, type Window } from "./queries";
 
 const median = (list: number[]): number | null => {
   if (!list.length) return null;
@@ -33,7 +33,7 @@ const median = (list: number[]): number | null => {
 // ---- Peak hours -----------------------------------------------------------------------------
 
 /** Weekday (Monday 0) and hour of an instant in the zone. */
-function localSlot(sec: number, tz: string): { day: number; hour: number } {
+export function localSlot(sec: number, tz: string): { day: number; hour: number } {
   const local = new Date((sec + tzOffsetSec(tz, sec)) * 1000);
   return { day: (local.getUTCDay() + 6) % 7, hour: local.getUTCHours() };
 }
@@ -43,7 +43,7 @@ export async function peakHours(db: D1Database, site: SiteDTO, w: Window, f: Fil
   const sql =
     metric === "visits"
       ? `SELECT s.started_at / 3600 AS h, COUNT(*) AS v FROM web_sessions s
-         WHERE s.site_id = ?1 AND s.started_at >= ?2 AND s.started_at < ?3${f.sql} GROUP BY h`
+         WHERE s.site_id = ?1 AND s.started_at >= ?2 AND s.started_at < ?3 AND ${ON_SITE}${f.sql} GROUP BY h`
       : `SELECT p.occurred_at / 3600 AS h, ${metric === "sales" ? "COUNT(*)" : `SUM(${AMOUNT})`} AS v FROM payments p
          ${f.active ? "JOIN web_sessions s ON s.id = p.credited_session_id" : ""}
          WHERE p.site_id = ?1 AND p.occurred_at >= ?2 AND p.occurred_at < ?3 AND p.test_mode = 0 AND p.kind = 'charge'${f.sql} GROUP BY h`;

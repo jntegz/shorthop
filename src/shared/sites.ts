@@ -64,7 +64,7 @@ export interface ProviderInfo {
 export const PROVIDER_INFO: Record<Provider, ProviderInfo> = {
   stripe: {
     label: "Stripe",
-    checkout: "Payment Links get client_reference_id=sh_<ref> from the script. Checkout Sessions you create: client_reference_id: \"sh_\" + shorthop.ref().",
+    checkout: "Payment Links get client_reference_id=sh_<ref> from the script, and from a short link that points straight at one. Checkout Sessions you create: client_reference_id: \"sh_\" + shorthop.ref().",
     where: "Developers → Webhooks → Add endpoint",
     events: ["checkout.session.completed", "checkout.session.async_payment_succeeded", "invoice.paid", "charge.refunded", "charge.dispute.created", "charge.dispute.closed", "customer.subscription.created", "customer.subscription.updated", "customer.subscription.deleted"],
     webhookSecret: { label: "Signing secret", hint: "Developers → Webhooks → your endpoint → Signing secret (Reveal).", prefix: "whsec_", suggestedName: "STRIPE_WEBHOOK_SECRET" },
@@ -86,7 +86,7 @@ export const PROVIDER_INFO: Record<Provider, ProviderInfo> = {
   },
   lemonsqueezy: {
     label: "Lemon Squeezy",
-    checkout: "Checkout links get checkout[custom][sh_ref] from the script. API checkouts: checkout_data.custom.sh_ref.",
+    checkout: "Checkout links get checkout[custom][sh_ref] from the script, and from a short link that points straight at one. API checkouts: checkout_data.custom.sh_ref.",
     where: "Settings → Webhooks → +",
     events: ["order_created", "order_refunded", "subscription_created", "subscription_updated", "subscription_cancelled", "subscription_expired", "subscription_payment_success", "subscription_payment_refunded"],
     webhookSecret: { label: "Signing secret", hint: "The secret you type when creating the webhook (6–40 characters). Make up a long random one.", suggestedName: "LEMONSQUEEZY_WEBHOOK_SECRET" },
@@ -97,7 +97,7 @@ export const PROVIDER_INFO: Record<Provider, ProviderInfo> = {
   },
   dodo: {
     label: "Dodo Payments",
-    checkout: "Checkout links get metadata_sh_ref from the script. API checkouts: metadata: { sh_ref }.",
+    checkout: "Checkout links get metadata_sh_ref from the script, and from a short link that points straight at one. API checkouts: metadata: { sh_ref }.",
     where: "Developer → Webhooks → Add endpoint",
     events: ["payment.succeeded", "refund.succeeded", "dispute.opened", "dispute.won", "subscription.active", "subscription.renewed", "subscription.cancelled", "subscription.expired", "subscription.on_hold"],
     webhookSecret: { label: "Signing key", hint: "Developer → Webhooks → your endpoint → Signing Key.", prefix: "whsec_", suggestedName: "DODO_WEBHOOK_SECRET" },
@@ -108,7 +108,7 @@ export const PROVIDER_INFO: Record<Provider, ProviderInfo> = {
   },
   creem: {
     label: "Creem",
-    checkout: "Payment links get metadata[sh_ref] from the script. API checkouts: metadata: { sh_ref }.",
+    checkout: "Payment links get metadata[sh_ref] from the script, and from a short link that points straight at one. API checkouts: metadata: { sh_ref }.",
     where: "Developers → Webhooks → Create webhook",
     events: ["checkout.completed", "subscription.paid", "subscription.active", "subscription.canceled", "subscription.expired", "refund.created", "dispute.created"],
     webhookSecret: { label: "Webhook secret", hint: "Developers → Webhooks → your webhook → Signing secret.", suggestedName: "CREEM_WEBHOOK_SECRET" },
@@ -119,7 +119,7 @@ export const PROVIDER_INFO: Record<Provider, ProviderInfo> = {
   },
   gumroad: {
     label: "Gumroad",
-    checkout: "Product links (gumroad.com/l/…) get ?sh_ref= from the script; Gumroad sends it back in url_params.",
+    checkout: "Product links (gumroad.com/l/…) get ?sh_ref= from the script, and from a short link that points straight at one; Gumroad sends it back in url_params.",
     where: "Settings → Advanced → Ping (paste the address there)",
     events: ["sale", "refund", "dispute", "dispute_won", "cancellation", "subscription_ended"],
     webhookSecret: null,

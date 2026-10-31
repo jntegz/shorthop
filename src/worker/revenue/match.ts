@@ -1,6 +1,7 @@
 // Which visit led to a payment. Tried in order, the first that answers wins:
 //
 //   ref       the visit reference (sh_ref) passed through checkout        high
+//             (or a short link's click straight to a checkout: link_clicks)
 //   customer  an earlier matched payment of the same subscription/customer high
 //   claim     a return page reported this payment's ids during a visit     high
 //   email     a visitor identified with the payment's email               medium (server) / low (browser)
@@ -11,6 +12,7 @@
 // (src/worker/revenue/attribute.ts). Refunds and disputes follow their charge.
 
 import type { SiteDTO } from "../../shared/sites";
+import { shortLinkSource } from "../web/source";
 import { nowSec } from "../db";
 import { creditedSession } from "./attribute";
 
@@ -58,10 +60,45 @@ async function sessionById(db: D1Database, siteId: string, id: string): Promise<
   return db.prepare(`SELECT id, visitor_id FROM web_sessions s WHERE id = ?1 AND site_id = ?2 AND ${liveSession("s")}`).bind(id, siteId).first();
 }
 
+/**
+ * A short link straight to a checkout recorded its click under the reference
+ * the payment brought back (link_clicks, written by the redirect). The click
+ * becomes a visit of the site that received the payment, credited to the link,
+ * so every revenue report counts it like any visit. via = 'checkout' keeps it
+ * out of traffic counts: it never reached the site.
+ */
+export async function sessionFromLinkClick(db: D1Database, siteId: string, ref: string): Promise<{ id: string; visitor_id: string } | null> {
+  const click = await db.prepare("SELECT * FROM link_clicks WHERE ref = ?1").bind(ref).first<{
+    domain: string;
+    slug: string;
+    source: string;
+    country: string;
+    region: string;
+    city: string;
+    device: string;
+    os: string;
+    browser: string;
+    clicked_at: number;
+  }>();
+  if (!click) return null;
+  const visitor = `lc_${ref}`;
+  await db
+    .prepare(
+      `INSERT INTO web_sessions (id, site_id, visitor_id, started_at, last_seen_at, pageviews, source, channel, link_domain, link_slug,
+         country, region, city, device, os, browser, checkout_at, via)
+       VALUES (?1, ?2, ?3, ?4, ?4, 0, ?5, 'Short link', ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?4, 'checkout')
+       ON CONFLICT (id) DO NOTHING`,
+    )
+    .bind(ref, siteId, visitor, click.clicked_at, shortLinkSource(click.source, click.domain, click.slug), click.domain, click.slug, click.country, click.region, click.city, click.device, click.os, click.browser)
+    .run();
+  // Another site's payment may have claimed this click first; only ours counts.
+  return sessionById(db, siteId, ref);
+}
+
 /** Runs the cascade for one charge; returns why it failed when nothing matched. */
 export async function findMatch(db: D1Database, p: PaymentRow, opts: { serverEmailsOnly?: boolean } = {}): Promise<Match | { reason: string }> {
   if (p.ref) {
-    const s = await sessionById(db, p.site_id, p.ref);
+    const s = (await sessionById(db, p.site_id, p.ref)) ?? (await sessionFromLinkClick(db, p.site_id, p.ref));
     if (s) return { sessionId: s.id, visitorId: s.visitor_id, by: "ref", confidence: "high" };
   }
 

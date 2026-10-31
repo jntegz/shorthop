@@ -53,6 +53,14 @@
     { "name": "COLLECT_LIMITER", "namespace_id": "1005", "simple": { "limit": 300, "period": 60 } }
   ],
 
+  // Optional: Workers AI suggests slugs and writes social previews in the link
+  // form (src/worker/ai.ts). 10,000 neurons a day are free on every plan; a
+  // suggestion uses a few. Uncomment to turn it on.
+  // "ai": { "binding": "AI" },
+  // Optional: a weekly backup to R2 (src/worker/backup.ts), Sundays from 04:00 UTC,
+  // keeping the newest eight. Create the bucket first:
+  // npx wrangler r2 bucket create shorthop-backups
+  // "r2_buckets": [{ "binding": "BACKUPS", "bucket_name": "shorthop-backups" }],
   // Exact click limits: one counter per capped link, used only by links with a
   // limit (src/worker/click-cap.ts). SQLite-backed, so it works on the Free plan.
   "durable_objects": {

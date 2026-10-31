@@ -12,8 +12,9 @@ import { MIN_ADMIN_PASSWORD_LENGTH, parsePasswordHash, PLAN_ITERATIONS } from ".
 import { aeAvailable } from "./ae";
 import { pruneDaySalts } from "./analytics";
 import { accessConfigured, adminAuthMode, legacyApiToken } from "./auth";
-import { getSetting, nowSec, setSettingStmt } from "./db";
+import { getDefaultUtm, getSetting, nowSec, publish, setSettingStmt, type LinkRow } from "./db";
 import { autoClearDemo } from "./demo";
+import { anyFlagged } from "./safety";
 import { domainsOf } from "./domains";
 import { runDigest } from "./digest";
 import { pruneHistory } from "./history";
@@ -87,6 +88,36 @@ export async function scheduledLinkChecks(env: Env): Promise<void> {
     console.error(JSON.stringify({ message: "link checks failed", error: String(err) }));
     await recordJob(env.DB, "links", false, String(err));
   }
+  // Destinations never looked up at the security DNS (imports, links from before it): a few each run.
+  try {
+    await checkUnsafeBacklog(env, planLimits(env).unsafeLookups);
+  } catch (err) {
+    console.error(JSON.stringify({ message: "unsafe-link backlog failed", error: String(err) }));
+  }
+}
+
+/**
+ * Looks up destinations no one has checked yet, at most `limit` a run, and
+ * marks every link to a flagged one (republishing it, so visitors are warned).
+ * Links the owner trusts stay trusted.
+ */
+export async function checkUnsafeBacklog(env: Env, limit: number): Promise<{ checked: number; flagged: number }> {
+  const { results } = await env.DB.prepare(`SELECT DISTINCT target FROM links WHERE unsafe_at IS NULL LIMIT ${Math.max(0, Math.floor(limit))}`).all<{ target: string }>();
+  if (!results.length) return { checked: 0, flagged: 0 };
+  const now = nowSec();
+  const flagged: string[] = [];
+  for (const { target } of results) if (await anyFlagged(env, [target])) flagged.push(target);
+  await env.DB.batch(
+    results.map(({ target }) =>
+      env.DB.prepare("UPDATE links SET unsafe = CASE WHEN unsafe = 2 THEN 2 ELSE ?1 END, unsafe_at = ?2 WHERE target = ?3 AND unsafe_at IS NULL").bind(flagged.includes(target) ? 1 : 0, now, target),
+    ),
+  );
+  if (flagged.length) {
+    const { results: links } = await env.DB.prepare("SELECT * FROM links WHERE unsafe = 1 AND target IN (SELECT value FROM json_each(?1))").bind(JSON.stringify(flagged)).all<LinkRow>();
+    const defaultUtm = await getDefaultUtm(env.DB);
+    await Promise.all(links.map((r) => publish(env, r, defaultUtm)));
+  }
+  return { checked: results.length, flagged: flagged.length };
 }
 
 /** The half-hourly cron's 02:00 UTC slot runs the daily cleanup instead of destination checks. */
@@ -369,7 +400,7 @@ function setupChecks(env: Env, add: (id: string, label: string, status: HealthSt
   }
 
   if (env.DEV_AUTH_BYPASS) {
-    add("devbypass", "Local development flag", "warn", "DEV_AUTH_BYPASS is set. It only works on localhost, but belongs in .dev.vars, not in the deployed config.", { fix: "npm run setup", docs: "docs/SETUP.md#configuration" });
+    add("devbypass", "Local development flag", "warn", "DEV_AUTH_BYPASS is set. It only works on localhost, but belongs in .dev.vars, not in the deployed config.", { fix: "npm run setup", docs: "README.md#local-development" });
   }
 
   let fallback: URL | null = null;
@@ -508,11 +539,14 @@ export async function scheduledRevenue(env: Env): Promise<void> {
 /**
  * Accepted webhook events are remembered 400 days: providers retry for 3 at
  * most, but some sign without a timestamp, so a delivery captured earlier must
- * still be known when it's sent again. Return-page claims are kept 90.
+ * still be known when it's sent again. Return-page claims and checkout-link
+ * clicks are kept 90.
  */
 async function prunePaymentEvents(db: D1Database, now: number): Promise<void> {
   await db.batch([
     db.prepare("DELETE FROM payment_events WHERE received_at < ?1").bind(now - 400 * 86400),
     db.prepare("DELETE FROM payment_claims WHERE claimed_at < ?1").bind(now - 90 * 86400),
+    // Checkout-link clicks wait 90 days for their payment, like return-page claims.
+    db.prepare("DELETE FROM link_clicks WHERE clicked_at < ?1").bind(now - 90 * 86400),
   ]);
 }

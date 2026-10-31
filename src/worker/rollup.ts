@@ -41,8 +41,8 @@ const MAX_CHUNK_DAYS = 7;
 const AE_RETENTION_DAYS = 89;
 
 export interface CollectOptions {
-  /** One link (domain and slug), or all links when omitted. */
-  link?: Required<LinkFilter>;
+  /** One link (domain and slug), a set of links, or all links when omitted. */
+  link?: LinkFilter;
   /** Include city/region/os/browser/referrer/language/bot breakdowns. */
   dims?: boolean;
   /** Include misses (only meaningful without a link filter). */

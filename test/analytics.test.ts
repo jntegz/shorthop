@@ -130,7 +130,7 @@ describe("data point", () => {
     expect(p.blobs?.[12]).toBe("en-us");
     expect(p.blobs?.[14]).toBe("abcd1234abcd1234");
     expect(p.blobs?.[15]).toBe("tag");
-    expect(p.doubles).toEqual([1, 0, 0]);
+    expect(p.doubles).toEqual([1, 0, 0, 0, 0]);
   });
 
   it("caps the index at 96 bytes without splitting characters", () => {

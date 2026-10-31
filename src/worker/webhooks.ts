@@ -125,6 +125,7 @@ const FIELD_NAMES: Record<HistoryField, string> = {
   qr: "qr_design",
   password_hash: "password",
   max_clicks: "max_clicks",
+  bio: "bio_page",
   title: "title",
   active: "active",
   expires_at: "expires_at",
@@ -151,8 +152,19 @@ interface HookRow {
   events: string;
   secret: string;
   active: number;
+  /** JSON {"tags": [...]}: narrows link.clicked. */
+  filters?: string | null;
   created_at: number;
   updated_at: number;
+}
+
+function clickTagsOf(h: Pick<HookRow, "filters">): string[] {
+  try {
+    const tags = (JSON.parse(h.filters ?? "null") as { tags?: unknown } | null)?.tags;
+    return Array.isArray(tags) ? tags.filter((t): t is string => typeof t === "string") : [];
+  } catch {
+    return [];
+  }
 }
 
 interface DeliveryRow {
@@ -414,6 +426,7 @@ export async function listWebhooks(env: Env): Promise<WebhookDTO[]> {
         description: h.description,
         events: JSON.parse(h.events) as string[],
         active: h.active === 1,
+        clickTags: clickTagsOf(h),
         createdAt: h.created_at,
         secretReadable: (await decryptSecret(env, "webhook", h.secret)) !== null,
         retrying: h.retrying,
@@ -440,4 +453,89 @@ export async function listDeliveries(env: Env, webhookId: number): Promise<Webho
     createdAt: d.created_at,
     payload: d.payload,
   }));
+}
+
+// ---- link.clicked: straight from the redirect -----------------------------------------------
+
+const CLICK_HOOKS_TTL_MS = 60_000;
+let clickHooks: { list: HookRow[]; at: number } | null = null;
+
+/** Webhooks subscribed to link.clicked, read at most once a minute per isolate. */
+async function clickSubscribers(env: Env): Promise<HookRow[]> {
+  if (!clickHooks || Date.now() - clickHooks.at >= CLICK_HOOKS_TTL_MS) {
+    try {
+      const { results } = await env.DB.prepare("SELECT * FROM webhooks WHERE active = 1 AND events LIKE '%\"link.clicked\"%'").all<HookRow>();
+      clickHooks = { list: results, at: Date.now() };
+    } catch (err) {
+      console.error(JSON.stringify({ message: "click webhooks read failed", error: String(err) }));
+      clickHooks = { list: clickHooks?.list ?? [], at: Date.now() };
+    }
+  }
+  return clickHooks.list;
+}
+
+export function resetClickHooks(): void {
+  clickHooks = null;
+}
+
+export interface ClickEvent {
+  domain: string;
+  slug: string;
+  at: number;
+  country: string;
+  city: string;
+  device: string;
+  os: string;
+  browser: string;
+  source: string;
+  referrer: string;
+}
+
+/**
+ * Sends link.clicked for one human click, in the background of the redirect:
+ * posted directly, signed like every delivery, without an outbox row or retries,
+ * so a busy link writes nothing to D1. A tag filter reads the link's tags once
+ * per click, only when some subscriber has one.
+ */
+export async function sendClickWebhooks(env: Env, click: ClickEvent, fetcher: typeof fetch = fetch): Promise<number> {
+  const hooks = await clickSubscribers(env);
+  if (!hooks.length) return 0;
+  let tags: string[] | null = null;
+  if (hooks.some((h) => clickTagsOf(h).length)) {
+    const row = await env.DB.prepare("SELECT tags FROM links WHERE domain = ? AND slug = ?").bind(click.domain, click.slug).first<{ tags: string }>();
+    tags = row?.tags ? row.tags.split(",") : [];
+  }
+  const wanted = hooks.filter((h) => {
+    const only = clickTagsOf(h);
+    return !only.length || (tags ?? []).some((t) => only.includes(t));
+  });
+  if (!wanted.length) return 0;
+  const body = JSON.stringify({ id: randomId("evt"), type: "link.clicked", created_at: iso(click.at), api_version: 1, data: { link: { domain: click.domain, slug: click.slug }, ...click, at: iso(click.at) } });
+  let sent = 0;
+  await Promise.all(
+    wanted.map(async (h) => {
+      try {
+        const secret = await decryptSecret(env, "webhook", h.secret);
+        const url = new URL(h.url);
+        if (!secret || url.protocol !== "https:" || !isFetchableUrl(url)) return;
+        const res = await fetcher(url.href, {
+          method: "POST",
+          redirect: "manual",
+          headers: {
+            "Content-Type": "application/json",
+            "User-Agent": "ShorthopWebhooks/1.0",
+            "X-Shorthop-Event": "link.clicked",
+            "X-Shorthop-Signature": await webhookSignature(secret, body, Math.floor(Date.now() / 1000)),
+          },
+          body,
+          signal: AbortSignal.timeout(5_000),
+        });
+        await res.body?.cancel().catch(() => undefined);
+        sent++;
+      } catch {
+        // Best effort: a failed click event isn't retried or logged per click.
+      }
+    }),
+  );
+  return sent;
 }

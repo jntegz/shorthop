@@ -45,13 +45,31 @@ export const RULES: Record<string, Rule> = {
   "GET /deleted": signedIn,
   "POST /deleted/:domain/:slug/restore": need("links.delete"),
   "GET /tags": signedIn,
+  "POST /tags/rename": need("links.edit"),
+  "DELETE /tags/:tag": need("links.edit"),
+  "GET /links/by-target": signedIn,
+  // Enable, disable and tags need links.edit, delete links.delete (checked in the handler).
+  "POST /links/bulk": need({ any: ["links.edit", "links.delete"] }),
   // Overwriting existing links also needs links.edit (checked in the handler).
   "POST /import": need("links.create"),
+  // Takes another service's API key: only from a signed-in session, never from a script's key.
+  "POST /import/pull": session("links.create"),
+  "GET /export/links.json": signedIn,
+  // Everything the workspace holds (without secrets): admins, from a signed-in session.
+  // MCP for AI assistants: any signed-in key; each tool's own route then checks its permission.
+  "POST /mcp": signedIn,
+  "GET /mcp": signedIn,
+  "GET /openapi.json": signedIn,
+  "GET /backup": session("admin"),
+  "GET /backup/:table": session("admin"),
   "POST /resync": need({ any: ["links.edit", "settings.manage"] }),
   "GET /export/links.csv": signedIn,
   // Shared statistics pages: they publish a link's stats, so both are needed.
   "GET /links/:domain/:slug/shares": need({ all: ["stats.view", "links.edit"] }),
   "POST /links/:domain/:slug/shares": need({ all: ["stats.view", "links.edit"] }),
+  "GET /shares": need({ all: ["stats.view", "links.edit"] }),
+  // Showing revenue on a report also needs revenue.view (checked in the handler).
+  "POST /shares": need({ all: ["stats.view", "links.edit"] }),
   "PATCH /shares/:id": need({ all: ["stats.view", "links.edit"] }),
   "DELETE /shares/:id": need({ all: ["stats.view", "links.edit"] }),
 
@@ -59,6 +77,9 @@ export const RULES: Record<string, Rule> = {
   "GET /stats/overview": need("stats.view"),
   "GET /stats/account": need("stats.view"),
   "GET /stats/links/:domain/:slug": need("stats.view"),
+  "GET /stats/live": need("stats.view"),
+  "GET /stats/peak-hours": need("stats.view"),
+  "GET /stats/links/:domain/:slug/peak-hours": need("stats.view"),
   "GET /stats/recent": need("stats.view"),
   "GET /stats/export.csv": need("stats.view"),
   "GET /stats/misses": need("health.manage"),
@@ -81,6 +102,8 @@ export const RULES: Record<string, Rule> = {
   // Link editor helpers.
   "POST /previews/images": need({ any: ["links.create", "links.edit"] }),
   "POST /previews/fetch": need({ any: ["links.create", "links.edit"] }),
+  "POST /previews/ai/slug": need({ any: ["links.create", "links.edit"] }),
+  "POST /previews/ai/preview": need({ any: ["links.create", "links.edit"] }),
   "GET /utm-presets": signedIn,
   "POST /utm-presets": need("settings.manage"),
   "PUT /utm-presets/:id": need("settings.manage"),

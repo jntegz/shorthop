@@ -10,5 +10,7 @@
     "types": ["node"]
   },
   "references": [{ "path": "./tsconfig.shared.json" }],
-  "include": ["vite.config.ts", "vitest.config.ts", "scripts", "test/node"]
+  "include": ["vite.config.ts", "vitest.config.ts", "scripts", "test/node"],
+  // Reads the Worker's API catalog, which belongs to the worker project; tsx runs it untyped.
+  "exclude": ["scripts/skill-reference.ts"]
 }

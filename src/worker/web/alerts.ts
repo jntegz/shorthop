@@ -16,7 +16,7 @@ import { adminOrigin } from "../domains";
 import { mailerStatus, sendMail, withMailSettings } from "../mailer";
 import { isPaidPlan } from "../plan";
 import { emitAll } from "../webhooks";
-import { breakdown, totals, type Filters } from "./queries";
+import { breakdown, ON_SITE, totals, type Filters } from "./queries";
 import { siteDTO, type SiteRow } from "./sites";
 
 export const SPIKE_FACTOR = 4;
@@ -41,10 +41,10 @@ export async function findSpikes(db: D1Database, siteId: string, now: number): P
   const hourAgo = now - 3600;
   const [recent, usual, reported] = await db.batch<Record<string, unknown>>([
     db
-      .prepare("SELECT source, MAX(channel) AS channel, COUNT(*) AS n FROM web_sessions WHERE site_id = ?1 AND started_at >= ?2 AND started_at < ?3 GROUP BY source HAVING n >= ?4")
+      .prepare(`SELECT source, MAX(channel) AS channel, COUNT(*) AS n FROM web_sessions s WHERE site_id = ?1 AND started_at >= ?2 AND started_at < ?3 AND ${ON_SITE} GROUP BY source HAVING n >= ?4`)
       .bind(siteId, hourAgo, now, SPIKE_MIN_VISITS),
     db
-      .prepare("SELECT source, COUNT(*) AS n FROM web_sessions WHERE site_id = ?1 AND started_at >= ?2 AND started_at < ?3 GROUP BY source")
+      .prepare(`SELECT source, COUNT(*) AS n FROM web_sessions s WHERE site_id = ?1 AND started_at >= ?2 AND started_at < ?3 AND ${ON_SITE} GROUP BY source`)
       .bind(siteId, hourAgo - BASELINE_DAYS * 86400, hourAgo),
     db.prepare("SELECT DISTINCT source FROM site_spikes WHERE site_id = ?1 AND detected_at > ?2").bind(siteId, now - SPIKE_QUIET_SEC),
   ]);

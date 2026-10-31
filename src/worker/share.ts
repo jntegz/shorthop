@@ -8,19 +8,24 @@
 import { escapeHtml } from "../shared/html";
 import { sourceLabel } from "../shared/labels";
 import { LINK_ACCESS_HOURS } from "../shared/protection";
-import { SHARE_RANGES, type BreakdownRow, type LinkStatsDTO, type RecentHit, type SeriesPoint, type ShareDTO, type ShareRange } from "../shared/types";
+import { addDays, dayStartSec } from "../shared/dates";
+import { formatMoney } from "../shared/sites";
+import { MAX_REPORT_LINKS, SHARE_RANGES, type BreakdownRow, type CampaignStatsDTO, type LinkStatsDTO, type RecentHit, type SeriesPoint, type ShareDTO, type ShareRange } from "../shared/types";
 import { aeAvailable, queryRecent } from "./ae";
 import { getLink, nowSec } from "./db";
 import { domainsOf, isDevHost } from "./domains";
 import { checkPasswordForm, equal, hmac } from "./link-password";
 import { publicLimit } from "./redirect";
-import { linkStats } from "./stats-data";
+import { linkStats, multiLinkStats } from "./stats-data";
+import { campaignRevenue } from "./web/queries";
 import { randomToken, sha256Hex } from "./users";
 import { decryptSecret } from "./webhooks";
 
 export const SHARE_PREFIX = "/_share/";
 /** Active shares one link may have at once. */
 export const MAX_SHARES_PER_LINK = 20;
+/** Active campaign reports (tag or set) at once. */
+export const MAX_CAMPAIGN_SHARES = 50;
 /** How long a share's numbers are reused before Analytics Engine is asked again. */
 const CACHE_SEC = 300;
 const COOKIE = "sh_share";
@@ -40,6 +45,21 @@ export interface ShareRow {
   revoked_at: number | null;
   views: number;
   last_viewed_at: number | null;
+  scope: "link" | "tag" | "set";
+  tag: string | null;
+  /** JSON ["domain/slug", …] for scope "set". */
+  links: string | null;
+  title: string | null;
+  show_revenue: number;
+}
+
+function setLinks(row: Pick<ShareRow, "links">): string[] {
+  try {
+    const v = JSON.parse(row.links ?? "[]") as unknown;
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
 }
 
 export function shareStatus(row: ShareRow, now = nowSec()): ShareDTO["status"] {
@@ -73,7 +93,31 @@ export async function shareToDTO(env: Env, row: ShareRow, origin: string): Promi
     revokedAt: row.revoked_at,
     views: row.views,
     lastViewedAt: row.last_viewed_at,
+    scope: row.scope,
+    title: row.title,
+    tag: row.tag,
+    links: row.scope === "set" ? setLinks(row) : null,
+    showRevenue: row.show_revenue === 1,
   };
+}
+
+/** The links a campaign report covers right now: the tag's links, or the picked ones that still exist. */
+async function reportLinks(env: Env, row: ShareRow): Promise<{ domain: string; slug: string; title: string | null }[]> {
+  if (row.scope === "tag") {
+    const pattern = `%,${(row.tag ?? "").replace(/[\\%_]/g, (m) => `\\${m}`)},%`;
+    const { results } = await env.DB.prepare(
+      `SELECT domain, slug, title FROM links WHERE (',' || tags || ',') LIKE ?1 ESCAPE '\\' ORDER BY created_at LIMIT ${MAX_REPORT_LINKS}`,
+    )
+      .bind(pattern)
+      .all<{ domain: string; slug: string; title: string | null }>();
+    return results;
+  }
+  const { results } = await env.DB.prepare(
+    `SELECT domain, slug, title FROM links WHERE (domain || '/' || slug) IN (SELECT value FROM json_each(?1)) ORDER BY created_at LIMIT ${MAX_REPORT_LINKS}`,
+  )
+    .bind(JSON.stringify(setLinks(row)))
+    .all<{ domain: string; slug: string; title: string | null }>();
+  return results;
 }
 
 // ---- The public page ------------------------------------------------------
@@ -141,8 +185,8 @@ export async function serveShare(request: Request, env: Env, ctx: ExecutionConte
   // Same answer for an unknown id and a wrong secret.
   if (!row || !equal(new TextEncoder().encode(await sha256Hex(parts.secret)), new TextEncoder().encode(row.secret_hash))) return notFound();
   if (shareStatus(row) !== "active") return ended();
-  const link = await getLink(env.DB, row.domain, row.slug);
-  if (!link) return ended();
+  const link = row.scope === "link" ? await getLink(env.DB, row.domain, row.slug) : null;
+  if (row.scope === "link" && !link) return ended();
 
   if (row.password_hash) {
     if (!env.SESSION_SECRET) return html(card("Try again", "This page is unavailable", "Please try again later."), 503);
@@ -165,17 +209,56 @@ export async function serveShare(request: Request, env: Env, ctx: ExecutionConte
   const asked = url.searchParams.get("range") as ShareRange | null;
   const range: ShareRange = asked && allowed.includes(asked) ? asked : allowed.includes("30d") ? "30d" : allowed[allowed.length - 1]!;
 
+  const askedTheme = url.searchParams.get("theme") as ShareTheme | null;
+  const theme: ShareTheme = askedTheme && SHARE_THEMES.includes(askedTheme) ? askedTheme : "auto";
+  if (row.scope !== "link") {
+    const links = await reportLinks(env, row);
+    const [report, recent] = await Promise.all([
+      cachedReport(env, ctx, row, range, links),
+      row.show_recent && links.length ? recentHits(env, row, links) : Promise.resolve(row.show_recent ? [] : null),
+    ]);
+    countView(env, ctx, row);
+    return html(renderStats({ label: row.title ?? "Campaign report", title: row.scope === "tag" ? `Every link tagged “${row.tag}”` : `${links.length} ${links.length === 1 ? "link" : "links"}`, stats: report.stats, recent, range, allowed, expiresAt: row.expires_at, theme, report: { links, perLink: report.stats.links, revenue: report.revenue } }), 200);
+  }
   const [stats, recent] = await Promise.all([cachedStats(env, ctx, row, range), row.show_recent ? recentHits(env, row) : Promise.resolve(null)]);
+  countView(env, ctx, row);
+  const label = `${row.domain}/${row.slug}`;
+  return html(renderStats({ label, title: link!.title, stats, recent, range, allowed, expiresAt: row.expires_at, theme }), 200);
+}
+
+function countView(env: Env, ctx: ExecutionContext, row: ShareRow): void {
   ctx.waitUntil(
     env.DB.prepare("UPDATE stat_shares SET views = views + 1, last_viewed_at = ? WHERE id = ?")
       .bind(nowSec(), row.id)
       .run()
       .catch((err: unknown) => console.error(JSON.stringify({ message: "share view count failed", error: String(err) }))),
   );
-  const label = `${row.domain}/${row.slug}`;
-  const askedTheme = url.searchParams.get("theme") as ShareTheme | null;
-  const theme: ShareTheme = askedTheme && SHARE_THEMES.includes(askedTheme) ? askedTheme : "auto";
-  return html(renderStats({ label, title: link.title, stats, recent, range, allowed, expiresAt: row.expires_at, theme }), 200);
+}
+
+interface ReportData {
+  stats: CampaignStatsDTO;
+  /** Revenue credited to the links, when the report shows it. */
+  revenue: { domain: string; slug: string; currency: string; revenue: number; payments: number }[] | null;
+}
+
+/** A campaign report's numbers, reused for a few minutes like a link's. */
+async function cachedReport(env: Env, ctx: ExecutionContext, row: ShareRow, range: ShareRange, links: { domain: string; slug: string }[]): Promise<ReportData> {
+  const key = new Request(`https://share-cache.invalid/${row.id}/${range}/${links.length}`);
+  const cache = (globalThis as { caches?: { default?: Cache } }).caches?.default;
+  if (cache) {
+    const hit = await cache.match(key).catch(() => undefined);
+    if (hit) return (await hit.json()) as ReportData;
+  }
+  const stats = await multiLinkStats(env, links, { range });
+  const since = dayStartSec(stats.from);
+  const until = dayStartSec(addDays(stats.to, 1));
+  const revenue = row.show_revenue ? await campaignRevenue(env.DB, links, since, until) : null;
+  const data: ReportData = { stats, revenue };
+  if (cache) {
+    const res = new Response(JSON.stringify(data), { headers: { "Content-Type": "application/json", "Cache-Control": `max-age=${CACHE_SEC}` } });
+    ctx.waitUntil(cache.put(key, res).catch(() => undefined));
+  }
+  return data;
 }
 
 export function allowedRanges(limit: ShareRange | null): ShareRange[] {
@@ -199,10 +282,11 @@ async function cachedStats(env: Env, ctx: ExecutionContext, row: ShareRow, range
   return stats;
 }
 
-async function recentHits(env: Env, row: ShareRow): Promise<RecentHit[]> {
+async function recentHits(env: Env, row: ShareRow, links?: { domain: string; slug: string }[]): Promise<RecentHit[]> {
   if (!aeAvailable(env)) return [];
   try {
-    const rows = await queryRecent(env, Date.now() / 1000 - 7 * 86400, { domain: row.domain, slug: row.slug, event: "click" }, 20);
+    const filter = links ? { links, event: "click" as const } : { domain: row.domain, slug: row.slug, event: "click" as const };
+    const rows = await queryRecent(env, Date.now() / 1000 - 7 * 86400, filter, 20);
     // No visitor ids, and no bots: people only.
     return rows.map(({ visitor: _visitor, ...r }) => ({ ...r, scanner: false }) as RecentHit);
   } catch (err) {
@@ -215,10 +299,10 @@ async function recentHits(env: Env, row: ShareRow): Promise<RecentHit[]> {
 
 const RANGE_LABEL: Record<ShareRange, string> = { "7d": "7 days", "30d": "30 days", "90d": "90 days", "365d": "12 months", all: "All time" };
 
-const DARK = "--bg:#14151c; --fg:#e9eaf2; --muted:#9a9fb3; --accent:#9d8ff0; --soft:#2a2740; --card:#1c1d27; --line:#2c2e3b; --good:#5cc79c; --bad:#f08591; color-scheme: dark;";
+const DARK = "--bg:#14151c; --fg:#e9eaf2; --muted:#9a9fb3; --accent:#9d8ff0; --soft:#2a2740; --card:#1c1d27; --line:#2c2e3b; --good:#5cc79c; --bad:#f08591; --on-accent:#111; color-scheme: dark;";
 
 const STYLE = `
-  :root { --bg:#f8f9fc; --fg:#222438; --muted:#656b80; --accent:#6554c0; --soft:#efedfb; --card:#fff; --line:#e6e8ef; --good:#23765a; --bad:#b93845; color-scheme: light; }
+  :root { --bg:#f8f9fc; --fg:#222438; --muted:#656b80; --accent:#6554c0; --soft:#efedfb; --card:#fff; --line:#e6e8ef; --good:#23765a; --bad:#b93845; --on-accent:#fff; color-scheme: light; }
   @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { ${DARK} } }
   :root[data-theme="dark"] { ${DARK} }
   * { box-sizing:border-box; }
@@ -245,6 +329,7 @@ const STYLE = `
   .row .bar { position:absolute; inset:0 auto 0 0; background:var(--soft); z-index:0; }
   .row span { position:relative; z-index:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .row .n { font-variant-numeric:tabular-nums; color:var(--muted); flex-shrink:0; }
+  td.n, th.n { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
   .empty { color:var(--muted); font-size:13px; }
   svg { display:block; width:100%; height:auto; }
   .legend { display:flex; gap:16px; font-size:12px; color:var(--muted); margin-top:6px; }
@@ -259,7 +344,7 @@ const STYLE = `
   form { display:grid; gap:10px; }
   label { font-size:14px; font-weight:600; }
   input { font:inherit; padding:10px 12px; border:1px solid var(--line); border-radius:10px; background:var(--bg); color:var(--fg); }
-  button { font:inherit; font-weight:600; border:0; border-radius:10px; padding:11px 16px; background:var(--accent); color:#fff; cursor:pointer; }
+  button { font:inherit; font-weight:600; border:0; border-radius:10px; padding:11px 16px; background:var(--accent); color:var(--on-accent); cursor:pointer; }
   .err { color:var(--bad); background:color-mix(in srgb, var(--bad) 12%, transparent); border-radius:10px; padding:10px 12px; margin:0 0 12px; }
 `;
 
@@ -380,7 +465,9 @@ function chart(series: SeriesPoint[], previous: SeriesPoint[] | undefined): stri
     .join("");
   const labelEvery = Math.max(1, Math.ceil(series.length / 8));
   const dates = series
-    .map((p, i) => (i % labelEvery === 0 || i === series.length - 1 ? `<text x="${x(i)}" y="${H - 6}" text-anchor="middle" font-size="11" fill="var(--muted)">${escapeHtml(p.date.slice(5))}</text>` : ""))
+    // Counted back from the last day, so it's always labelled without landing next to another;
+    // it ends at the chart's right edge, so it's right-aligned to stay whole.
+    .map((p, i) => ((series.length - 1 - i) % labelEvery === 0 ? `<text x="${x(i)}" y="${H - 6}" text-anchor="${i === series.length - 1 ? "end" : "middle"}" font-size="11" fill="var(--muted)">${escapeHtml(p.date.slice(5))}</text>` : ""))
     .join("");
   const prev = previous?.length ? `<path d="${line(previous.slice(-series.length), "clicks")}" fill="none" stroke="var(--muted)" stroke-width="1.5" stroke-dasharray="4 4"/>` : "";
   return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Clicks per day">${ticks}${prev}<path d="${area}" fill="var(--soft)"/><path d="${clicks}" fill="none" stroke="var(--accent)" stroke-width="2"/><path d="${line(series, "uniques")}" fill="none" stroke="var(--good)" stroke-width="1.5"/>${dates}</svg>
@@ -390,21 +477,31 @@ function chart(series: SeriesPoint[], previous: SeriesPoint[] | undefined): stri
 function renderStats(p: {
   label: string;
   title: string | null;
-  stats: LinkStatsDTO;
+  stats: LinkStatsDTO | CampaignStatsDTO;
   recent: RecentHit[] | null;
   range: ShareRange;
   allowed: ShareRange[];
   expiresAt: number | null;
   theme: ShareTheme;
+  /** A campaign report: its links, each one's totals and, when shown, revenue. */
+  report?: { links: { domain: string; slug: string; title: string | null }[]; perLink: CampaignStatsDTO["links"]; revenue: ReportData["revenue"] };
 }): string {
   const { stats: s } = p;
   const cmp = s.comparison;
-  const tiles = [
-    { k: "Clicks", v: s.totals.clicks, prev: cmp?.previous.clicks, cur: cmp?.current.clicks },
-    { k: "Daily visitors", v: s.totals.uniques, prev: cmp?.previous.uniques, cur: cmp?.current.uniques },
-  ]
-    .map((t) => `<div class="card tile"><div class="k">${t.k}</div><div class="v">${fmt(t.v)}</div>${t.prev !== undefined && t.cur !== undefined ? change(t.cur, t.prev) : ""}</div>`)
-    .join("");
+  // Revenue per currency (sites can sell in different currencies; they aren't added up).
+  const byCurrency = new Map<string, number>();
+  for (const r of p.report?.revenue ?? []) byCurrency.set(r.currency, (byCurrency.get(r.currency) ?? 0) + r.revenue);
+  const revenueTile = p.report?.revenue
+    ? `<div class="card tile"><div class="k">Revenue</div><div class="v">${byCurrency.size ? [...byCurrency].map(([cur, v]) => escapeHtml(formatMoney(v, cur))).join(" + ") : escapeHtml(formatMoney(0, "USD"))}</div></div>`
+    : "";
+  const tiles =
+    [
+      { k: "Clicks", v: s.totals.clicks, prev: cmp?.previous.clicks, cur: cmp?.current.clicks },
+      { k: p.report ? "Daily visitors (per link)" : "Daily visitors", v: s.totals.uniques, prev: cmp?.previous.uniques, cur: cmp?.current.uniques },
+    ]
+      .map((t) => `<div class="card tile"><div class="k">${t.k}</div><div class="v">${fmt(t.v)}</div>${t.prev !== undefined && t.cur !== undefined ? change(t.cur, t.prev) : ""}</div>`)
+      .join("") + revenueTile;
+  const linkTable = p.report ? reportTable(p.report) : "";
   const href = (range: ShareRange, theme: ShareTheme) => `?range=${range}${theme === "auto" ? "" : `&amp;theme=${theme}`}`;
   const ranges = p.allowed.map((r) => `<a href="${href(r, p.theme)}"${r === p.range ? ' aria-current="page"' : ""}>${RANGE_LABEL[r]}</a>`).join("");
   const themes = SHARE_THEMES.map((t) => `<a href="${href(p.range, t)}"${t === p.theme ? ' aria-current="page"' : ""}>${t === "auto" ? "Automatic" : t === "light" ? "Light" : "Dark"}</a>`).join("");
@@ -430,6 +527,7 @@ function renderStats(p: {
 <div class="toolbar"><nav class="ranges" aria-label="Period">${ranges}</nav><nav class="ranges themes" aria-label="Theme">${themes}</nav></div>
 <div class="tiles">${tiles}</div>
 <section class="card">${chart(s.series, cmp?.series)}</section>
+${linkTable}
 <div class="grid">
 ${breakdown("Countries", s.dims.country, "country")}
 ${breakdown("Cities", s.dims.city, "plain")}
@@ -446,4 +544,23 @@ ${recent}
     "",
     p.theme,
   );
+}
+
+/** A campaign report's links: each one's clicks and, when shown, the revenue credited to it. */
+function reportTable(r: NonNullable<Parameters<typeof renderStats>[0]["report"]>): string {
+  if (!r.links.length) return `<section class="card" style="margin-top:12px"><h2>Links</h2><p class="empty">No links in this report right now.</p></section>`;
+  const titles = new Map(r.links.map((l) => [`${l.domain}/${l.slug}`, l.title]));
+  const money = new Map<string, string>();
+  for (const x of r.revenue ?? []) {
+    const key = `${x.domain}/${x.slug}`;
+    money.set(key, [money.get(key), formatMoney(x.revenue, x.currency)].filter(Boolean).join(" + "));
+  }
+  const rows = r.perLink
+    .map((l) => {
+      const key = `${l.domain}/${l.slug}`;
+      const title = titles.get(key);
+      return `<tr><td><strong>${escapeHtml(key)}</strong>${title ? `<div class="sub" style="margin:0">${escapeHtml(title)}</div>` : ""}</td><td class="n">${fmt(l.clicks)}</td>${r.revenue ? `<td class="n">${escapeHtml(money.get(key) ?? "–")}</td>` : ""}</tr>`;
+    })
+    .join("");
+  return `<section class="card" style="margin-top:12px"><h2>Links</h2><div class="scroll"><table><thead><tr><th>Link</th><th class="n">Clicks</th>${r.revenue ? `<th class="n">Revenue</th>` : ""}</tr></thead><tbody>${rows}</tbody></table></div></section>`;
 }

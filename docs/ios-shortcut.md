@@ -19,7 +19,7 @@ Creates a short link from any app's share sheet and copies it to the clipboard. 
    | 7 | **Show Alert** | *Dictionary Value* |
    | 8 | **End If** | |
 
-4. Replace `ADMIN_HOST` with your admin host (the primary short domain if you have no separate one), and `YOUR_API_KEY` with a personal key: Admin → Settings → API & webhooks → **Create API key**, named "iOS Shortcut", with only **Create links** ticked. It's shown once, so paste it straight in. If the phone is lost, revoke that key in the same place. (An older `API_TOKEN` secret also works, limited to reading and creating links unless `API_TOKEN_SCOPE` is `"full"`.)
+4. Replace `ADMIN_HOST` with your admin host (the primary short domain if you have no separate one), and `YOUR_API_KEY` with a personal key: Admin → Settings → API, MCP & webhooks → **Create API key**, named "iOS Shortcut", with only **Create links** ticked. It's shown once, so paste it straight in. If the phone is lost, revoke that key in the same place. (An older `API_TOKEN` secret also works, limited to reading and creating links unless `API_TOKEN_SCOPE` is `"full"`.)
 
 If you skip step 1, leave out `slug` and every link gets a random 6-character slug.
 
@@ -33,7 +33,7 @@ Add `?s=li` (LinkedIn), `?s=nl` (newsletter) or any other tag when you post the 
 
 | Message | Cause |
 |---|---|
-| `Missing or invalid API key.` | The `Authorization` header is wrong, or the key was revoked or has expired: create a new one in Settings → API & webhooks |
+| `Missing or invalid API key.` | The `Authorization` header is wrong, or the key was revoked or has expired: create a new one in Settings → API, MCP & webhooks |
 | `Too many failed attempts…` | 10 bad keys in a minute from your network; wait a minute (repeated failures lock it for longer) |
 | `Target must start with https://.` | The shared item isn't an https URL |
 | `slug: "x" is already taken on <domain>.` | Pick another slug |
@@ -43,7 +43,7 @@ Add `?s=li` (LinkedIn), `?s=nl` (newsletter) or any other tag when you post the 
 
 ```sh
 curl -X POST 'https://ADMIN_HOST/api/links?format=text' \
-  -H "Authorization: Bearer $SHORTHOP_TOKEN" -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $SHORTHOP_KEY" -H 'Content-Type: application/json' \
   -d '{"url":"https://example.com/new-post","slug":"new-post","tags":["linkedin"]}'
 ```
 

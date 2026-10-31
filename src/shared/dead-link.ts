@@ -65,7 +65,7 @@ export type DeadLinkVariant =
 export function renderDeadLink(
   p: DeadLinkPage,
   style: NotFoundPage,
-  opts: { domain: string; address: string; imageSrc: string | null },
+  opts: { domain: string; address: string; imageSrc: string | null; scheme?: "light" | "dark" },
   variant: DeadLinkVariant,
 ): string {
   const seconds = (s: string) => s.replaceAll("{seconds}", String(p.delaySeconds));

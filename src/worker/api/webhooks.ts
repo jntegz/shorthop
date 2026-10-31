@@ -3,9 +3,10 @@ import { z } from "zod";
 import { can, PERMISSION_INFO, type Actor, type Permission } from "../../shared/permissions";
 import type { WebhookDeliveryDTO } from "../../shared/types";
 import { EVENT_TYPES, MAX_WEBHOOKS, WEBHOOK_EVENTS, webhookUrlProblem } from "../../shared/webhooks";
+import { normalizeTags } from "../../shared/schemas";
 import { nowSec } from "../db";
 import { validate, type AppEnv } from "../hono";
-import { deliver, emit, encryptSecret, listDeliveries, listWebhooks, newSecret, redeliver } from "../webhooks";
+import { deliver, emit, encryptSecret, listDeliveries, listWebhooks, newSecret, redeliver, resetClickHooks } from "../webhooks";
 
 /** Events that carry data with its own permission: subscribing to them, or reading their payloads, needs it too. */
 const EVENT_PERMISSION: Partial<Record<string, Permission>> = {
@@ -34,7 +35,14 @@ const body = z.object({
   description: z.string().trim().max(120).default(""),
   events: z.array(z.string()).min(1, "Choose at least one event").max(EVENT_TYPES.length),
   active: z.boolean().default(true),
+  /** link.clicked: only links with one of these tags. */
+  clickTags: z.array(z.string()).max(20).default([]),
 });
+
+const filtersOf = (b: z.infer<typeof body>) => {
+  const tags = normalizeTags(b.clickTags);
+  return tags.length ? JSON.stringify({ tags }) : null;
+};
 
 function check(b: z.infer<typeof body>): string | null {
   const urlProblem = webhookUrlProblem(b.url);
@@ -48,6 +56,8 @@ export const webhooksApi = new Hono<AppEnv>()
 
   /** The signing secret is in this answer only; it can't be read back later, only rotated. */
   .post("/", validate("json", body), async (c) => {
+    // The link.clicked subscribers are cached a minute per isolate: read them again.
+    resetClickHooks();
     const b = c.req.valid("json");
     const problem = check(b);
     if (problem) return c.json({ error: problem }, 400);
@@ -57,21 +67,23 @@ export const webhooksApi = new Hono<AppEnv>()
     if ((count?.n ?? 0) >= MAX_WEBHOOKS) return c.json({ error: `Keep at most ${MAX_WEBHOOKS} webhooks.` }, 400);
     const secret = newSecret();
     const now = nowSec();
-    const r = await c.env.DB.prepare("INSERT INTO webhooks (url, description, events, secret, active, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id")
-      .bind(new URL(b.url).href, b.description, JSON.stringify([...new Set(b.events)]), await encryptSecret(c.env, "webhook", secret), b.active ? 1 : 0, now, now)
+    const r = await c.env.DB.prepare("INSERT INTO webhooks (url, description, events, secret, active, filters, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id")
+      .bind(new URL(b.url).href, b.description, JSON.stringify([...new Set(b.events)]), await encryptSecret(c.env, "webhook", secret), b.active ? 1 : 0, filtersOf(b), now, now)
       .first<{ id: number }>();
     return c.json({ id: r!.id, secret, webhooks: await listWebhooks(c.env) }, 201);
   })
 
   .put("/:id", validate("param", idParam), validate("json", body), async (c) => {
+    // The link.clicked subscribers are cached a minute per isolate: read them again.
+    resetClickHooks();
     const { id } = c.req.valid("param");
     const b = c.req.valid("json");
     const problem = check(b);
     if (problem) return c.json({ error: problem }, 400);
     const forbidden = forbiddenEvent(c.get("actor"), b.events);
     if (forbidden) return c.json({ error: forbidden }, 403);
-    const { meta } = await c.env.DB.prepare("UPDATE webhooks SET url = ?, description = ?, events = ?, active = ?, updated_at = ? WHERE id = ?")
-      .bind(new URL(b.url).href, b.description, JSON.stringify([...new Set(b.events)]), b.active ? 1 : 0, nowSec(), id)
+    const { meta } = await c.env.DB.prepare("UPDATE webhooks SET url = ?, description = ?, events = ?, active = ?, filters = ?, updated_at = ? WHERE id = ?")
+      .bind(new URL(b.url).href, b.description, JSON.stringify([...new Set(b.events)]), b.active ? 1 : 0, filtersOf(b), nowSec(), id)
       .run();
     if (!meta.changes) return c.json({ error: "Webhook not found" }, 404);
     return c.json({ webhooks: await listWebhooks(c.env) });
@@ -87,6 +99,8 @@ export const webhooksApi = new Hono<AppEnv>()
   })
 
   .delete("/:id", validate("param", idParam), async (c) => {
+    // The link.clicked subscribers are cached a minute per isolate: read them again.
+    resetClickHooks();
     const { id } = c.req.valid("param");
     const [, del] = await c.env.DB.batch([c.env.DB.prepare("DELETE FROM webhook_deliveries WHERE webhook_id = ?").bind(id), c.env.DB.prepare("DELETE FROM webhooks WHERE id = ?").bind(id)]);
     if (!del?.meta.changes) return c.json({ error: "Webhook not found" }, 404);

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { BIO_SOCIAL_PLACES, BIO_THEMES, MAX_BIO_BLOCKS, MAX_BIO_SOCIALS, SOCIAL_NETWORK_IDS } from "./bio";
 import { isDay } from "./dates";
 import { DEAD_LINK_MAX_DELAY, DEAD_LINK_MIN_DELAY } from "./dead-link";
 import { HOSTNAME_RE } from "./domains";
@@ -8,7 +9,7 @@ import { PERMISSIONS, ROLES } from "./permissions";
 import { LINK_PASSWORD_MAX, LINK_PASSWORD_MIN, MAX_CLICK_LIMIT } from "./protection";
 import { ROUTE_DEVICES } from "./routing";
 import { IMPORT_SLUG_RE } from "./slug";
-import { DIGEST_PROVIDERS, LIST_PERIODS, MISS_RETENTION_DAYS, NOISE_LIMITS, RANGES, REAL_MISS_LIMITS, SHARE_RANGES } from "./types";
+import { BULK_ACTIONS, DIGEST_PROVIDERS, IMPORT_SOURCES, IMPORT_VENDORS, MAX_REPORT_LINKS, LIST_PERIODS, MISS_RETENTION_DAYS, NOISE_LIMITS, RANGES, REAL_MISS_LIMITS, SHARE_RANGES } from "./types";
 
 /** A short domain as typed: trimmed and lowercased; membership is checked by the API. */
 const domain = z.string().trim().toLowerCase().max(253);
@@ -64,6 +65,42 @@ const expiry = z
   .transform((v) => (typeof v === "string" ? Math.floor(Date.parse(v) / 1000) : v))
   .refine((v) => v === null || v <= MAX_UNIX_SEC, "Use a date before the year 10000.");
 
+/** A link-in-bio page as the editor sends it; validateBio (src/shared/bio.ts) does the real checks. */
+export const bioSchema = z.object({
+  name: z.string().max(200),
+  text: z.string().max(1000).default(""),
+  avatarKey: z.string().max(80).nullable().default(null),
+  theme: z.enum(BIO_THEMES).default("auto"),
+  accent: z.string().max(7).default("#6554c0"),
+  blocks: z
+    .array(
+      z.union([
+        /** A short text between the buttons (up to 280 characters). */
+        z.object({ type: z.literal("text"), text: z.string().max(1000) }),
+        /** A section title over the buttons that follow it. */
+        z.object({ type: z.literal("heading"), label: z.string().max(200) }),
+        /** A button to one of your short links (counted, routed and credited as that link). */
+        z.object({ label: z.string().max(200), link: z.object({ domain: z.string().regex(HOSTNAME_RE), slug: z.string().regex(IMPORT_SLUG_RE) }) }),
+        /** A button to any https:// address. */
+        z.object({ label: z.string().max(200), url: z.string().max(2048) }),
+      ]),
+    )
+    .max(MAX_BIO_BLOCKS),
+  /** Social icons; each opens in a new tab (email opens the mail app). */
+  socials: z
+    .array(z.object({ network: z.enum(SOCIAL_NETWORK_IDS), url: z.string().max(2048) }))
+    .max(MAX_BIO_SOCIALS)
+    .default([]),
+  /** Social icons under the name ("top") or after the buttons ("bottom"). */
+  socialsAt: z.enum(BIO_SOCIAL_PLACES).default("top"),
+  /** Adds a "Share this page" panel at the end. */
+  share: z.boolean().default(false),
+  /** Page background, button and icon colors (#rrggbb); null follows the theme. */
+  background: z.string().max(7).nullable().default(null),
+  buttonColor: z.string().max(7).nullable().default(null),
+  iconColor: z.string().max(7).nullable().default(null),
+});
+
 export const createLinkSchema = z
   .object({
     /** Defaults to the primary short domain. */
@@ -90,6 +127,8 @@ export const createLinkSchema = z
     password: z.string().min(LINK_PASSWORD_MIN).max(LINK_PASSWORD_MAX).nullish(),
     /** Most human clicks allowed. */
     maxClicks: z.number().int().min(1).max(MAX_CLICK_LIMIT).nullish(),
+    /** A link-in-bio page shown instead of redirecting (validateBio checks it); target stays as the fallback. */
+    bio: bioSchema.nullish(),
   })
   .refine((v) => v.target || v.url, { message: "target is required", path: ["target"] });
 
@@ -115,6 +154,10 @@ export const updateLinkSchema = z.object({
   maxClicks: z.number().int().min(1).max(MAX_CLICK_LIMIT).nullable().optional(),
   /** A QR code design (validateQrStyle checks it); null goes back to the default. */
   qr: z.record(z.string(), z.unknown()).nullable().optional(),
+  /** The owner trusts a destination Cloudflare's security DNS flags: visitors aren't warned. false warns again. */
+  trustDestination: z.boolean().optional(),
+  /** A link-in-bio page; null turns the link back into an ordinary redirect. */
+  bio: bioSchema.nullish(),
   broken: z.boolean().optional(),
   /** The link visitors are pointed to while this one is marked broken; null for none. */
   replacement: z.object({ domain: z.string().regex(HOSTNAME_RE), slug: z.string().regex(IMPORT_SLUG_RE) }).nullish(),
@@ -122,15 +165,35 @@ export const updateLinkSchema = z.object({
   offRedirect: z.union([z.literal("home"), z.object({ domain: z.string().regex(HOSTNAME_RE), slug: z.string().regex(IMPORT_SLUG_RE) })]).nullish(),
 });
 
-const importRowSchema = z.object({
+/** A link's full settings in another workspace's JSON export (GET /export/links.json); never a password. */
+export const importConfigSchema = z.object({
+  notes: z.string().max(5000).optional(),
+  active: z.boolean().optional(),
+  expiresAt: z.number().int().positive().nullish(),
+  utm: z.boolean().optional(),
+  utmTemplate: z.string().trim().max(512).nullish(),
+  passQuery: z.boolean().optional(),
+  routing: routingSchema.optional(),
+  preview: previewSchema.optional(),
+  qr: z.record(z.string(), z.unknown()).nullish(),
+  maxClicks: z.number().int().min(1).max(MAX_CLICK_LIMIT).nullish(),
+});
+
+export const importRowSchema = z.object({
   /** Falls back to the batch's defaultDomain, then the primary domain. */
   domain: domain.nullish(),
   slug: z.string().trim().min(1).max(96),
   target: z.string().trim().min(1).max(4096),
-  title: z.string().trim().max(300).nullish(),
+  // A long title from another service is shortened rather than failing the whole batch.
+  title: z
+    .string()
+    .trim()
+    .transform((s) => s.slice(0, 300))
+    .nullish(),
   tags: tags.optional(),
   clicks: z.number().int().nonnegative().nullish(),
   createdAt: unixSec.nullish(),
+  config: importConfigSchema.optional(),
 });
 
 export const importSchema = z.object({
@@ -138,13 +201,53 @@ export const importSchema = z.object({
   mode: z.enum(["skip", "overwrite"]).default("skip"),
   dryRun: z.boolean().default(false),
   defaultDomain: domain.optional(),
+  /** Where the links come from, for their page ("Bitly lifetime clicks"). */
+  from: z.enum(IMPORT_SOURCES).optional(),
+});
+
+/** One page of links from another shortener's API; the key is used for this request only. */
+export const pullSchema = z.object({
+  vendor: z.enum(IMPORT_VENDORS),
+  apiKey: z.string().trim().min(8).max(500),
+  cursor: z.string().max(20_000).nullish(),
+  /** Bitly: read each link's click total (one API call per link). */
+  clicks: z.boolean().default(true),
+});
+
+const linkRef = z.object({ domain: z.string().regex(HOSTNAME_RE), slug: z.string().regex(IMPORT_SLUG_RE) });
+
+/** One bulk action on selected links; the plan caps how many a request may carry. */
+export const bulkSchema = z
+  .object({
+    links: z.array(linkRef).min(1).max(500),
+    action: z.enum(BULK_ACTIONS),
+    tag: z.string().optional(),
+  })
+  .refine((b) => (b.action === "addTag" || b.action === "removeTag" ? Boolean(normalizeTags([b.tag ?? ""])[0]) : true), { message: "Name the tag", path: ["tag"] });
+
+export const tagRenameSchema = z.object({
+  from: z.string().trim().min(1).max(40),
+  to: z.string().min(1).max(40),
+});
+
+export const tagParamSchema = z.object({ tag: z.string().trim().min(1).max(40) });
+
+export const byTargetQuerySchema = z.object({ url: z.string().trim().min(1).max(4096) });
+
+/** The links list's filters, for exports of what's on screen; `links` narrows it to a selection. */
+export const exportQuerySchema = z.object({
+  domain: domain.optional(),
+  q: z.string().max(200).optional(),
+  tag: z.string().max(100).optional(),
+  status: z.enum(["all", "active", "disabled", "expired", "broken", "failing", "shared", "bio"]).default("all"),
+  links: z.string().max(60_000).optional(),
 });
 
 export const listQuerySchema = z.object({
   domain: domain.optional(),
   q: z.string().max(200).optional(),
   tag: z.string().max(100).optional(),
-  status: z.enum(["all", "active", "disabled", "expired", "broken", "failing", "shared"]).default("all"),
+  status: z.enum(["all", "active", "disabled", "expired", "broken", "failing", "shared", "bio"]).default("all"),
   sort: z.enum(["created", "updated", "slug", "clicks"]).default("created"),
   period: z.enum(LIST_PERIODS).default("7d"),
 });
@@ -258,6 +361,12 @@ export const notFoundSchema = z.object({
   card: hexColor,
   text: hexColor,
   accent: hexColor,
+  // Added later: older admins (and the API) may leave them out.
+  dark: z.boolean().default(true),
+  darkBackground: hexColor.default("#0f1116"),
+  darkCard: hexColor.default("#171a21"),
+  darkText: hexColor.default("#e7e9ef"),
+  darkAccent: hexColor.default("#9a8cf0"),
 });
 
 /** The "no longer working" page's wording and where it sends visitors without a replacement. */
@@ -360,6 +469,17 @@ export const createShareSchema = z.object({
   rangeLimit: z.enum(SHARE_RANGES).nullish(),
   showRecent: z.boolean().optional(),
 });
+
+/** A shared report on several links: every link with a tag, or a picked set. */
+export const createCampaignShareSchema = createShareSchema
+  .extend({
+    scope: z.enum(["tag", "set"]),
+    title: z.string().trim().min(1, "Add a title").max(120),
+    tag: z.string().trim().max(40).optional(),
+    links: z.array(z.object({ domain: z.string().regex(HOSTNAME_RE), slug: z.string().regex(IMPORT_SLUG_RE) })).max(MAX_REPORT_LINKS).optional(),
+    showRevenue: z.boolean().optional(),
+  })
+  .refine((b) => (b.scope === "tag" ? Boolean(b.tag) : Boolean(b.links?.length)), { message: "Pick a tag, or at least one link", path: ["scope"] });
 
 export const updateShareSchema = z.object({
   expiresAt: z.number().int().positive().nullable().optional(),

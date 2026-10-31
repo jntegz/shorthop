@@ -5,11 +5,27 @@ import { HOSTNAME_RE, linkLabel } from "../../shared/domains";
 import { clearMissesSchema, ignoreMissesSchema, linkParamSchema, missExportQuerySchema, missPolicySchema, rangeQuerySchema } from "../../shared/schemas";
 import { IMPORT_SLUG_RE } from "../../shared/slug";
 import type { RecentHit } from "../../shared/types";
-import { aeAvailable, HIT_DEVICES, HIT_EVENTS, queryRecent, queryScanners } from "../ae";
+import { aeAvailable, HIT_DEVICES, HIT_EVENTS, queryLive, queryRecent, queryScanners } from "../ae";
 import { domainsOf } from "../domains";
 import { csv, validate, type AppEnv } from "../hono";
 import { clearMisses, ignoredMisses, ignoreMisses, saveMissPolicy, unignoreAllMisses, unignoreMisses } from "../misses";
-import { linkStats, missReport, overview } from "../stats-data";
+import { clickPeakHours, linkStats, missReport, overview } from "../stats-data";
+import { isTimeZone } from "../../shared/sites";
+
+const peakQuery = z.object({
+  tz: z.string().max(64).refine(isTimeZone, "Not a time zone").default("UTC"),
+  days: z.coerce.number().int().min(1).max(89).default(30),
+});
+
+/** The heatmap, or an empty one with the reason when Analytics Engine fails. */
+async function safePeak(env: Env, link: { domain: string; slug: string } | undefined, days: number, tz: string) {
+  try {
+    return await clickPeakHours(env, link, days, tz);
+  } catch (err) {
+    console.error(JSON.stringify({ message: "peak hours failed", error: String(err) }));
+    return { metric: "visits" as const, cells: Array.from({ length: 7 }, () => new Array<number>(24).fill(0)), top: [], total: 0, aeAvailable: true, days, error: "Analytics Engine didn't answer." };
+  }
+}
 
 const recentQuerySchema = z.object({
   /** With a slug and no domain, the primary domain. */
@@ -131,6 +147,37 @@ export const statsApi = new Hono<AppEnv>()
       "Content-Type": "text/csv; charset=utf-8",
       "Content-Disposition": `attachment; filename="shorthop-misses-${range}-${new Date().toISOString().slice(0, 10)}.csv"`,
     });
+  })
+
+  /** All links' clicks by weekday and hour, in the viewer's time zone (tz), over the last `days`. */
+  .get("/peak-hours", validate("query", peakQuery), async (c) => {
+    const { tz, days } = c.req.valid("query");
+    return c.json(await safePeak(c.env, undefined, days, tz));
+  })
+
+  .get("/links/:domain/:slug/peak-hours", validate("param", linkParamSchema), validate("query", peakQuery), async (c) => {
+    const { tz, days } = c.req.valid("query");
+    return c.json(await safePeak(c.env, c.req.valid("param"), days, tz));
+  })
+
+  /** Human clicks with a city-level location in the last few minutes, for the live map. */
+  .get("/live", validate("query", z.object({ minutes: z.coerce.number().int().min(1).max(1440).default(15), domain: z.string().regex(HOSTNAME_RE).optional() })), async (c) => {
+    if (!aeAvailable(c.env)) return c.json({ aeAvailable: false, clicks: [] });
+    const { minutes, domain } = c.req.valid("query");
+    try {
+      // The same for everyone who may see statistics: reused for 20 seconds, so reloads and
+      // several open tabs don't each wait for (and spend) an Analytics Engine query.
+      const cache = (globalThis as { caches?: { default?: Cache } }).caches?.default;
+      const key = new Request(`https://live-cache.invalid/${minutes}/${domain ?? "all"}`);
+      const hit = cache ? await cache.match(key).catch(() => undefined) : undefined;
+      if (hit) return c.json({ aeAvailable: true, clicks: (await hit.json()) as Awaited<ReturnType<typeof queryLive>> });
+      const clicks = await queryLive(c.env, minutes, { domain });
+      if (cache) c.executionCtx.waitUntil(cache.put(key, new Response(JSON.stringify(clicks), { headers: { "Cache-Control": "max-age=20" } })).catch(() => undefined));
+      return c.json({ aeAvailable: true, clicks });
+    } catch (err) {
+      console.error(JSON.stringify({ message: "live clicks failed", error: String(err) }));
+      return c.json({ aeAvailable: true, clicks: [], error: "Analytics Engine didn't answer. Try again in a moment." });
+    }
   })
 
   .get("/recent", validate("query", recentQuerySchema), async (c) => {

@@ -121,6 +121,19 @@ describe("Workers Free: at most 45 subrequests per invocation", () => {
     expect(await tooMany.json()).toMatchObject({ code: "too_many_rows" });
   });
 
+  it("runs a full bulk action with two webhooks subscribed", async () => {
+    await addHook(["link.updated", "link.deleted"]);
+    await addHook(["link.updated"]);
+    await addLinks(20, "b");
+    const links = Array.from({ length: 20 }, (_, i) => ({ domain: "sh.example", slug: `b${i}` }));
+    for (const action of ["disable", "delete"]) {
+      const c = counting();
+      const res = await call(`${API}/links/bulk`, json({ links, action }), c.env);
+      expect(((await res.json()) as { changed: number }).changed).toBe(20);
+      expect(c.count(), c.calls.join("\n")).toBeLessThanOrEqual(FREE_MAX);
+    }
+  });
+
   it("runs destination checks with webhooks due, destinations coming back and an email", async () => {
     await addHook(["link.health_changed", "link.created"]);
     for (let i = 0; i < 12; i++) {
