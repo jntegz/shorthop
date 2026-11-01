@@ -145,7 +145,18 @@ describe("PayPal", () => {
       event_type: "PAYMENT.CAPTURE.COMPLETED",
       resource: { id: "CAP1", amount: { value: "19.99", currency_code: "USD" }, custom_id: ref, create_time: new Date().toISOString() },
     });
-    const send = (sig: string) => call(`${ORIGIN}/_pay/paypal/${conn.id}`, { method: "POST", headers: { "PAYPAL-TRANSMISSION-SIG": sig, "PAYPAL-TRANSMISSION-ID": "t1", "PAYPAL-AUTH-ALGO": "SHA256withRSA" }, body });
+    const send = (sig: string) => call(`${ORIGIN}/_pay/paypal/${conn.id}`, { method: "POST", headers: { ...transmission, "PAYPAL-TRANSMISSION-SIG": sig }, body });
+    const transmission = {
+      "PAYPAL-TRANSMISSION-ID": "t1",
+      "PAYPAL-TRANSMISSION-TIME": new Date().toISOString(),
+      "PAYPAL-CERT-URL": "https://api.sandbox.paypal.com/v1/notifications/certs/CERT-1",
+      "PAYPAL-AUTH-ALGO": "SHA256withRSA",
+    };
+    // Not PayPal's: refused before anything is asked of PayPal.
+    const forged = (extra: Record<string, string>) => call(`${ORIGIN}/_pay/paypal/${conn.id}`, { method: "POST", headers: { ...transmission, "PAYPAL-TRANSMISSION-SIG": "good", ...extra }, body });
+    expect((await forged({ "PAYPAL-CERT-URL": "https://evil.example/cert" })).status).toBe(401);
+    expect((await call(`${ORIGIN}/_pay/paypal/${conn.id}`, { method: "POST", headers: { "PAYPAL-TRANSMISSION-SIG": "good" }, body })).status).toBe(401);
+    expect(verified).toEqual([]);
     expect((await send("bad")).status).toBe(401);
     expect((await send("good")).status).toBe(200);
     expect(verified).toEqual(["bad", "good"]);

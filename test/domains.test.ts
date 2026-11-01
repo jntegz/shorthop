@@ -85,6 +85,18 @@ describe("domain setup check", () => {
     expect(body.servingDetail).toMatch(/No HTTPS answer/);
   });
 
+  it("explains a 522, which a Worker without global_fetch_strictly_public gets for its own zone", async () => {
+    mockNet({ "example.com": { NS: ["kim.ns.cloudflare.com", "lou.ns.cloudflare.com"] } }, { "go.example.com": new Response("error code: 522", { status: 522 }) });
+    const { body } = await check("go.example.com");
+    expect(body.servingDetail).toMatch(/HTTP 522.*global_fetch_strictly_public/);
+  });
+
+  it("treats a subdomain without records on a registered zone as not set up yet, not as missing", async () => {
+    mockNet({ "example.com": { NS: ["kim.ns.cloudflare.com", "lou.ns.cloudflare.com"] } }, { "go.example.com": "down" });
+    const { body } = await check("go.example.com");
+    expect(body).toMatchObject({ exists: true, zone: "example.com", onCloudflare: true, records: [], serving: "no" });
+  });
+
   it("reports names that don't exist", async () => {
     mockNet({}, {});
     const { body } = await check("not-registered-yet.link");

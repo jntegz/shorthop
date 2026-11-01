@@ -21,6 +21,7 @@ export const SOURCE_LABELS: Record<string, string> = {
   direct: "Direct / unknown",
 };
 
+/** A source's display name, or the source itself. Own keys only: "constructor" or "__proto__" stay text. */
 export function sourceLabel(s: string): string {
-  return SOURCE_LABELS[s] ?? s;
+  return Object.hasOwn(SOURCE_LABELS, s) ? SOURCE_LABELS[s]! : s;
 }

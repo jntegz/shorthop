@@ -162,10 +162,13 @@ export function siteHostOf(env: Env): string {
   }
 }
 
-function sanitizeSourceTag(tag: string | null): string {
+/** Names every plain object has: never a source, so no lookup table can mistake one for its own entry. */
+const RESERVED_TAGS = new Set(["__proto__", "constructor", "prototype"]);
+
+export function sanitizeSourceTag(tag: string | null): string {
   if (!tag) return "";
   const t = tag.trim().toLowerCase();
-  return /^[a-z0-9_-]{1,32}$/.test(t) ? t : "";
+  return /^[a-z0-9_-]{1,32}$/.test(t) && !RESERVED_TAGS.has(t) ? t : "";
 }
 
 export function resolveSource(
@@ -276,7 +279,12 @@ export async function daySaltFor(db: D1Database, date: string): Promise<string> 
 
 /** Deletes the salts of the days before `today` (YYYY-MM-DD, UTC). The daily cron runs it. */
 export async function pruneDaySalts(db: D1Database, today: string): Promise<void> {
-  await db.prepare("DELETE FROM settings WHERE key > ?1 AND key < ?2").bind(DAY_SALT_PREFIX, `${DAY_SALT_PREFIX}${today}`).run();
+  await daySaltPruneStmt(db, today).run();
+}
+
+/** The day-salt prune as one statement, for a batch with other cleanup. */
+export function daySaltPruneStmt(db: D1Database, today: string): D1PreparedStatement {
+  return db.prepare("DELETE FROM settings WHERE key > ?1 AND key < ?2").bind(DAY_SALT_PREFIX, `${DAY_SALT_PREFIX}${today}`);
 }
 
 function cfOf(request: Request): IncomingRequestCfProperties | undefined {

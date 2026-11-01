@@ -18,14 +18,17 @@ Shorthop is a personal project without a bug bounty.
 - **Secrets** are Wrangler secrets. The setup passes them to Wrangler through stdin and never writes them to disk; the admin never displays them, and System status reports only whether they're set and long enough.
 - **Deploy to Cloudflare installs:**
   - The owners' password is the plain `ADMIN_PASSWORD` secret, compared in constant time and ignored below 9 characters. A hash (`ADMIN_PASSWORD_HASH`) wins once it's set.
-  - The session secret and the visitor salt are generated once and kept in D1 until you set them as secrets. Anyone who can read your D1 database can then read them; that's someone who already has access to your Cloudflare account.
+  - The session secret and the visitor salt are generated once and kept in D1 until you set them as secrets. Anyone who can read your D1 database can then read them; that's someone who already has access to your Cloudflare account. They're never in a backup.
 - **Outbound requests:**
   - Destination checks, the social-preview fetch and webhooks only reach public addresses: private, loopback and link-local ranges are refused. Each redirect is checked again before it's followed, or isn't followed at all (webhooks).
+  - Requests to hostnames in the Worker's own zone go through Cloudflare like a visitor's (`global_fetch_strictly_public`), so your Access and WAF rules apply to them. The social-preview fetch never reads Shorthop's own short links, and is rate-limited per person.
+  - `link.clicked` webhooks go out for at most 120 clicks a minute from one network, counted at each Cloudflare location. Further clicks from that network that minute send none.
   - Email provider hosts are fixed in the code, redirects are refused, and the recipient comes only from configuration.
   - Webhooks are signed with HMAC-SHA256 (`X-Shorthop-Signature`). Their secrets are encrypted at rest with AES-GCM, with a key derived from `SESSION_SECRET`, and shown only once.
-- **Password-protected links:** PBKDF2 at 30,000 iterations on Workers Free (a check fits its CPU limit) and 100,000 on Paid (`WORKERS_PLAN`), attempts rate-limited per network and link. A correct password is remembered for 12 hours in a cookie scoped to that link and signed with `SESSION_SECRET`; changing the link's password ends every remembered access. The destination is never revealed before the password, not even to preview crawlers.
+- **Password-protected links and shared statistics:** PBKDF2 at 30,000 iterations on Workers Free (a check fits its CPU limit) and 100,000 on Paid (`WORKERS_PLAN`). Ten wrong passwords in an hour lock out the network that sent them, for a minute at first and up to 15 minutes. After 20 wrong passwords for one link in an hour, from any networks, every network that guessed wrong waits up to 15 minutes. A visitor who types the right password on the first try still gets in, so one person guessing can't lock everyone else out. A correct password is remembered for 12 hours in a cookie scoped to that link and signed with `SESSION_SECRET`; changing the link's password ends every remembered access. The destination is never revealed before the password, not even to preview crawlers.
 - **Admin pages** are served with a strict Content Security Policy, `X-Frame-Options: DENY` and `no-store` caching. Every page and redirect sends `Strict-Transport-Security`.
 - **Visitors:** no IP addresses are stored, and no cookies are set except on a password-protected link. The daily visitor hash uses a random salt per day that's deleted once the day is over. See [docs/PRIVACY.md](docs/PRIVACY.md).
+- **Website analytics:** anyone can send the tracker's events, so a name or email a page sends with `identify` is marked unconfirmed in the admin; only `POST /api/sites/:id/identify` from your server counts as verified. A checkout reference sent by a page can only claim a payment from the last 24 hours.
 - **Redirect targets** must be `https://` and can't point back at the shortener's own hosts.
 
 <a id="daily-cap"></a>
@@ -44,7 +47,10 @@ So anyone who sends enough requests can take your links down for the rest of the
   6. Deploy.
 
   The Free plan allows one rule per zone. If the admin login is on the same zone, this rule takes the place of the login rule below; Shorthop's own lockout still limits password guesses. A rule raises the bar but doesn't remove it: many clients, or one that stays under the limit for hours, can still use up the day.
+- **Turn off the `workers.dev` address** once your short domain works: set `workers_dev = false` in your Wrangler config. The rule above protects your zone, and the `workers.dev` address isn't part of it.
 - **Workers Paid** ($5/month) has no daily cap: requests beyond the 10 million a month included are billed instead. Choose it if your links must not go down.
+
+The database has a daily allowance on Free too: 100,000 rows written. Website events come from anyone's browser, so on Free at most 15,000 are stored a day (about 45,000 rows). Past that, events are accepted but not stored until 00:00 UTC; System status warns at 80% and again when the day's budget is used up. The rest of the allowance stays for logins, links and payments.
 
 ## Password-only mode: add a rate-limiting rule
 

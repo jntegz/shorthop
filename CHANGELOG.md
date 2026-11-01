@@ -14,7 +14,7 @@ A new admin, and the features that make Shorthop a place to move your links to.
 - **Bulk actions** on the Links list: select links (or every link the filters match) to enable, disable, tag, untag or delete them, in parts sized to your Workers plan. Export CSV follows the filters or the selection, tags can be renamed, merged or removed, and the link form warns when a destination is already shortened.
 - **Bookmarklet and share target:** "Shorten this page" from the bookmarks bar, and Shorthop in the phone's share sheet once the admin is installed as an app.
 - **Revenue from links straight to a checkout:** a short link to a Stripe Payment Link, Lemon Squeezy, Dodo, Creem or Gumroad checkout gets a random reference, so the sale is credited to the link without a website in between (Paddle, PayPal and FastSpring links can't carry one). These clicks never count as website visits. Creem's reference parameter is documented by Creem but not yet confirmed with a real order.
-- **Campaign reports:** one shared statistics page for a tag or a set of links, optionally with revenue (per currency), for sponsors and clients. A tag report picks up links tagged later.
+- **Campaign reports:** one shared statistics page for a tag or a set of links, optionally with revenue (per currency), for sponsors and clients. A tag report picks up links tagged later. A report that shows revenue is managed only by people who may see revenue.
 - **Import from Bitly, Rebrandly, Short.io and Dub,** by their CSV export or straight from their API (the key is used only while the page reads and never stored). Links on the vendor's own domain (bit.ly, rebrand.ly, short.gy, dub.sh) move onto your domain with the same back-half. A link's page shows the clicks it had before the move.
 - **Export and import with every setting** (`GET /api/export/links.json`): routing, previews, QR designs, UTM, limits and notes move between workspaces. Passwords never leave.
 - **Backups:** Settings → General → Backup downloads everything as one ZIP, without secrets. Bind an R2 bucket as `BACKUPS` for a copy every week (the newest eight are kept). [How to restore](docs/SETUP.md#restore).
@@ -22,7 +22,7 @@ A new admin, and the features that make Shorthop a place to move your links to.
 - **Workers AI suggestions (optional):** with the `AI` binding, the link form suggests slugs and writes social previews.
 - **Live map:** Recent hits opens on a globe of the latest human clicks (city level, rounded to about 11 km), with totals, the top countries and links, a dot-size slider and a domain filter.
 - **Click heatmap:** clicks by weekday and hour in your own time zone, for every link and for the whole account.
-- **`link.clicked` webhook** (best effort, optionally only for links with certain tags).
+- **`link.clicked` webhook** (best effort, optionally only for links with certain tags, for at most 120 clicks a minute from one network).
 - **Unsafe-destination warning:** destinations Cloudflare's security DNS flags as malware or phishing get a warning page before the redirect, and a badge in the admin. "I trust this destination" lifts it. Set `SAFETY_DNS = "off"` to make no lookups.
 - **Bio pages:** a link can be a link-in-bio page instead of a redirect: buttons that are your own short links (so their clicks count, with the source `bio`) or any address, short texts, section titles, social icons, a "Share this page" panel, a photo, and custom colours with contrast warnings. Bio pages have their own view in the sidebar.
 
@@ -33,12 +33,33 @@ A new admin, and the features that make Shorthop a place to move your links to.
 - The link editor dialogs (link form, QR studio, routing, previews, sharing) are kept and restyled; the old pages, the old layout and the components only they used are gone, and so is the Recharts dependency.
 - The admin's code lives in `src/client/app/`, with its design system documented in [docs/DESIGN.md](docs/DESIGN.md).
 
+### Fixed
+
+- People's passwords are hashed to suit the Workers plan: 25,000 PBKDF2 iterations on Free, so signing in fits its CPU limit, and 100,000 on Paid. Older hashes are redone at the next sign-in.
+- Importing past payments works on Workers Free: 3 payments per request, so it stays within the 50 D1 queries a request may make. FastSpring imports too.
+- Settings → Short domains → Check setup recognizes a domain on the Worker's own zone. It used to get HTTP 522 there and blame another server. A subdomain without its DNS record yet no longer reads as "doesn't exist".
+- An unexpected error gets a plain 500 page that still sends HSTS.
+
+### Security
+
+- **Shared statistics pages** no longer break when someone clicks a link with `?s=__proto__` or `?s=constructor`. Such source tags are ignored, and any already stored show as plain text.
+- **Website events on Workers Free:** at most 15,000 are stored a day, so website visitors can't use up the 100,000 D1 rows a day that logins and links also need to write. Past that, events are dropped until 00:00 UTC, and System status warns at 80%.
+- **Requests to your own zone** (destination checks, previews, webhooks) go through Cloudflare like a visitor's (`global_fetch_strictly_public`), so your Access and WAF rules apply to them. The preview fetch skips your own short links and is rate-limited per person.
+- **Password-protected links and shared statistics:** wrong passwords lock out the network that sent them. After 20 wrong passwords for one link in an hour, only networks that guessed wrong are held back, so a stranger can't lock out people who know the password.
+- **Website analytics:** a name or email sent by a page is marked unconfirmed, and a checkout reference sent by a page can only claim a payment from the last 24 hours. Traffic-spike email subjects show only short, single-word sources.
+- **PayPal webhooks** without PayPal's signing headers, or with a certificate address outside paypal.com, are refused before Shorthop asks PayPal to verify them.
+- **Outbound address checks** refuse more local addresses: `localhost..`, `.localdomain` and more IPv6 ranges.
+- **The Update Shorthop workflow** downloads the exact commit it checked: a published release on upstream's main branch.
+- **System status, read with an API key,** hides the sign-in, password, secret and email details. The admin still shows them.
+- Updated `wrangler`, `@cloudflare/vite-plugin` and `@cloudflare/vitest-plugin`, which clears every `npm audit` finding. CI now fails on high-severity advisories in production dependencies.
+
 ### Upgrading
 
 - Apply the six new database migrations (`0026_checkout_links.sql` to `0031_bio_pages.sql`): `npm run db:migrate:remote`, or deploy through Workers Builds, which applies them. Then run `npm ci`.
 - Optional bindings, both commented out in the generated `wrangler.jsonc`: `ai` (Workers AI suggestions) and an R2 bucket as `BACKUPS` (weekly backups). See [docs/CLOUDFLARE-FREE-TIER.md](docs/CLOUDFLARE-FREE-TIER.md).
 - Links created before this version are checked against Cloudflare's security DNS a few at a time by the half-hourly run.
-- **Deploy to Cloudflare copies:** run the Update Shorthop workflow as usual.
+- **Deploy to Cloudflare copies:** run the Update Shorthop workflow as usual, then copy its new `.github/workflows/update-shorthop.yml` from the release by hand (the summary lists it): a workflow can't update itself. Once your short domain works, set `workers_dev = false` in `wrangler.toml`; the summary reminds you.
+- **`npm run setup` installs:** add `"global_fetch_strictly_public"` to `compatibility_flags` in `wrangler.jsonc`, or re-run the setup. Without it, Check setup can't see a domain on the Worker's own zone.
 
 ## [1.3.0] - 2026-10-28
 

@@ -35,7 +35,7 @@ export function StatisticsSection({ s }: { s: SettingsDTO }) {
     <SettingsSection id="statistics" title="Statistics" sub="Daily summaries preserve your history after individual click records expire." help={SETTINGS_HELP.statistics}>
       <div className="settings-stack">
         <Facts>
-          <Fact label="Analytics Engine queries">{s.aeAvailable ? "Configured" : <Badge tone="warn">Not configured</Badge>}</Fact>
+          <Fact label="Analytics Engine queries">{s.aeAvailable ? "Configured" : <Badge tone="danger">Not configured</Badge>}</Fact>
           <Fact label="Rolled up through">{s.lastRolled ?? "never"}</Fact>
         </Facts>
         <p className="settings-note">
@@ -87,12 +87,12 @@ export function DigestSection({ s }: { s: SettingsDTO }) {
           <Fact label="Sent with">
             <span className="settings-inline">
               {s.digestProvider}
-              {s.digestProblem ? <Badge tone="warn">Not ready</Badge> : null}
+              {s.digestProblem ? <Badge tone="danger">Not ready</Badge> : null}
             </span>
           </Fact>
           <Fact label="Last sent">{s.lastDigestWeek ?? "never"}</Fact>
         </Facts>
-        {s.digestProblem ? <Notice tone="warn">{s.digestProblem}</Notice> : null}
+        {s.digestProblem ? <Notice tone="danger">{s.digestProblem}</Notice> : null}
         <div className="settings-actions">
           <Button variant={s.digestProblem ? "primary" : "secondary"} icon={Settings2} onClick={() => setMailSetup(true)}>
             Set up email

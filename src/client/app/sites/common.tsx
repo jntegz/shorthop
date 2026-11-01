@@ -126,8 +126,8 @@ export function valueLabel(dim: SiteDim | "pages" | "goals" | "outbound", value:
   if (dim === "link") return value || "Not from a short link";
   if (dim === "campaign" || dim.startsWith("utm_")) return value || "(none)";
   if (dim === "referrer") return value || "No referrer";
-  if (dim === "continent") return CONTINENTS[value] ?? (value || "Unknown");
-  if (dim === "screen") return SCREENS[value] ?? (value || "Unknown");
+  if (dim === "continent") return Object.hasOwn(CONTINENTS, value) ? CONTINENTS[value]! : value || "Unknown";
+  if (dim === "screen") return Object.hasOwn(SCREENS, value) ? SCREENS[value]! : value || "Unknown";
   if (dim === "visitor_type") return value === "returning" ? "Returning" : "New";
   if (dim === "timezone") return value ? value.replaceAll("_", " ") : "Unknown";
   return value || "Unknown";

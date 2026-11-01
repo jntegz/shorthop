@@ -148,6 +148,12 @@ export interface FetchedPreview {
 }
 
 const MAX_HTML_BYTES = 512 * 1024;
+
+/** One of `hosts`, or its www. form, ignoring a trailing dot (as normalizeTarget compares). */
+function isOwnHost(hostname: string, hosts: readonly string[]): boolean {
+  const host = hostname.toLowerCase().replace(/\.+$/, "");
+  return hosts.some((h) => host === h || host === `www.${h}`);
+}
 const FETCH_TIMEOUT_MS = 8000;
 
 /**
@@ -155,7 +161,7 @@ const FETCH_TIMEOUT_MS = 8000;
  * so the editor can start from it. The same outbound safety as destination
  * checks: public hosts only, every redirect hop rechecked, a size and time cap.
  */
-export async function fetchDestinationPreview(target: string, fetcher: typeof fetch = fetch): Promise<FetchedPreview | { error: string }> {
+export async function fetchDestinationPreview(target: string, fetcher: typeof fetch = fetch, ownHosts: readonly string[] = []): Promise<FetchedPreview | { error: string }> {
   let url: URL;
   try {
     url = new URL(target);
@@ -166,7 +172,8 @@ export async function fetchDestinationPreview(target: string, fetcher: typeof fe
   let res: Response | null = null;
   try {
     for (let hops = 0; hops <= 5; hops++) {
-      if (!isFetchableUrl(url)) return { error: "That address can't be read from here." };
+      // The shortener's own hosts too: reading a short link would count as a click.
+      if (!isFetchableUrl(url) || isOwnHost(url.hostname, ownHosts)) return { error: "That address can't be read from here." };
       res = await fetcher(url.href, {
         redirect: "manual",
         headers: { "User-Agent": CHECK_USER_AGENT, Accept: "text/html,application/xhtml+xml" },

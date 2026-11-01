@@ -7,12 +7,20 @@ export const LINK_PASSWORD_MAX = 128;
  * PBKDF2 iterations for link passwords, by Workers plan (WORKERS_PLAN): on Free
  * a few milliseconds of CPU per attempt, so a check fits its 10 ms per request;
  * on Paid the workerd maximum. Each hash records its own count, so changing
- * plan only affects passwords set afterwards. Attempts are rate-limited per
- * network and link, and counted per link across all networks
- * (LINK_PASSWORD_MAX_FAILS); these protect a redirect, not an account.
+ * plan only affects passwords set afterwards. Wrong passwords lock the network
+ * that sent them (LINK_PASSWORD_NETWORK_MAX_FAILS), and are counted per link
+ * across all networks (LINK_PASSWORD_MAX_FAILS); these protect a redirect, not
+ * an account.
  */
 export const LINK_PASSWORD_ITERATIONS = { free: 30_000, paid: 100_000 } as const;
-/** Wrong passwords for one link, from anywhere, within the window before it locks. */
+/** Wrong passwords for one link from one network within the window before that network is locked out. */
+export const LINK_PASSWORD_NETWORK_MAX_FAILS = 10;
+/**
+ * Wrong passwords for one link from anywhere within the window before the
+ * link's brake goes on. The brake holds back only networks that have already
+ * guessed wrong, so many networks guessing in parallel get one try each, while
+ * a visitor who knows the password is never locked out by someone else.
+ */
 export const LINK_PASSWORD_MAX_FAILS = 20;
 export const LINK_PASSWORD_WINDOW_SEC = 60 * 60;
 /** The lock doubles from a minute with each lockout in a row, up to this. */

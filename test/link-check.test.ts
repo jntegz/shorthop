@@ -89,6 +89,13 @@ describe("outbound URL safety", () => {
     ["http://[2001:0:4136:e378::1]/", false],
     ["http://[0:0:0:0:0:ffff:a00:1]/", false],
     ["http://[2606:4700::1111]/", true],
+    ["http://localhost../", false],
+    ["http://127.0.0.1../", false],
+    ["http://router.localdomain/", false],
+    ["http://[::ffff:0:7f00:1]/", false],
+    ["http://[::ffff:0:808:808]/", true],
+    ["http://[fec0::1]/", false],
+    ["http://[100::1]/", false],
   ])("%s → %s", (url, ok) => {
     expect(isFetchableUrl(new URL(url))).toBe(ok);
   });

@@ -153,7 +153,7 @@ export function validateBio(input: BioPage): { ok: true; bio: BioPage } | { ok: 
 
   const socials: BioSocial[] = rawSocials.map((s, i) => {
     const network = String(s?.network ?? "") as SocialNetwork;
-    if (!(network in SOCIAL_NETWORKS)) {
+    if (!Object.hasOwn(SOCIAL_NETWORKS, network)) {
       problems.push({ field: `socials.${i}`, message: `Social link ${i + 1}: pick a network.` });
       return { network, url: String(s?.url ?? "") };
     }
@@ -212,6 +212,10 @@ export function bioTextOn(hex: string): string {
 
 const colourOr = (v: string | null | undefined): string | null => (v && HEX_COLOR_RE.test(v) ? v : null);
 
+/** A social link as validateBio allows it: mailto: for email, https:// for the rest. */
+const socialUrlOk = (s: BioSocial): boolean =>
+  s.network === "email" ? s.url.startsWith("mailto:") && EMAIL_RE.test(s.url.slice("mailto:".length)) : HTTPS_RE.test(s.url);
+
 function iconSvg(network: SocialNetwork): string {
   const n = SOCIAL_NETWORKS[network];
   const paint = "stroke" in n && n.stroke ? 'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"' : 'fill="currentColor"';
@@ -244,6 +248,9 @@ export function renderBio(
 ): string {
   const light = `--bg:#f6f7f9; --card:#ffffff; --fg:#1a1b25; --muted:#5d6375; --line:#dcdfe6; color-scheme:light;`;
   const dark = `--bg:#0f1116; --card:#171a21; --fg:#e7e9ef; --muted:#a6acbb; --line:#2d323e; color-scheme:dark;`;
+  // Every value is checked again here, not only when saved: an older version restored, or a stored
+  // page from before a rule existed, must not be able to put markup or a script address on the page.
+  const accent = colourOr(bio.accent) ?? DEFAULT_BIO.accent;
   const background = colourOr(bio.background);
   const buttonColor = colourOr(bio.buttonColor);
   const iconColor = colourOr(bio.iconColor);
@@ -265,6 +272,7 @@ export function renderBio(
       if (!isBioButton(b)) {
         return b.type === "heading" ? `<h2>${escapeHtml(b.label)}</h2>` : `<p class="note">${escapeHtml(b.text)}</p>`;
       }
+      if (!("link" in b) && !HTTPS_RE.test(String(b.url))) return "";
       const href = "link" in b ? opts.linkHref(b.link) : b.url;
       const cls = first ? "btn first" : "btn";
       first = false;
@@ -272,7 +280,7 @@ export function renderBio(
     })
     .join("\n    ");
 
-  const socials = (bio.socials ?? []).filter((s) => s.network in SOCIAL_NETWORKS);
+  const socials = (bio.socials ?? []).filter((s) => Object.hasOwn(SOCIAL_NETWORKS, s.network) && socialUrlOk(s));
   const socialList = socials.length
     ? `<ul class="socials${bio.socialsAt === "bottom" ? " at-end" : ""}" aria-label="Elsewhere">${socials
         .map((s) => {
@@ -308,7 +316,7 @@ ${bio.text ? `<meta name="description" content="${escapeHtml(bio.text)}">\n<meta
 ${opts.pageUrl ? `<meta property="og:url" content="${escapeHtml(opts.pageUrl)}">` : ""}
 <style>
   ${palette}
-  :root { --accent:${bio.accent}; --on-accent:${onColor(bio.accent)}; ${buttonVars} --icon:${iconColor ?? "var(--fg)"}; }
+  :root { --accent:${accent}; --on-accent:${onColor(accent)}; ${buttonVars} --icon:${iconColor ?? "var(--fg)"}; }
   * { box-sizing:border-box; }
   body { margin:0; min-height:100vh; background:var(--bg); color:var(--fg); font:16px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
   main { max-width:520px; margin:0 auto; padding:48px 20px 32px; text-align:center; }
@@ -339,7 +347,6 @@ ${opts.pageUrl ? `<meta property="og:url" content="${escapeHtml(opts.pageUrl)}">
   .share-panel a:hover { background:var(--bg); }
   .share-panel svg { width:18px; height:18px; color:var(--icon); flex:none; }
   footer { margin-top:36px; font-size:12px; color:var(--muted); }
-  footer a { color:inherit; }
   @media (prefers-reduced-motion:reduce) { a.btn, .socials a { transition:none; } a.btn:hover { transform:none; } }
 </style>
 </head>
@@ -354,7 +361,7 @@ ${opts.pageUrl ? `<meta property="og:url" content="${escapeHtml(opts.pageUrl)}">
   </section>
   ${bio.socialsAt === "bottom" ? socialList : ""}
   ${share}
-  <footer><a href="/_privacy">Privacy</a> · ${escapeHtml(opts.domain)}</footer>
+  <footer>${escapeHtml(opts.domain)}</footer>
 </main>
 </body>
 </html>`;

@@ -5,7 +5,10 @@
   "name": "shorthop",
   "main": "src/worker/index.ts",
   "compatibility_date": "2026-10-19",
-  "compatibility_flags": ["nodejs_compat"],
+  // global_fetch_strictly_public: the Worker's own fetches (link checks, previews,
+  // webhooks) to hostnames in its zone go through Cloudflare like any visitor's,
+  // so Access and WAF rules apply to them too.
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
   "workers_dev": false,
   "preview_urls": false,
   // One custom domain per short domain, plus ADMIN_HOST. Each must be in a zone

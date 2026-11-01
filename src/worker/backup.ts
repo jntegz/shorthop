@@ -1,7 +1,7 @@
 // A full backup of the workspace's data, a table at a time, for the admin to
 // zip in the browser (Settings → Backup) or for the weekly copy to R2. Secrets
-// never leave: password and key hashes, encrypted secrets, session epochs and
-// the daily visitor salts are dropped, and link history is scrubbed of
+// never leave: password and key hashes, encrypted secrets, session epochs, the
+// generated session secret and visitor salts are dropped, and link history is scrubbed of
 // passwords. People's details (emails, customer ids, visitor ids) are only
 // included when asked for, by someone who may see revenue.
 //
@@ -29,7 +29,13 @@ export const BACKUP_TABLES = {
   link_versions: { order: "id" },
   daily_stats: { order: "date, domain, slug, country, device, source" },
   daily_dims: { order: "date, domain, slug, dim, value" },
-  settings: { order: "key", where: "key != 'session_epoch' AND key NOT LIKE 'visitor_salt:%'" },
+  // Secrets kept as settings rows: the session epoch, daily visitor salts, the SESSION_SECRET and
+  // VISITOR_SALT a Deploy to Cloudflare install generates (src/worker/secrets.ts), and logged-out sessions.
+  settings: {
+    order: "key",
+    where:
+      "key NOT IN ('session_epoch', 'generated_session_secret', 'generated_visitor_salt') AND substr(key, 1, 13) != 'visitor_salt:' AND substr(key, 1, 16) != 'revoked_session:'",
+  },
   target_checks: { order: "target" },
   preview_images: { order: "key" },
   utm_presets: { order: "id" },

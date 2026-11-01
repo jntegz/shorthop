@@ -376,9 +376,10 @@
   border-color: var(--ui-good);
   color: var(--ui-good);
 }
+/* Not ready yet: red, like every other problem that blocks a step. */
 .settings-step[data-state="attention"] .settings-step-mark {
-  border-color: var(--ui-warn);
-  color: var(--ui-warn);
+  border-color: var(--ui-bad);
+  color: var(--ui-bad);
 }
 :root[data-ui="app"] .settings-step-mark svg.lucide {
   width: 14px;
@@ -410,9 +411,9 @@
   --tone: var(--ui-good);
   --tone-bg: var(--ui-good-wash);
 }
-.settings-step-status[data-tone="warn"] {
-  --tone: var(--ui-warn);
-  --tone-bg: var(--ui-warn-wash);
+.settings-step-status[data-tone="bad"] {
+  --tone: var(--ui-bad);
+  --tone-bg: var(--ui-bad-wash);
 }
 .settings-step-body {
   margin-top: var(--ui-s-2);

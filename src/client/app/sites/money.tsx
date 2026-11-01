@@ -506,7 +506,17 @@ function VisitorDialog({ d, visitorId, onClose }: { d: Dash; visitorId: string |
     ? [...v.payments.map((p) => ({ t: p.occurredAt, kind: "payment" as const, p })), ...v.sessions.map((s) => ({ t: s.startedAt, kind: "visit" as const, s }))].sort((a, b) => b.t - a.t)
     : [];
   return (
-    <Dialog open={Boolean(visitorId)} onOpenChange={(o) => !o && onClose()} title={v?.email ?? v?.name ?? "Buyer’s journey"} description="Every visit and payment of this visitor, newest first." size="lg">
+    <Dialog
+      open={Boolean(visitorId)}
+      onOpenChange={(o) => !o && onClose()}
+      title={v?.email ?? v?.name ?? "Buyer’s journey"}
+      description={
+        v && (v.email || v.name) && !v.verified
+          ? "Every visit and payment of this visitor, newest first. The name and email came from the page, not your server, so anyone could have sent them."
+          : "Every visit and payment of this visitor, newest first."
+      }
+      size="lg"
+    >
       {profile.isError ? (
         <ErrorState compact what="This journey" error={profile.error} onRetry={() => void profile.refetch()} />
       ) : !v ? (

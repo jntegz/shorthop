@@ -63,7 +63,25 @@ jobs:
             echo "::error::\"$tag\" isn't a version like 1.2.0."
             exit 1
           fi
+          # The release's commit, checked to be a published release on upstream's main branch:
+          # a tag moved to a commit outside main (or a draft) is refused, and the
+          # download below is pinned to this commit, not to the tag.
+          if [ "$(gh api "repos/$UPSTREAM/releases/tags/$tag" --jq .draft)" != "false" ]; then
+            echo "::error::$tag isn't a published release of $UPSTREAM."
+            exit 1
+          fi
+          sha=$(gh api "repos/$UPSTREAM/commits/$tag" --jq .sha 2>/dev/null) || sha=""
+          if ! printf '%s' "$sha" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "::error::Couldn't resolve $tag to a commit."
+            exit 1
+          fi
+          on_main=$(gh api "repos/$UPSTREAM/compare/$sha...main" --jq .status 2>/dev/null) || on_main="not found"
+          if [ "$on_main" != "ahead" ] && [ "$on_main" != "identical" ]; then
+            echo "::error::$tag ($sha) isn't on $UPSTREAM's main branch ($on_main)."
+            exit 1
+          fi
           current=$(node -p "require('./copy/package.json').version")
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
           echo "current=$current" >> "$GITHUB_OUTPUT"
@@ -76,10 +94,13 @@ jobs:
         if: steps.version.outputs.skip != 'true'
         env:
           TAG: ${{ steps.version.outputs.tag }}
+          SHA: ${{ steps.version.outputs.sha }}
           CURRENT: ${{ steps.version.outputs.current }}
         run: |
           mkdir -p "$RUNNER_TEMP/new" "$RUNNER_TEMP/old"
-          curl -sSfL "https://github.com/$UPSTREAM/archive/refs/tags/$TAG.tar.gz" | tar -xz -C "$RUNNER_TEMP/new" --strip-components=1
+          # By commit: what was checked above is exactly what runs below.
+          curl -sSfL "https://github.com/$UPSTREAM/archive/$SHA.tar.gz" | tar -xz -C "$RUNNER_TEMP/new" --strip-components=1
+          echo "Updating to $TAG, commit \`$SHA\` of $UPSTREAM." >> "$GITHUB_STEP_SUMMARY"
           # The version the copy is on, to find files the new one removed. Optional.
           curl -sSfL "https://github.com/$UPSTREAM/archive/refs/tags/v$CURRENT.tar.gz" | tar -xz -C "$RUNNER_TEMP/old" --strip-components=1 \
             || { echo "::warning::v$CURRENT isn't a release, so files removed since then stay."; rm -rf "$RUNNER_TEMP/old"; }
@@ -110,6 +131,7 @@ jobs:
           gh auth setup-git
           branch="shorthop-update-v$VERSION"
           if [ "$MODE" = "commit" ]; then
+            echo "Mode \`commit\`: no pull request to review; the update deploys as soon as it's pushed." >> "$GITHUB_STEP_SUMMARY"
             git add -A
             git commit -q -m "Update Shorthop to $VERSION"
             git push origin "HEAD:$DEFAULT_BRANCH"

@@ -83,14 +83,27 @@ describe("passwords", () => {
     expect(last!.headers.get("Retry-After")).toBe("60");
   });
 
-  it("locks the link after many wrong passwords, however many networks they come from", async () => {
+  it("after many wrong passwords from many networks, holds back the guessers but not people who know it", async () => {
     await create({ password: "open sesame" });
     for (let i = 0; i < 20; i++) expect((await submit("wrong guess", "secret", `192.0.2.${i + 1}`)).status).toBe(401);
-    // Locked for everyone, even with the right password from a new network.
-    expect((await submit("open sesame", "secret", "198.51.100.200")).status).toBe(429);
-    await env.DB.prepare("UPDATE auth_failures SET locked_until = 0 WHERE key = 'link:sh.example/secret'").run();
+    const brake = await env.DB.prepare("SELECT locked_until FROM auth_failures WHERE key = 'link:sh.example/secret'").first<{ locked_until: number }>();
+    expect(brake!.locked_until).toBeGreaterThan(Date.now() / 1000);
+    // A network that guessed wrong waits, even with the right password.
+    expect((await submit("open sesame", "secret", "192.0.2.1")).status).toBe(429);
+    // A new network gets one try: a wrong one holds it back too.
+    expect((await submit("another guess", "secret", "192.0.2.100")).status).toBe(401);
+    expect((await submit("open sesame", "secret", "192.0.2.100")).status).toBe(429);
+    // Someone who knows the password is never locked out by others.
     expect((await submit("open sesame", "secret", "198.51.100.200")).status).toBe(200);
     expect(await env.DB.prepare("SELECT 1 FROM auth_failures WHERE key = 'link:sh.example/secret'").first()).toBeNull();
+  });
+
+  it("stores no IP address in the lockouts", async () => {
+    await create({ password: "open sesame" });
+    await submit("wrong guess", "secret", "203.0.113.77");
+    const { results } = await env.DB.prepare("SELECT key FROM auth_failures").all<{ key: string }>();
+    expect(results.length).toBeGreaterThan(0);
+    for (const r of results) expect(r.key).not.toContain("203.0.113");
   });
 
   it("shows a custom preview to crawlers without the destination, and refuses POST on other links", async () => {

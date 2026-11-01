@@ -319,7 +319,7 @@ export interface SecuritySummary {
 export async function securitySummary(db: D1Database, now: number): Promise<SecuritySummary> {
   const [failed, locked, global, recent] = await db.batch<Record<string, number | string>>([
     db.prepare("SELECT COUNT(*) AS n FROM login_events WHERE ok = 0 AND ts >= ?").bind(now - 86400),
-    db.prepare("SELECT COUNT(*) AS n FROM auth_failures WHERE key NOT LIKE '*%' AND key NOT LIKE 'api:%' AND key NOT LIKE 'pw:%' AND key NOT LIKE 'link:%' AND locked_until > ?1").bind(now),
+    db.prepare("SELECT COUNT(*) AS n FROM auth_failures WHERE key NOT LIKE '*%' AND key NOT LIKE 'api:%' AND key NOT LIKE 'pw:%' AND key NOT LIKE 'link:%' AND key NOT LIKE 'share:%' AND locked_until > ?1").bind(now),
     db.prepare("SELECT locked_until FROM auth_failures WHERE key = ?1 AND locked_until > ?2").bind(GLOBAL_KEY, now),
     db.prepare("SELECT ts, ok, country, email FROM login_events ORDER BY ts DESC LIMIT 10"),
   ]);

@@ -16,12 +16,25 @@ import { arr, compact, currency, num, obj, parseJson, sec, str, visitRef, type O
 const base = (settings: Record<string, string>) => (settings.sandbox ? "https://api-m.sandbox.paypal.com" : "https://api-m.paypal.com");
 
 const tokens = new Map<string, { token: string; until: number }>();
+/** Refusals, kept a minute: forged webhooks for a connection with wrong credentials don't each ask PayPal again. */
+const refused = new Map<string, { error: string; until: number }>();
 
 /** An OAuth access token, cached per isolate until shortly before it expires. */
 async function accessToken(clientId: string, secret: string, settings: Record<string, string>): Promise<string> {
   const key = `${base(settings)}|${clientId}`;
   const hit = tokens.get(key);
   if (hit && hit.until > Date.now()) return hit.token;
+  const no = refused.get(`${key}|${secret}`);
+  if (no && no.until > Date.now()) throw new Error(no.error);
+  try {
+    return await requestToken(key, clientId, secret, settings);
+  } catch (err) {
+    refused.set(`${key}|${secret}`, { error: String(err instanceof Error ? err.message : err), until: Date.now() + 60_000 });
+    throw err;
+  }
+}
+
+async function requestToken(key: string, clientId: string, secret: string, settings: Record<string, string>): Promise<string> {
   const res = await fetch(`${base(settings)}/v1/oauth2/token`, {
     method: "POST",
     headers: { Authorization: `Basic ${btoa(`${clientId}:${secret}`)}`, "Content-Type": "application/x-www-form-urlencoded" },
@@ -49,6 +62,19 @@ function upId(resource: Obj): string | null {
   return href ? (href.split("/").pop() ?? null) : null;
 }
 
+/** Every webhook PayPal sends carries these; PayPal's verification needs them all. */
+const TRANSMISSION_HEADERS = ["PAYPAL-TRANSMISSION-ID", "PAYPAL-TRANSMISSION-TIME", "PAYPAL-TRANSMISSION-SIG", "PAYPAL-CERT-URL", "PAYPAL-AUTH-ALGO"];
+
+/** PayPal's signing certificates are served over https from paypal.com. */
+function isPayPalCertUrl(raw: string): boolean {
+  try {
+    const u = new URL(raw);
+    return u.protocol === "https:" && (u.hostname === "paypal.com" || u.hostname.endsWith(".paypal.com"));
+  } catch {
+    return false;
+  }
+}
+
 const SUB_STATUS: Record<string, NormalizedSubscription["status"]> = {
   ACTIVE: "active",
   APPROVED: "active",
@@ -64,7 +90,10 @@ export const paypal: ProviderAdapter = {
     const { clientId, webhookId } = ctx.settings;
     if (!ctx.apiKey || !clientId || !webhookId) return "Set the client id, client secret and webhook id first";
     const h = (name: string) => headers.get(name) ?? "";
-    if (!h("PAYPAL-TRANSMISSION-SIG")) return "Missing PAYPAL-TRANSMISSION-SIG header";
+    // Checked here first, so a request that can't be PayPal's costs no call to PayPal.
+    const missing = TRANSMISSION_HEADERS.filter((n) => !h(n));
+    if (missing.length) return `Missing ${missing.join(", ")} header${missing.length === 1 ? "" : "s"}`;
+    if (!isPayPalCertUrl(h("PAYPAL-CERT-URL"))) return "PAYPAL-CERT-URL isn't a PayPal address";
     let event: unknown;
     try {
       event = JSON.parse(body);
@@ -179,4 +208,5 @@ export const paypal: ProviderAdapter = {
 
 export function resetPaypalTokens(): void {
   tokens.clear();
+  refused.clear();
 }

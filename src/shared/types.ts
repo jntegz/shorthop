@@ -430,7 +430,7 @@ export interface DomainCheckDTO {
   domain: string;
   /** Listed in SHORT_DOMAINS. */
   configured: boolean;
-  /** False when DNS says the name doesn't exist (not registered, or a typo). */
+  /** False when DNS knows neither the name nor a parent zone of it (not registered, or a typo). A subdomain of a registered zone exists. */
   exists: boolean;
   /** The name whose nameservers were found (the domain itself or its parent). */
   zone: string | null;

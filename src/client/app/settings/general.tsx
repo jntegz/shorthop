@@ -27,7 +27,7 @@ function Step({ n, title, state, status, children }: { n: number; title: string;
       </span>
       <div className="settings-step-main">
         <h4 className="settings-step-title">{title}</h4>
-        {status ? <div className="settings-step-status" data-tone={state === "done" ? "good" : state === "attention" ? "warn" : "info"}>{status}</div> : null}
+        {status ? <div className="settings-step-status" data-tone={state === "done" ? "good" : state === "attention" ? "bad" : "info"}>{status}</div> : null}
         <div className="settings-step-body">{children}</div>
       </div>
     </li>
@@ -161,7 +161,7 @@ export function DomainsSection({
               <span className="settings-domain-name">
                 <span translate="no">{d}</span>
                 {d === primary ? <span className="settings-domain-role">{d === adminHost ? "Primary · admin & API" : "Primary"}</span> : null}
-                {retired.includes(d) ? <Badge tone="warn">Not in SHORT_DOMAINS: links don't redirect</Badge> : null}
+                {retired.includes(d) ? <Badge tone="danger">Not in SHORT_DOMAINS: links don't redirect</Badge> : null}
               </span>
               <span className="settings-domain-count">
                 {num(n)} {n === 1 ? "link" : "links"}

@@ -192,6 +192,15 @@ export const TOOLS: Tool[] = [
 
 type Rpc = { jsonrpc?: string; id?: string | number | null; method?: string; params?: Record<string, unknown> };
 
+/** An Origin header's host, or null when it isn't a URL (such as "null"). */
+function originHost(origin: string): string | null {
+  try {
+    return new URL(origin).host;
+  } catch {
+    return null;
+  }
+}
+
 const result = (id: Rpc["id"], value: unknown) => ({ jsonrpc: "2.0", id: id ?? null, result: value });
 const failure = (id: Rpc["id"], code: number, message: string) => ({ jsonrpc: "2.0", id: id ?? null, error: { code, message } });
 
@@ -201,9 +210,9 @@ function describeTools() {
 
 export const mcpApi = new Hono<AppEnv>()
   .post("/mcp", async (c) => {
-    // Browsers send Origin; a page on another site mustn't drive this server.
+    // Browsers send Origin; a page on another site (or an opaque "null" origin) mustn't drive this server.
     const origin = c.req.header("Origin");
-    if (origin && new URL(origin).host !== new URL(c.req.url).host) return c.json(failure(null, -32600, "Origin not allowed"), 403);
+    if (origin && originHost(origin) !== new URL(c.req.url).host) return c.json(failure(null, -32600, "Origin not allowed"), 403);
     let msg: Rpc;
     try {
       msg = (await c.req.json()) as Rpc;
@@ -236,7 +245,14 @@ export const mcpApi = new Hono<AppEnv>()
         const res = await app.fetch(
           new Request(`${base.origin}${prefix}${req.path}`, {
             method: req.method,
-            headers: { Authorization: c.req.header("Authorization") ?? "", Cookie: c.req.header("Cookie") ?? "", Origin: base.origin, ...(req.body === undefined ? {} : { "Content-Type": "application/json" }) },
+            headers: {
+              Authorization: c.req.header("Authorization") ?? "",
+              Cookie: c.req.header("Cookie") ?? "",
+              // The admin's session is checked together with its Cloudflare Access login.
+              "Cf-Access-Jwt-Assertion": c.req.header("Cf-Access-Jwt-Assertion") ?? "",
+              Origin: base.origin,
+              ...(req.body === undefined ? {} : { "Content-Type": "application/json" }),
+            },
             body: req.body === undefined ? undefined : JSON.stringify(req.body),
           }),
           c.env,

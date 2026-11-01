@@ -3,7 +3,7 @@
 //
 // Checked before anything is stored: the client isn't over the rate limit,
 // the site exists, the request's Origin and the page URL both belong to it,
-// and it isn't a bot. Every event updates the visit's D1 row and writes one data
+// it isn't a bot, and on Workers Free the day's budget isn't spent (budget.ts). Every event updates the visit's D1 row and writes one data
 // point to Analytics Engine (the AE_WEB_DATASET dataset, layout in WEB_BLOBS).
 // No IP address is stored; cookieless sites get a visitor hash that changes
 // every day and can't be linked across days.
@@ -13,6 +13,7 @@ import { daySaltFor, detectBot, detectBrowser, detectDevice, detectOs, primaryLa
 import { readTextCapped } from "../body";
 import { claimRefs } from "../revenue/match";
 import { ipBucket } from "../session";
+import { collectBudgetAllows } from "./budget";
 import { attributionOf, inAppBrowser } from "./source";
 import { identifyVisitor, touchSession, type TouchKind } from "./sessions";
 import { cachedSite } from "./sites";
@@ -20,6 +21,8 @@ import { verifyClickToken } from "./token";
 
 export const COLLECT_PATH = "/_t/e";
 const MAX_BODY = 8 * 1024;
+/** How old a payment a page's checkout refs can still claim. */
+const CLAIM_WINDOW_SEC = 86_400;
 
 const TYPES: Record<string, TouchKind | "identify"> = {
   pageview: "pageview",
@@ -174,6 +177,8 @@ export async function handleCollect(request: Request, env: Env, ctx: ExecutionCo
   if (site.excludePaths.some((g) => pathMatches(path, g))) return reply(202, origin);
 
   const now = Math.floor(Date.now() / 1000);
+  // Workers Free: past the day's budget, events are accepted and dropped, so the D1 allowance lasts the day.
+  if (!(await collectBudgetAllows(env, now))) return reply(202, origin);
   const date = new Date(now * 1000).toISOString().slice(0, 10);
 
   // The visitor: the site's own first-party id, or a hash that changes daily.
@@ -283,7 +288,8 @@ export async function handleCollect(request: Request, env: Env, ctx: ExecutionCo
   // A return page after checkout names the provider's ids: tie them to this visit.
   if (kind === "pageview" && Array.isArray(p.k) && p.k.length) {
     const refs = p.k.filter((r): r is string => typeof r === "string" && /^[A-Za-z0-9_:.-]{4,200}$/.test(r)).slice(0, 5);
-    if (refs.length) ctx.waitUntil(claimRefs(env, site, session.id, visitorId, refs, now).catch((err: unknown) => console.error(JSON.stringify({ message: "payment claim failed", error: String(err) }))));
+    // Anyone can send refs, so only a payment from the last day can be claimed (a return page follows its checkout within minutes).
+    if (refs.length) ctx.waitUntil(claimRefs(env, site, session.id, visitorId, refs, now, now - CLAIM_WINDOW_SEC).catch((err: unknown) => console.error(JSON.stringify({ message: "payment claim failed", error: String(err) }))));
   }
 
   return reply(200, origin, { s: session.id, ...mode });

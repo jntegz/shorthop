@@ -1,7 +1,8 @@
 // People besides the owners, and personal API keys: D1 records and the Actor
 // each request runs as.
 
-import { toBase64Url } from "../shared/password";
+import { PLAN_ITERATIONS, toBase64Url } from "../shared/password";
+import { isPaidPlan } from "./plan";
 import { effectivePermissions, formatPermissions, parsePermissions, PERMISSIONS, type Actor, type Permission, type Role } from "../shared/permissions";
 
 export interface UserRow {
@@ -32,6 +33,11 @@ export const INVITE_TTL_SEC = 24 * 60 * 60;
 export const MAX_KEYS_PER_PERSON = 20;
 /** Shortest password someone can choose for themselves. */
 export const MIN_USER_PASSWORD = 12;
+
+/** PBKDF2 iterations for people's passwords: what a login can afford on this Workers plan, like the owners' hash. */
+export function personIterations(env: Pick<Env, "WORKERS_PLAN">): number {
+  return PLAN_ITERATIONS[isPaidPlan(env) ? "paid" : "free"];
+}
 
 export const KEY_RE = /^shp_([a-z0-9]{8})_([A-Za-z0-9_-]{43})$/;
 export const INVITE_TOKEN_RE = /^[A-Za-z0-9_-]{43}$/;

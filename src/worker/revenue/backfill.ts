@@ -5,7 +5,10 @@
 // are not counted twice. Old payments seldom carry a visit reference, so most
 // count in the totals as "not matched".
 //
-// One call imports a few pages and returns a cursor to continue from.
+// One call imports a few pages and returns a cursor to continue from. On
+// Workers Free a call stays inside the 50 D1 queries one invocation may make:
+// pages are asked for in the plan's size, and a page with more payments than
+// that is finished over several calls (the cursor says how many to skip).
 // Not available for PayPal (its transaction search needs a separate
 // permission and 31-day windows).
 
@@ -23,6 +26,8 @@ export interface ImportPage {
 
 interface ImportContext extends AdapterContext {
   apiKey: string;
+  /** Payments one call stores (planLimits().importPayments): the page size asked for, where the API takes one. */
+  pageSize: number;
 }
 
 type PageFn = (c: ImportContext, since: number, cursor: string | null) => Promise<ImportPage>;
@@ -50,7 +55,7 @@ const stripePage: PageFn = async (c, since, cursor) => {
   const stage = Number(stageText) || 0;
   const s = STRIPE_STAGES[stage]!;
   const body = await getJson(
-    `https://api.stripe.com/v1/${s.path}?limit=100&created[gte]=${since}${s.extra}${after ? `&starting_after=${encodeURIComponent(after)}` : ""}`,
+    `https://api.stripe.com/v1/${s.path}?limit=${Math.min(100, c.pageSize)}&created[gte]=${since}${s.extra}${after ? `&starting_after=${encodeURIComponent(after)}` : ""}`,
     { Authorization: `Bearer ${c.apiKey}` },
   );
   const items = arr(body.data).map(obj);
@@ -66,7 +71,7 @@ const stripePage: PageFn = async (c, since, cursor) => {
 
 const paddlePage: PageFn = async (c, since, cursor) => {
   const base = c.apiKey.includes("_sdbx_") ? "https://sandbox-api.paddle.com" : "https://api.paddle.com";
-  const first = `${base}/transactions?status=completed&per_page=30&created_at[GTE]=${encodeURIComponent(new Date(since * 1000).toISOString())}`;
+  const first = `${base}/transactions?status=completed&per_page=${Math.min(30, c.pageSize)}&created_at[GTE]=${encodeURIComponent(new Date(since * 1000).toISOString())}`;
   // The cursor is Paddle's own next-page URL, sent back by the browser: the API key may only ever go to Paddle.
   let url: URL;
   try {
@@ -74,7 +79,7 @@ const paddlePage: PageFn = async (c, since, cursor) => {
   } catch {
     throw new Error("Bad cursor");
   }
-  if (url.origin !== base || url.username || url.password) throw new Error("Bad cursor");
+  if (url.origin !== base || url.pathname !== "/transactions" || url.username || url.password) throw new Error("Bad cursor");
   const body = await getJson(url.toString(), { Authorization: `Bearer ${c.apiKey}` });
   const events: NormalizedEvent[] = [];
   for (const t of arr(body.data).map(obj)) {
@@ -86,7 +91,7 @@ const paddlePage: PageFn = async (c, since, cursor) => {
 
 const lemonPage: PageFn = async (c, since, cursor) => {
   const page = Number(cursor ?? "1") || 1;
-  const body = await getJson(`https://api.lemonsqueezy.com/v1/orders?page[number]=${page}&page[size]=100&sort=-created_at`, {
+  const body = await getJson(`https://api.lemonsqueezy.com/v1/orders?page[number]=${page}&page[size]=${Math.min(100, c.pageSize)}&sort=-created_at`, {
     Authorization: `Bearer ${c.apiKey}`,
     Accept: "application/vnd.api+json",
   });
@@ -107,8 +112,9 @@ const lemonPage: PageFn = async (c, since, cursor) => {
 
 const dodoPage: PageFn = async (c, since, cursor) => {
   const page = Number(cursor ?? "0") || 0;
+  const size = Math.min(100, c.pageSize);
   const iso = encodeURIComponent(new Date(since * 1000).toISOString());
-  const body = await getJson(`https://live.dodopayments.com/payments?status=succeeded&page_size=100&page_number=${page}&created_at_gte=${iso}`, {
+  const body = await getJson(`https://live.dodopayments.com/payments?status=succeeded&page_size=${size}&page_number=${page}&created_at_gte=${iso}`, {
     Authorization: `Bearer ${c.apiKey}`,
   });
   const items = arr(body.items).map(obj);
@@ -121,14 +127,14 @@ const dodoPage: PageFn = async (c, since, cursor) => {
       events.push(await parse("dodo", { type: "refund.succeeded", data: { ...r, payment_id: id } }, c, { "webhook-id": `import_${str(r.refund_id)}` }));
     }
   }
-  return { events, next: items.length === 100 ? String(page + 1) : null };
+  return { events, next: items.length === size ? String(page + 1) : null };
 };
 
 // Creem: transactions have no date filter, so pages are read until they get older than the start.
 const creemPage: PageFn = async (c, since, cursor) => {
   const page = Number(cursor ?? "1") || 1;
   const base = c.settings.test ? "https://test-api.creem.io" : "https://api.creem.io";
-  const body = await getJson(`${base}/v1/transactions/search?page_number=${page}&page_size=100`, { "x-api-key": c.apiKey });
+  const body = await getJson(`${base}/v1/transactions/search?page_number=${page}&page_size=${Math.min(100, c.pageSize)}`, { "x-api-key": c.apiKey });
   const event = emptyEvent(`import:creem:${page}`, "import");
   let older = false;
   for (const t of arr(body.items).map(obj)) {
@@ -201,7 +207,7 @@ const fastspringPage: PageFn = async (c, since, cursor) => {
   const auth = { Authorization: `Basic ${btoa(`${c.settings.username}:${c.apiKey}`)}`, "User-Agent": "shorthop" };
   const page = Number(cursor ?? "1") || 1;
   const end = isoDay(Math.floor(Date.now() / 1000) + 86400);
-  const list = await getJson(`${FASTSPRING_API}/orders?begin=${isoDay(since)}&end=${end}&page=${page}&limit=50`, auth);
+  const list = await getJson(`${FASTSPRING_API}/orders?begin=${isoDay(since)}&end=${end}&page=${page}&limit=${Math.min(50, c.pageSize)}`, auth);
   const event = emptyEvent(`import:fastspring:${page}`, "import");
   for (const ref of arr(list.orders)) {
     const id = typeof ref === "string" ? ref : str(obj(ref).id);
@@ -223,8 +229,29 @@ const PAGES: Partial<Record<Provider, PageFn>> = {
   fastspring: fastspringPage,
 };
 
-export function importPage(provider: Provider, c: ImportContext, since: number, cursor: string | null): Promise<ImportPage> {
+/** A page cursor that also says how many of the page's payments are already stored: "@<skip>@<provider cursor>". */
+function splitCursor(cursor: string | null): { inner: string | null; skip: number } {
+  const m = cursor ? /^@(\d{1,6})@(.*)$/s.exec(cursor) : null;
+  return m ? { inner: m[2] || null, skip: Number(m[1]) } : { inner: cursor, skip: 0 };
+}
+
+/** One payment per event, so a page can be cut between payments (a subscription or claim stays with the first). */
+function onePaymentEach(events: NormalizedEvent[]): NormalizedEvent[] {
+  return events.flatMap((e) =>
+    e.payments.length <= 1 ? [e] : e.payments.map((p, i) => ({ ...e, payments: [p], subscriptions: i === 0 ? e.subscriptions : [], claims: i === 0 ? e.claims : [] })),
+  );
+}
+
+/**
+ * The next c.pageSize payments: a provider page, or the rest of one. A page
+ * with more is read again by the next call, which skips what's stored.
+ */
+export async function importPage(provider: Provider, c: ImportContext, since: number, cursor: string | null): Promise<ImportPage> {
   const fn = PAGES[provider];
   if (!fn) throw new Error(`Importing past payments isn't available for ${provider}`);
-  return fn(c, since, cursor);
+  const { inner, skip } = splitCursor(cursor);
+  const page = await fn(c, since, inner);
+  const rest = onePaymentEach(page.events).slice(skip);
+  if (rest.length <= c.pageSize) return { events: rest, next: page.next };
+  return { events: rest.slice(0, c.pageSize), next: `@${skip + c.pageSize}@${inner ?? ""}` };
 }

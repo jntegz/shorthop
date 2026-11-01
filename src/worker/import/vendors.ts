@@ -168,15 +168,18 @@ async function shortio(key: string, cursor: string | null, budget: number): Prom
   let note: string | undefined;
   while (state.i < state.d.length && calls + 2 <= budget) {
     const domain = state.d[state.i]!;
+    // The cursor comes back from the browser: only a numeric domain id goes into Short.io's URLs.
+    const domainId = Number(domain.id);
+    if (!Number.isSafeInteger(domainId) || domainId <= 0) throw new Error("Bad cursor");
     const body = obj(
-      await fetchJson("shortio", `https://api.short.io/api/links?domain_id=${domain.id}&limit=150${state.t ? `&pageToken=${encodeURIComponent(state.t)}` : ""}`, auth),
+      await fetchJson("shortio", `https://api.short.io/api/links?domain_id=${domainId}&limit=150${state.t ? `&pageToken=${encodeURIComponent(state.t)}` : ""}`, auth),
     );
     calls++;
     const links = arr(body.links).map(obj);
     let clicks: Obj = {};
     if (links.length) {
       try {
-        clicks = obj(await fetchJson("shortio", `https://api-v2.short.io/statistics/domain/${domain.id}/link_clicks?ids=${links.map((l) => num(l.id)).filter(Boolean).join(",")}`, auth));
+        clicks = obj(await fetchJson("shortio", `https://api-v2.short.io/statistics/domain/${domainId}/link_clicks?ids=${links.map((l) => num(l.id)).filter(Boolean).join(",")}`, auth));
       } catch (err) {
         // Statistics are limited separately (60 a minute); the links matter more.
         if (!(err instanceof VendorError)) throw err;

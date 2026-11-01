@@ -162,7 +162,7 @@ openssl rand -hex 32 | npx wrangler secret put DIGEST_WEBHOOK_SECRET`}
 /** Each provider's state, as a badge only where it says something. */
 function status(p: MailProviderDTO, active: string): ReactNode {
   if (p.id === "off") return active === "off" ? <Badge tone="neutral">In use</Badge> : null;
-  if (p.id === active) return p.problem ? <Badge tone="warn">In use · not ready</Badge> : <Badge tone="good">In use</Badge>;
+  if (p.id === active) return p.problem ? <Badge tone="danger">In use · not ready</Badge> : <Badge tone="good">In use</Badge>;
   return p.problem ? <span className="settings-provider-note">Needs setup</span> : <span className="settings-provider-note">Ready</span>;
 }
 
@@ -377,7 +377,7 @@ export function MailSetupDialog({ open, onOpenChange }: { open: boolean; onOpenC
                 </div>
               ) : null}
 
-              {selected.problem && selected.id !== "off" ? <Notice tone="warn">Not ready yet: {selected.problem}</Notice> : null}
+              {selected.problem && selected.id !== "off" ? <Notice tone="danger">Not ready yet: {selected.problem}</Notice> : null}
             </div>
           ) : null}
         </div>

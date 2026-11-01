@@ -370,7 +370,7 @@ async function clickWebhooks(request: Request, env: Env, url: URL, domain: strin
       browser: detectBrowser(ua),
       source: resolveSource(sourceTag, qr, ua, referrer).source,
       referrer,
-    });
+    }, fetch, request.headers.get("CF-Connecting-IP"));
   } catch (err) {
     console.error(JSON.stringify({ message: "click webhooks failed", domain, slug, error: String(err) }));
   }

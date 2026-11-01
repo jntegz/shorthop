@@ -439,7 +439,6 @@ export const turnstileSchema = z.object({
     .regex(/^[0-9A-Za-z_-]{10,100}$/, "Paste the site key from your Turnstile widget"),
 });
 
-export const API_KEY_EXPIRY_DAYS = [30, 90, 365] as const;
 
 export const apiKeySchema = z.object({
   name: z

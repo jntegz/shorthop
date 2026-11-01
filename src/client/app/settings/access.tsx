@@ -356,7 +356,7 @@ export function BotCheckSection() {
                 hint="Public. From your Turnstile widget in the Cloudflare dashboard."
               />
               <Facts>
-                <Fact label="Secret key (TURNSTILE_SECRET)">{d.secretSet ? "Set" : <Badge tone="warn">Not set</Badge>}</Fact>
+                <Fact label="Secret key (TURNSTILE_SECRET)">{d.secretSet ? "Set" : <Badge tone="danger">Not set</Badge>}</Fact>
               </Facts>
               <div className="settings-a-actions">
                 {dirty || !d.siteKey ? (

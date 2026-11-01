@@ -245,16 +245,18 @@ export async function rematchAll(db: D1Database, sites: SiteDTO[], limit: number
 /**
  * A visit reported provider ids (a return page's ?session_id=…, or a
  * subscription checkout naming its visit): remember them, and match any
- * payment already waiting for them.
+ * payment already waiting for them, from `since` on when given (claims from a
+ * browser, which anyone can send).
  */
-export async function claimRefs(env: Env, site: SiteDTO, sessionId: string, _visitorId: string, refs: string[], now: number): Promise<void> {
+export async function claimRefs(env: Env, site: SiteDTO, sessionId: string, _visitorId: string, refs: string[], now: number, since: number | null = null): Promise<void> {
   const db = env.DB;
   if (!refs.length) return;
   await db.batch(refs.map((r) => db.prepare("INSERT INTO payment_claims (site_id, ref, session_id, claimed_at) VALUES (?1, ?2, ?3, ?4) ON CONFLICT DO NOTHING").bind(site.id, r, sessionId, now)));
   const likes = refs.map((_, i) => `(' ' || order_ref || ' ') LIKE ?${i + 2} ${LIKE_ESCAPE} OR subscription_id = ?${i + 2 + refs.length} OR customer_id = ?${i + 2 + refs.length}`);
+  const recent = since === null ? "" : ` AND occurred_at >= ?${2 + 2 * refs.length}`;
   const { results } = await db
-    .prepare(`SELECT ${PAYMENT_COLS} FROM payments WHERE site_id = ?1 AND kind = 'charge' AND session_id IS NULL AND personal_cleared_at IS NULL AND (${likes.join(" OR ")}) LIMIT 20`)
-    .bind(site.id, ...refs.map(tokenLike), ...refs)
+    .prepare(`SELECT ${PAYMENT_COLS} FROM payments WHERE site_id = ?1 AND kind = 'charge' AND session_id IS NULL AND personal_cleared_at IS NULL AND (${likes.join(" OR ")})${recent} LIMIT 20`)
+    .bind(site.id, ...refs.map(tokenLike), ...refs, ...(since === null ? [] : [since]))
     .all<PaymentRow>();
   for (const p of results) await tryMatch(db, site, p);
 }

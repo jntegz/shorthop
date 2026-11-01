@@ -48,5 +48,3 @@ export function withCheckoutRef(href: string, ref: string): string {
   return url.href;
 }
 
-/** Providers whose hosted checkout can't carry a reference in its URL: sales go through a tracked site. */
-export const NO_URL_REFERENCE = ["paddle", "fastspring", "paypal"] as const satisfies readonly Provider[];

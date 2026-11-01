@@ -10,7 +10,7 @@ import { escapeHtml } from "../shared/html";
 import type { HealthCheck, HealthStatus, JobRun, SystemHealthDTO } from "../shared/types";
 import { MIN_ADMIN_PASSWORD_LENGTH, parsePasswordHash, PLAN_ITERATIONS } from "../shared/password";
 import { aeAvailable } from "./ae";
-import { pruneDaySalts } from "./analytics";
+import { daySaltPruneStmt } from "./analytics";
 import { accessConfigured, adminAuthMode, legacyApiToken } from "./auth";
 import { getDefaultUtm, getSetting, nowSec, publish, setSettingStmt, type LinkRow } from "./db";
 import { autoClearDemo } from "./demo";
@@ -32,6 +32,7 @@ import { refreshFx } from "./revenue/fx";
 import { rematchAll } from "./revenue/match";
 import { pruneCustomerData } from "./web/privacy";
 import { listSites } from "./web/sites";
+import { budgetKey, collectBudgetPruneStmt } from "./web/budget";
 
 type Job = "rollup" | "digest" | "alert" | "links";
 const JOBS_KEY = "job_runs";
@@ -50,8 +51,12 @@ const LINK_CHECKS_LATE_SEC = 3 * 3600;
 const RANK: Record<HealthStatus, number> = { ok: 0, warn: 1, error: 2 };
 
 async function jobRuns(db: D1Database): Promise<Partial<Record<Job, JobRun>>> {
+  return parseRuns(await getSetting(db, JOBS_KEY));
+}
+
+function parseRuns(raw: string | null): Partial<Record<Job, JobRun>> {
   try {
-    return JSON.parse((await getSetting(db, JOBS_KEY)) ?? "{}") as Partial<Record<Job, JobRun>>;
+    return JSON.parse(raw ?? "{}") as Partial<Record<Job, JobRun>>;
   } catch {
     return {};
   }
@@ -139,7 +144,8 @@ export async function scheduledCleanup(env: Env, now = new Date()): Promise<void
     ["webhook milestones", () => checkMilestones(env)],
     ["webhook delivery prune", () => pruneDeliveries(env)],
     ["login state prune", () => pruneLoginState(env.DB, nowSec())],
-    ["day salt prune", () => pruneDaySalts(env.DB, utcDate(now))],
+    // One batch: one of the run's 50 calls on Workers Free.
+    ["day salt and website budget prune", () => env.DB.batch([daySaltPruneStmt(env.DB, utcDate(now)), collectBudgetPruneStmt(env.DB, utcDate(now))])],
     ["api key prune", () => pruneApiKeys(env.DB, nowSec())],
     ["history prune", () => pruneHistory(env.DB)],
     ["upload prune", () => prunePreviewImages(env)],
@@ -233,8 +239,17 @@ export async function systemHealth(env: Env, now = new Date()): Promise<SystemHe
   let lastRolled: string | null = null;
   let lastDigestWeek: string | null = null;
   let alert: JobRun | null = null;
+  let collected = 0;
   try {
-    [runs, lastRolled, lastDigestWeek] = await Promise.all([jobRuns(env.DB), getSetting(env.DB, "last_rolled"), getSetting(env.DB, "last_digest_week")]);
+    // One query for every setting the checks read (a call each would count against Free's 50 per run).
+    const { results } = await env.DB.prepare("SELECT key, value FROM settings WHERE key IN (?1, ?2, ?3, ?4)")
+      .bind(JOBS_KEY, "last_rolled", "last_digest_week", budgetKey(utcDate(now)))
+      .all<{ key: string; value: string }>();
+    const setting = (key: string) => results.find((r) => r.key === key)?.value ?? null;
+    runs = parseRuns(setting(JOBS_KEY));
+    lastRolled = setting("last_rolled");
+    lastDigestWeek = setting("last_digest_week");
+    collected = Number(setting(budgetKey(utcDate(now))) ?? 0);
     alert = runs.alert ?? null;
     add("d1", "Database (D1)", "ok", "Links, stats and settings are readable.");
   } catch (err) {
@@ -295,6 +310,18 @@ export async function systemHealth(env: Env, now = new Date()): Promise<SystemHe
     add("links", "Destination checks", "warn", `The last run was ${when(linksRun.at)}; they run every 30 minutes. Check that the cron triggers are deployed.`);
   } else {
     add("links", "Destination checks", "ok", linksRun ? `Last run ${when(linksRun.at)}.` : "The first run starts within 30 minutes.");
+  }
+
+  // Website events: Workers Free stores a daily budget of them (src/worker/web/budget.ts).
+  const budget = planLimits(env).collectEvents;
+  if (Number.isFinite(budget)) {
+    const events = collected;
+    const planFix: Extra = { docs: "docs/CLOUDFLARE-FREE-TIER.md" };
+    if (events >= budget) {
+      add("collect", "Website events", "warn", `Today's ${budget.toLocaleString("en")} website events (the Workers Free budget) are used up, so visits aren't recorded again until 00:00 UTC. The budget keeps D1's daily write allowance for logins, links and payments. Workers Paid has none.`, planFix);
+    } else if (events >= budget * 0.8) {
+      add("collect", "Website events", "warn", `${events.toLocaleString("en")} of today's ${budget.toLocaleString("en")} website events (the Workers Free budget) are used. Past it, visits aren't recorded until 00:00 UTC.`, planFix);
+    }
   }
 
   setupChecks(env, add);

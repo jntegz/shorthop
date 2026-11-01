@@ -40,6 +40,8 @@ describe("MCP server", () => {
 
   it("refuses other sites' pages, unknown methods and GET", async () => {
     expect((await rpc("tools/list", {}, { ...bearer, Origin: "https://evil.example" })).status).toBe(403);
+    // An opaque origin (a sandboxed page, a file) is refused too, not an error.
+    expect((await rpc("tools/list", {}, { ...bearer, Origin: "null" })).status).toBe(403);
     expect(await (await rpc("nope")).json()).toMatchObject({ error: { code: -32601 } });
     expect((await call(`${API}/mcp`, { headers: bearer })).status).toBe(405);
     expect((await call(`${API}/mcp`, json({ jsonrpc: "2.0", id: 1, method: "tools/list" }, { Authorization: "Bearer wrong" }))).status).toBe(401);

@@ -25,7 +25,7 @@ import {
   type SetupConfig,
   webDatasetFor,
 } from "../../scripts/setup/template";
-import { applyUpdate, changelogSection, keepMatcher, planUpdate } from "../../scripts/setup/update-copy";
+import { applyUpdate, changelogSection, configNotices, keepMatcher, planUpdate, summarize } from "../../scripts/setup/update-copy";
 import {
   datasetProblem,
   defaultSender,
@@ -285,5 +285,18 @@ describe("script arguments", () => {
   it("refuses an ADMIN_AUTH value it doesn't know instead of rewriting it", () => {
     const text = renderConfig(REAL).replace('"ADMIN_AUTH": "access+password"', '"ADMIN_AUTH": "locked"');
     assert.throws(() => configFromText(text), /ADMIN_AUTH/);
+  });
+});
+
+describe("advice about a copy's configuration", () => {
+  it("says to turn workers.dev off once a short domain is set", () => {
+    const withDomain = 'workers_dev = true\n[vars]\nSHORT_DOMAINS = "go.example.com"\n';
+    assert.equal(configNotices(withDomain).length, 1);
+    assert.match(configNotices(withDomain)[0]!, /workers_dev = false/);
+    assert.deepEqual(configNotices('workers_dev = true\n[vars]\nSHORT_DOMAINS = ""\n'), []);
+    assert.deepEqual(configNotices('workers_dev = false\n[vars]\nSHORT_DOMAINS = "go.example.com"\n'), []);
+    assert.deepEqual(configNotices("not toml ["), []);
+    const plan = { write: [], remove: [], workflows: [], kept: [], wrangler: null };
+    assert.match(summarize(plan, "1.0.0", "2.0.0", "", configNotices(withDomain)), /### Check your configuration/);
   });
 });

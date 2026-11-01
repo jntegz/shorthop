@@ -11,7 +11,7 @@ import { configuredAdminHost, configuredDomains, domainsOf, shortOrigin } from "
 import { validate, type AppEnv } from "../hono";
 import { planLimits } from "../plan";
 import { chargeAttempt, clearFailuresStmt, getEpoch, issueSessionCookie, lock, loginConfig, verifyPasswordHash } from "../session";
-import { getUser } from "../users";
+import { getUser, personIterations } from "../users";
 import { getCheckSettings } from "../link-check";
 
 export const meApi = new Hono<AppEnv>()
@@ -73,7 +73,7 @@ export const meApi = new Hono<AppEnv>()
     const epoch = crypto.randomUUID();
     await c.env.DB.batch([
       c.env.DB.prepare("UPDATE users SET password_hash = ?1, session_epoch = ?2, updated_at = ?3 WHERE email = ?4").bind(
-        await hashPassword(next),
+        await hashPassword(next, personIterations(c.env)),
         epoch,
         now,
         user.email,

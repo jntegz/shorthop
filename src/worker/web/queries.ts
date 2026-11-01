@@ -544,16 +544,17 @@ export async function recentSessions(d1: D1Database, siteId: string, limit: numb
 
 export async function visitorProfile(d1: D1Database, site: SiteDTO, visitorId: string): Promise<VisitorProfileDTO> {
   const [who, sessions, pays] = await d1.batch<Record<string, unknown>>([
-    d1.prepare("SELECT email, name FROM web_visitors WHERE site_id = ?1 AND id = ?2").bind(site.id, visitorId),
+    d1.prepare("SELECT email, name, trust FROM web_visitors WHERE site_id = ?1 AND id = ?2").bind(site.id, visitorId),
     d1.prepare("SELECT * FROM web_sessions WHERE site_id = ?1 AND visitor_id = ?2 ORDER BY started_at DESC LIMIT 200").bind(site.id, visitorId),
     d1.prepare(`${PAYMENTS_SELECT} WHERE p.site_id = ?1 AND p.visitor_id = ?2 ORDER BY p.occurred_at DESC LIMIT 200`).bind(site.id, visitorId),
   ]);
-  const w = (who?.results[0] ?? {}) as { email?: string | null; name?: string | null };
+  const w = (who?.results[0] ?? {}) as { email?: string | null; name?: string | null; trust?: string };
   return {
     siteId: site.id,
     visitorId,
     email: w.email ?? null,
     name: w.name ?? null,
+    verified: w.trust === "server",
     sessions: ((sessions?.results ?? []) as unknown as SessionRow[]).map(sessionDTO),
     payments: ((pays?.results ?? []) as unknown as PaymentJoinRow[]).map(paymentDTO),
   };

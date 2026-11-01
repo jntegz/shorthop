@@ -1,5 +1,6 @@
 import { env } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
+import { renderBio, type BioPage } from "../src/shared/bio";
 import { API, bearer, call, json, ORIGIN, resetData } from "./helpers";
 
 beforeEach(resetData);
@@ -113,5 +114,39 @@ describe("link-in-bio pages", () => {
     expect((await make({ ...bio([{ label: "Site", url: "https://example.com/" }]), background: "red" })).status).toBe(400);
     expect((await make(bio([]))).status).toBe(400);
     expect((await make({ ...bio([]), socials: [{ network: "github", url: "https://github.com/example" }] })).status).toBe(201);
+  });
+});
+
+describe("bio pages from stored data", () => {
+  const stored = (over: Partial<BioPage>): BioPage => ({ ...bio([{ label: "Site", url: "https://example.com/" }]), socials: [], socialsAt: "top", share: false, ...over }) as BioPage;
+  const render = (b: BioPage) => renderBio(b, { domain: "sh.example", linkHref: (l) => `https://${l.domain}/${l.slug}` });
+
+  it("checks colours and addresses again when the page is drawn", () => {
+    const html = render(
+      stored({
+        accent: "red;}</style><a href=//evil.example>x</a><style>" as string,
+        blocks: [{ label: "Bad", url: "javascript:alert(1)" }, { label: "Good", url: "https://example.com/ok" }],
+        socials: [{ network: "x", url: "javascript:alert(1)" }, { network: "email", url: "mailto:me@example.com" }],
+      }),
+    );
+    expect(html).not.toContain("evil.example");
+    expect(html).not.toContain("javascript:");
+    expect(html).toContain("--accent:#6554c0");
+    expect(html).toContain('href="https://example.com/ok"');
+    expect(html).toContain('href="mailto:me@example.com"');
+  });
+
+  it("won't restore a version whose bio page breaks today's rules", async () => {
+    await call(`${API}/links`, json({ slug: "me", target: "https://example.com/", bio: bio([{ label: "Site", url: "https://example.com/" }]) }));
+    const bad = JSON.stringify(stored({ accent: "red;}</style>" as string }));
+    const v = await env.DB.prepare(
+      `INSERT INTO link_versions (domain, slug, at, action, actor, snapshot)
+       SELECT domain, slug, 1, 'update', 'test', json_set(snapshot, '$.bio', ?1) FROM link_versions WHERE domain = 'sh.example' AND slug = 'me' LIMIT 1 RETURNING id`,
+    )
+      .bind(bad)
+      .first<{ id: number }>();
+    const res = await call(`${API}/links/sh.example/me/history/${v!.id}/restore`, { method: "POST", headers: bearer });
+    expect(res.status).toBe(400);
+    expect(await res.text()).toContain("bio page");
   });
 });

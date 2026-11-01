@@ -110,15 +110,31 @@ describe("shared statistics", () => {
     expect(await (await open(s!.url!, { headers: { Cookie: cookie } })).text()).toContain("Password required");
   });
 
-  it("locks the password after too many wrong tries from many networks", async () => {
+  it("shows stored sources named like object properties as text", async () => {
+    await createLink("report");
+    const { share: s } = await share({ showRecent: true });
+    const day = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+    await env.DB.batch([
+      ...["__proto__", "constructor"].map((source) =>
+        env.DB.prepare("INSERT INTO daily_stats (date, domain, slug, country, device, source, clicks, uniques, bots) VALUES (?, 'sh.example', 'report', 'FR', 'desktop', ?, 3, 1, 0)").bind(day, source),
+      ),
+      env.DB.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('last_rolled', ?)").bind(day),
+    ]);
+    const res = await open(s!.url!);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("__proto__");
+    expect(html).toContain("constructor");
+  });
+
+  it("after too many wrong tries from many networks, holds back the networks that guessed", async () => {
     await createLink("report");
     const { share: s } = await share({ password: "hiring manager" });
-    let last = 0;
-    for (let i = 0; i < 22; i++) {
-      const res = await open(s!.url!, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ password: `guess ${i}` }) }, `203.0.113.${i + 1}`);
-      last = res.status;
-    }
-    expect(last).toBe(429);
+    const post = (password: string, ip: string) =>
+      open(s!.url!, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ password }) }, ip);
+    for (let i = 0; i < 20; i++) expect((await post(`guess ${i}`, `203.0.113.${i + 1}`)).status).toBe(401);
+    expect((await post("guess again", "203.0.113.1")).status).toBe(429);
+    expect((await post("hiring manager", "198.51.100.9")).status).toBe(200);
   });
 
   it("limits the periods viewers can pick", async () => {

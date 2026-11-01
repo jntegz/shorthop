@@ -253,7 +253,7 @@ function SettingsDialog({
             onCheckedChange={(v) => setDraft((d) => ({ ...d, notify: v }))}
           />
           {draft.notify && health.data && !alertsTo ? (
-            <Notice tone="warn">
+            <Notice tone="danger">
               Set up email under{" "}
               <Link to="/settings#digest" className="health-inline-link" onClick={onClose}>
                 Settings → Weekly digest

@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { PREVIEW_IMAGE_MAX_BYTES } from "../../shared/preview";
 import { fetchPreviewSchema } from "../../shared/schemas";
 import { readCapped } from "../body";
+import { selfHosts } from "../domains";
 import { validate, type AppEnv } from "../hono";
 import { fetchDestinationPreview, savePreviewImage } from "../preview";
 import { aiAvailable, suggestSlugs, writePreview } from "../ai";
@@ -19,7 +20,7 @@ export const previewsApi = new Hono<AppEnv>()
 
   /** Workers AI: three slug ideas for a destination. */
   .post("/ai/slug", validate("json", fetchPreviewSchema), async (c) => {
-    const page = await aiPage(c.env, c.get("identity"), c.req.valid("json").url);
+    const page = await aiPage(c.env, c.get("identity"), c.req.valid("json").url, selfHosts(c.env, c.req.raw));
     if ("error" in page) return c.json({ error: page.error }, page.status);
     try {
       return c.json({ slugs: await suggestSlugs(c.env, page) });
@@ -30,7 +31,7 @@ export const previewsApi = new Hono<AppEnv>()
 
   /** Workers AI: a preview title and description written from the destination's own. */
   .post("/ai/preview", validate("json", fetchPreviewSchema), async (c) => {
-    const page = await aiPage(c.env, c.get("identity"), c.req.valid("json").url);
+    const page = await aiPage(c.env, c.get("identity"), c.req.valid("json").url, selfHosts(c.env, c.req.raw));
     if ("error" in page) return c.json({ error: page.error }, page.status);
     try {
       return c.json(await writePreview(c.env, page));
@@ -39,24 +40,30 @@ export const previewsApi = new Hono<AppEnv>()
     }
   })
 
-  /** Reads a page's own title, description and image, to start a preview from. */
+  /** Reads a page's own title, description and image, to start a preview from. Per person, on the public limiter's budget. */
   .post("/fetch", validate("json", fetchPreviewSchema), async (c) => {
-    const result = await fetchDestinationPreview(c.req.valid("json").url);
+    if (!(await withinLimit(c.env, `preview:${c.get("identity")}`))) return c.json({ error: "Too many previews in a minute. Try again shortly." }, 429);
+    const result = await fetchDestinationPreview(c.req.valid("json").url, fetch, selfHosts(c.env, c.req.raw));
     if ("error" in result) return c.json({ error: result.error }, 422);
     return c.json(result);
   });
 
+/** One request against PUBLIC_LIMITER under `key`. A limiter error lets it through. */
+async function withinLimit(env: Env, key: string): Promise<boolean> {
+  try {
+    return (await env.PUBLIC_LIMITER.limit({ key })).success;
+  } catch (err) {
+    console.error(JSON.stringify({ message: "preview rate limiter failed", error: String(err) }));
+    return true;
+  }
+}
+
 /** Checks AI can answer for this person, then reads the destination: 501 without the AI binding, 429 when asked too often. */
-async function aiPage(env: Env, identity: string, url: string): Promise<{ url: string; title: string; description: string } | { error: string; status: 501 | 429 }> {
+async function aiPage(env: Env, identity: string, url: string, ownHosts: readonly string[]): Promise<{ url: string; title: string; description: string } | { error: string; status: 501 | 429 }> {
   if (!aiAvailable(env)) return { error: "Workers AI isn't set up: add the AI binding (docs/CLOUDFLARE-FREE-TIER.md).", status: 501 };
   // Per person, on the public limiter's budget: the free allowance is shared by everyone.
-  try {
-    const { success } = await env.PUBLIC_LIMITER.limit({ key: `ai:${identity}` });
-    if (!success) return { error: "Too many suggestions in a minute. Try again shortly.", status: 429 };
-  } catch (err) {
-    console.error(JSON.stringify({ message: "ai rate limiter failed", error: String(err) }));
-  }
-  const page = await fetchDestinationPreview(url);
+  if (!(await withinLimit(env, `ai:${identity}`))) return { error: "Too many suggestions in a minute. Try again shortly.", status: 429 };
+  const page = await fetchDestinationPreview(url, fetch, ownHosts);
   return "error" in page ? { url, title: "", description: "" } : { url: page.url, title: page.title, description: page.description };
 }
 

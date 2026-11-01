@@ -8,7 +8,7 @@ import { hashLinkPassword } from "../link-password";
 import { parseRouting, splitChanged, validateRouting, type RouteRule, type Routing, type RoutingError } from "../../shared/routing";
 import { pullLinks, VendorError } from "../import/vendors";
 import { anyFlagged, UNSAFE_FLAGGED, UNSAFE_NONE, UNSAFE_TRUSTED } from "../safety";
-import { validateBio, type BioPage } from "../../shared/bio";
+import { parseBio, validateBio, type BioPage } from "../../shared/bio";
 import { bulkSchema, byTargetQuerySchema, pullSchema, createLinkSchema, exportQuerySchema, importSchema, linkParamSchema, normalizeTags, tagParamSchema, tagRenameSchema, versionParamSchema, listQuerySchema, resyncQuerySchema, updateLinkSchema } from "../../shared/schemas";
 import { isCheckProblem, isChecked, MONITOR_DEFAULT, MONITOR_NEVER, MONITOR_ON, type CheckStatus } from "../../shared/link-check";
 import { can } from "../../shared/permissions";
@@ -178,6 +178,11 @@ function restoreProblem(c: Context<AppEnv>, r: LinkRow): string | null {
   if (routing) {
     const checked = validateRouting(routing, { selfHosts: selfHosts(c.env, c.req.raw) });
     if (!checked.ok) return `This version can't be restored: smart routing: ${checked.errors[0]!.message}`;
+  }
+  const bio = parseBio(r.bio);
+  if (bio) {
+    const checked = validateBio(bio);
+    if (!checked.ok) return `This version can't be restored: bio page: ${checked.problems[0]!.message}`;
   }
   return null;
 }

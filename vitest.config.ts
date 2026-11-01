@@ -1,5 +1,12 @@
+import { readFileSync } from "node:fs";
 import { cloudflareTest, readD1Migrations } from "@cloudflare/vitest-plugin";
+import { parse } from "jsonc-parser";
 import { defineConfig } from "vitest/config";
+
+// Wrangler also reads a developer's .dev.vars, whose SHORT_DOMAINS or ADMIN_EMAIL
+// for local dev would change what the tests see. The test config's own vars,
+// passed again as bindings, win over it.
+const testVars = (parse(readFileSync("./wrangler.test.jsonc", "utf8")) as { vars: Record<string, string> }).vars;
 
 export default defineConfig(async () => {
   const migrations = await readD1Migrations("./migrations");
@@ -9,6 +16,7 @@ export default defineConfig(async () => {
         wrangler: { configPath: "./wrangler.test.jsonc" },
         miniflare: {
           bindings: {
+            ...testVars,
             TEST_MIGRATIONS: migrations,
             API_TOKEN: "test-api-token-0123456789abcdef",
             VISITOR_SALT: "test-salt",

@@ -11,8 +11,12 @@
 name = "shorthop"
 main = "src/worker/index.ts"
 compatibility_date = "2026-10-19"
-compatibility_flags = ["nodejs_compat"]
-# Served on shorthop.<your-subdomain>.workers.dev until you add a domain.
+# global_fetch_strictly_public: the Worker's own fetches (link checks, previews,
+# webhooks) to hostnames in its zone go through Cloudflare like any visitor's,
+# so Access and WAF rules apply to them too.
+compatibility_flags = ["nodejs_compat", "global_fetch_strictly_public"]
+# Served on shorthop.<your-subdomain>.workers.dev. Once your short domain works, set it
+# to false: rate-limiting rules in your zone don't cover the workers.dev address.
 workers_dev = true
 preview_urls = false
 

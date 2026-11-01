@@ -27,6 +27,9 @@ import { appVersion } from "../version";
 const DIGEST_TEST_KEY = "digest_test_at";
 const DIGEST_TEST_INTERVAL_SEC = 60;
 
+/** System status checks whose details describe the admin's own security setup: for signed-in sessions only. */
+const PRIVATE_CHECKS = new Set(["security", "password", "secrets", "digest", "alert", "devbypass"]);
+
 export const settingsApi = new Hono<AppEnv>()
   .get("/", async (c) => {
     // Sample data goes once a real domain is configured (the daily cron checks too).
@@ -134,7 +137,13 @@ export const settingsApi = new Hono<AppEnv>()
     return c.json(await trackedRollup(c.env));
   })
 
-  .get("/health", async (c) => c.json(await systemHealth(c.env)))
+  .get("/health", async (c) => {
+    const health = await systemHealth(c.env);
+    if (c.get("actor").via === "session") return c.json(health);
+    // A key or token sees each check's status, but not how sign-in, passwords, secrets and email are set up (like /settings/mail).
+    const checks = health.checks.map((ch) => (PRIVATE_CHECKS.has(ch.id) ? { ...ch, detail: "Open System status in the admin for the details.", fix: undefined, docs: undefined } : ch));
+    return c.json({ ...health, checks, alertsTo: null });
+  })
 
   .get("/version", async (c) => c.json(await appVersion(c.env)))
 

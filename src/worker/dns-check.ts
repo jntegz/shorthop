@@ -32,7 +32,12 @@ async function lookup(name: string, type: keyof typeof TYPES): Promise<{ status:
 
 const bare = (s: string) => s.trim().toLowerCase().replace(/\.$/, "");
 
-/** NS records of the domain, or of the closest parent that has them (for subdomains). */
+/**
+ * NS records of the domain, or of the closest parent that has them (for
+ * subdomains). A subdomain without records of its own is normal before setup
+ * (the deploy creates its record), so the name only counts as missing when no
+ * parent zone exists either: not registered, or a typo.
+ */
 async function nameservers(domain: string): Promise<{ zone: string | null; nameservers: string[]; exists: boolean }> {
   const labels = domain.split(".");
   let exists = true;
@@ -41,7 +46,7 @@ async function nameservers(domain: string): Promise<{ zone: string | null; names
     const { status, answers } = await lookup(name, "NS");
     if (i === 0 && status === NXDOMAIN) exists = false;
     const ns = answers.filter((a) => a.type === TYPES.NS && bare(a.name) === name).map((a) => bare(a.data));
-    if (ns.length) return { zone: name, nameservers: ns.sort(), exists };
+    if (ns.length) return { zone: name, nameservers: ns.sort(), exists: true };
   }
   return { zone: null, nameservers: [], exists };
 }
@@ -79,6 +84,15 @@ async function serving(domain: string): Promise<Pick<DomainCheckDTO, "serving" |
     if (marker === "ok" && res.status === 200) return { serving: "yes", servingDetail: `https://${domain} is answered by this Worker.`, reached: true };
     if (marker === "unconfigured") {
       return { serving: "no", servingDetail: "The domain reaches this Worker, but it isn't in SHORT_DOMAINS yet. Add it (step 4) and deploy.", reached: true };
+    }
+    // Without global_fetch_strictly_public, the Worker's request to a hostname in its own zone goes to an
+    // origin, and a Custom Domain has none: Cloudflare answers 522 even when the domain works.
+    if (res.status === 522) {
+      return {
+        serving: "no",
+        servingDetail: `Cloudflare couldn't reach a server behind https://${domain} (HTTP 522). If it's on this Worker's own zone, the Worker can only check it with "global_fetch_strictly_public" in compatibility_flags: add it to your Wrangler config and deploy.`,
+        reached: true,
+      };
     }
     return { serving: "no", servingDetail: `https://${domain} is answered by another server (HTTP ${res.status}).`, reached: true };
   } catch {

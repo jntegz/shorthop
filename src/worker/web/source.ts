@@ -187,13 +187,8 @@ function directSource(landing: URL | null, hints: DirectHints): string {
   return path === "/" || path === "" || /^\/index\.html?$/.test(path) ? DIRECT_SOURCES.typed : DIRECT_SOURCES.shared;
 }
 
-/** True when a landing carries campaign information that should start a new session. */
-export function hasCampaign(a: Attribution): boolean {
-  return Boolean(a.link || a.utm.source || a.utm.campaign || a.channel === "Paid");
-}
-
 /** A visit from a short link is named by the link's source tag (or where the click came from), else the link. */
 export function shortLinkSource(source: string, domain: string, slug: string): string {
-  const fromLink = LINK_SOURCES[source] ?? (source ? known(source)?.name ?? source : "");
+  const fromLink = Object.hasOwn(LINK_SOURCES, source) ? LINK_SOURCES[source]! : source ? (known(source)?.name ?? source) : "";
   return fromLink || `${domain}/${slug}`;
 }

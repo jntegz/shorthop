@@ -100,7 +100,7 @@ Open `https://shorthop.<your-subdomain>.workers.dev/_admin/` and sign in with th
 **Add your short domain.** The domain must be a zone in the same Cloudflare account ([Put your domain on Cloudflare](#zone)). In your copy of the repository, edit `wrangler.toml` (on GitHub, open the file and press the pencil icon):
 
 ```toml
-workers_dev = true
+workers_dev = true                                               # false once the domain works (see below)
 preview_urls = false
 routes = [{ pattern = "go.example.com", custom_domain = true }]   # uncomment, with your domain
 
@@ -109,7 +109,7 @@ SHORT_DOMAINS = "go.example.com"         # the same domain; more, comma-separate
 FALLBACK_URL = "https://www.example.com" # where "/" goes: your own site
 ```
 
-Commit, and Workers Builds deploys it. The custom domain gets its DNS record and certificate within a few minutes. The admin is then at `https://go.example.com/_admin/`; the `workers.dev` address keeps working too. Settings → Short domains checks the domain live.
+Commit, and Workers Builds deploys it. The custom domain gets its DNS record and certificate within a few minutes. The admin is then at `https://go.example.com/_admin/`. Settings → Short domains checks the domain live. Once it shows the domain works, set `workers_dev = false` and commit: rate-limiting rules in your zone ([SECURITY.md](../SECURITY.md#daily-cap)) don't cover the `workers.dev` address.
 
 **Statistics.** Clicks are recorded from the start. To read them:
 

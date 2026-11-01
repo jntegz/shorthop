@@ -68,7 +68,15 @@ export default {
   async fetch(request, env, ctx) {
     // Only Deploy to Cloudflare installs lack these secrets (one D1 read per isolate).
     env = await withGeneratedSecrets(env);
-    return withHsts(await route(request, env, ctx), env);
+    let res: Response;
+    try {
+      res = await route(request, env, ctx);
+    } catch (err) {
+      // Logged with its detail, answered without: and still with HSTS, unlike the runtime's own error page.
+      console.error(JSON.stringify({ message: "request failed", path: new URL(request.url).pathname, error: String(err), stack: err instanceof Error ? err.stack : undefined }));
+      res = new Response("Something went wrong. Try again in a moment.", { status: 500, headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" } });
+    }
+    return withHsts(res, env);
   },
 
   // One job per invocation, so each stays inside the plan's subrequest limit

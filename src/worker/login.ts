@@ -44,7 +44,7 @@ import {
   verifyPasswordHash,
 } from "./session";
 import { activeTurnstile, saveTurnstileStmt, TURNSTILE_FIELD, turnstileSecret, turnstileSettings, verifyTurnstile } from "./turnstile";
-import { getUser, INVITE_TOKEN_RE, isPaused, MIN_USER_PASSWORD, OWNER_EPOCH, pausedReason, randomToken, sha256Hex, type UserRow } from "./users";
+import { getUser, INVITE_TOKEN_RE, isPaused, MIN_USER_PASSWORD, OWNER_EPOCH, pausedReason, personIterations, randomToken, sha256Hex, type UserRow } from "./users";
 
 const MAX_BODY_BYTES = 4096;
 const DEFAULT_NEXT = "/_admin/";
@@ -302,12 +302,15 @@ loginApp.post("/_admin/login", async (c) => {
   const stored = user ? parsePasswordHash(user.password_hash ?? "") : null;
   const ok = user ? stored !== null && (await verifyPasswordHash(password, stored)) : await verifyPassword(password, cfg);
   if (ok) {
+    // A hash made for the other Workers plan is redone at the plan's cost, now that the password is known.
+    const rehash = user && stored && stored.iterations !== personIterations(env) ? await hashPassword(password, personIterations(env)) : null;
     const [{ cookie }] = await Promise.all([
       getEpoch(env.DB).then((global) => issueSessionCookie(cfg, access.email, { global, user: user ? user.session_epoch : OWNER_EPOCH }, now)),
       env.DB.batch([
         clearFailuresStmt(env.DB, key),
         loginEventStmt(env.DB, true, key, country, now, access.email),
         ...(user ? [env.DB.prepare("UPDATE users SET last_login_at = ? WHERE email = ?").bind(now, user.email)] : []),
+        ...(user && rehash ? [env.DB.prepare("UPDATE users SET password_hash = ?1 WHERE email = ?2 AND password_hash = ?3").bind(rehash, user.email, user.password_hash)] : []),
       ]),
     ]);
     console.log(JSON.stringify({ message: "admin login", email: access.email, ipHash: key, country }));
@@ -483,7 +486,7 @@ for (const kind of ["invite", "reset"] as const) {
         : `UPDATE users SET password_hash = ?1, session_epoch = ?2, reset_hash = NULL, reset_expires = NULL, updated_at = ?3, last_login_at = ?3
            WHERE email = ?4 AND reset_hash = ?5 AND reset_expires > ?3 RETURNING email`;
     const saved = await env.DB.prepare(sql)
-      .bind(await hashPassword(password), epoch, now, access.email, await sha256Hex(token))
+      .bind(await hashPassword(password, personIterations(env)), epoch, now, access.email, await sha256Hex(token))
       .first<{ email: string }>();
     if (!saved) return LINK_TEXT[kind].invalid();
 

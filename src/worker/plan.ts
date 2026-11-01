@@ -43,6 +43,12 @@ export interface PlanLimits {
   fxPending: number;
   /** Unmatched payments one revenue run tries again (up to about eight D1 calls each). */
   rematchPayments: number;
+  /** Website events stored per UTC day (src/worker/web/budget.ts): each writes two or three D1 rows. */
+  collectEvents: number;
+  /** Pages of past payments one import request reads from a provider (src/worker/api/sites.ts). */
+  importPages: number;
+  /** Payments on one such page: each costs up to about fourteen D1 queries (matching, currency, storing). */
+  importPayments: number;
 }
 
 export const PAID: PlanLimits = {
@@ -63,6 +69,9 @@ export const PAID: PlanLimits = {
   fxDays: 10,
   fxPending: 500,
   rematchPayments: 300,
+  collectEvents: Number.POSITIVE_INFINITY,
+  importPages: 5,
+  importPayments: 100,
 };
 
 // Each figure leaves room for the D1 reads and writes around it, so a run
@@ -86,6 +95,11 @@ export const FREE: PlanLimits = {
   fxDays: 1,
   fxPending: 5,
   rematchPayments: 2,
+  // About 45,000 of D1's 100,000 rows written a day (a new visit writes three); the rest stays for logins, links and payments.
+  collectEvents: 15_000,
+  // One page of three a call: an invocation may make 50 D1 queries, and the admin keeps calling with the cursor.
+  importPages: 1,
+  importPayments: 3,
 };
 
 export function isPaidPlan(env: Pick<Env, "WORKERS_PLAN">): boolean {

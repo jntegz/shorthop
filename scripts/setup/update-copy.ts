@@ -13,6 +13,7 @@
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parse as parseToml } from "smol-toml";
 import { args, fail } from "../lib";
 import { BUTTON_FILE, mergeButtonConfig } from "./template";
 
@@ -130,11 +131,34 @@ export function changelogSection(changelog: string, v: string): string {
   return (end < 0 ? body : body.slice(0, end)).trim();
 }
 
-export function summarize(plan: Plan, from: string, to: string, changelog: string): string {
+/**
+ * Advice about the copy's own wrangler.toml, for the summary: the workers.dev
+ * address left on after a short domain was added sits outside the zone's
+ * rate-limiting rules (SECURITY.md).
+ */
+export function configNotices(wranglerToml: string): string[] {
+  let raw: Record<string, unknown>;
+  try {
+    raw = parseToml(wranglerToml) as Record<string, unknown>;
+  } catch {
+    return [];
+  }
+  const vars = (raw.vars ?? {}) as Record<string, unknown>;
+  const domains = typeof vars.SHORT_DOMAINS === "string" ? vars.SHORT_DOMAINS.trim() : "";
+  if (raw.workers_dev === true && domains) {
+    return [
+      "Your copy has a short domain, and `workers_dev = true` still serves Shorthop on its `workers.dev` address too, where your zone's rate-limiting rules don't apply. Set `workers_dev = false` in `wrangler.toml` (docs/SETUP.md#deploy-button).",
+    ];
+  }
+  return [];
+}
+
+export function summarize(plan: Plan, from: string, to: string, changelog: string, notices: string[] = []): string {
   const list = (paths: string[]) => paths.map((p) => `- \`${p}\``).join("\n");
   const parts = [`## Shorthop ${from} → ${to}`, ""];
   parts.push(`${plan.write.length} files updated, ${plan.remove.length} removed${plan.wrangler !== null ? ", and `wrangler.toml` brought up to date (your ids, routes and vars kept)" : ""}.`);
   parts.push("", `Before merging, read the Upgrading notes in the [changelog](${REPO}/blob/v${to}/CHANGELOG.md).`);
+  if (notices.length) parts.push("", "### Check your configuration", "", ...notices.map((n) => `- ${n}`));
   if (plan.workflows.length) {
     parts.push(
       "",
@@ -170,7 +194,8 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   const plan = planUpdate(source, target, previous ? resolve(previous) : undefined);
   if (!flags.has("dry-run")) applyUpdate(source, target, plan);
   const changelog = existsSync(join(source, "CHANGELOG.md")) ? readFileSync(join(source, "CHANGELOG.md"), "utf8") : "";
-  const summary = summarize(plan, from, to, changelog);
+  const copyConfig = join(target, BUTTON_FILE);
+  const summary = summarize(plan, from, to, changelog, existsSync(copyConfig) ? configNotices(readFileSync(copyConfig, "utf8")) : []);
   const summaryFile = opts.get("summary");
   if (summaryFile) writeFileSync(summaryFile, summary);
   console.log(summary);

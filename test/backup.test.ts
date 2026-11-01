@@ -55,6 +55,21 @@ describe("what a backup holds", () => {
     expect(await users.text()).not.toContain("session_epoch");
   });
 
+  it("leaves out secrets kept as settings rows: generated secrets, visitor salts, logged-out sessions", async () => {
+    await env.DB.batch(
+      [
+        ["generated_session_secret", "generated-secret-value"],
+        ["generated_visitor_salt", "generated-salt-value"],
+        ["visitor_salt:2026-11-01", "daily-salt-value"],
+        ["revoked_session:abc", "1"],
+        ["default_utm", "utm_source=x"],
+      ].map(([k, v]) => env.DB.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)").bind(k, v)),
+    );
+    const text = await (await adminCall("", "/backup/settings")).text();
+    for (const secret of ["generated-secret-value", "generated-salt-value", "daily-salt-value", "revoked_session:"]) expect(text).not.toContain(secret);
+    expect(text).toContain("default_utm");
+  });
+
   it("includes people's details only when asked, and only for people who may see revenue", async () => {
     await env.DB.prepare("INSERT INTO sites (id, name, domains, created_at, updated_at) VALUES ('st_1', 'Shop', '[\"shop.example.com\"]', 1, 1)").run();
     await env.DB.prepare("INSERT INTO web_visitors (site_id, id, first_seen, email) VALUES ('st_1', 'v1', 1, 'buyer@example.com')").run();

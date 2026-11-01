@@ -12,6 +12,9 @@ import { MAX_CAMPAIGN_SHARES, MAX_SHARES_PER_LINK, newShareSecret, shareOrigin, 
 import { newKeyId, sha256Hex } from "../users";
 import { encryptSecret } from "../webhooks";
 
+/** Reports that show revenue are managed only by people who may see it, like creating one. */
+const REVENUE_REPORT = { error: "This report shows revenue: changing it needs the revenue.view permission.", code: "forbidden" } as const;
+
 export const sharesApi = new Hono<AppEnv>()
   .get("/links/:domain/:slug/shares", validate("param", linkParamSchema), async (c) => {
     const { domain, slug } = c.req.valid("param");
@@ -65,11 +68,13 @@ export const sharesApi = new Hono<AppEnv>()
     return c.json({ share: await shareToDTO(c.env, row, shareOrigin(c.env, c.req.raw)) }, 201);
   })
 
-  /** Campaign reports: shares of every link with a tag, or of a picked set. */
+  /** Campaign reports: shares of every link with a tag, or of a picked set. A report that shows revenue keeps its address from people without revenue.view. */
   .get("/shares", async (c) => {
     const { results } = await c.env.DB.prepare("SELECT * FROM stat_shares WHERE scope != 'link' ORDER BY created_at DESC LIMIT 100").all<ShareRow>();
     const origin = shareOrigin(c.env, c.req.raw);
-    return c.json({ shares: await Promise.all(results.map((r) => shareToDTO(c.env, r, origin))) });
+    const money = can(c.get("actor"), "revenue.view");
+    const shares = await Promise.all(results.map(async (r) => ({ ...(await shareToDTO(c.env, r, origin)), ...(money || r.show_revenue !== 1 ? {} : { url: null }) })));
+    return c.json({ shares });
   })
 
   .post("/shares", validate("json", createCampaignShareSchema), async (c) => {
@@ -119,6 +124,7 @@ export const sharesApi = new Hono<AppEnv>()
     const body = c.req.valid("json");
     const row = await c.env.DB.prepare("SELECT * FROM stat_shares WHERE id = ?").bind(id).first<ShareRow>();
     if (!row) return c.json({ error: "Share not found" }, 404);
+    if (row.show_revenue === 1 && !can(c.get("actor"), "revenue.view")) return c.json(REVENUE_REPORT, 403);
     if (row.revoked_at !== null) return c.json({ error: "This share was revoked. Create a new one instead." }, 409);
     const now = nowSec();
     const next: ShareRow = { ...row };
@@ -138,6 +144,9 @@ export const sharesApi = new Hono<AppEnv>()
 
   .delete("/shares/:id", validate("param", shareParamSchema), async (c) => {
     const { id } = c.req.valid("param");
+    const row = await c.env.DB.prepare("SELECT show_revenue FROM stat_shares WHERE id = ?").bind(id).first<Pick<ShareRow, "show_revenue">>();
+    if (!row) return c.json({ error: "Share not found" }, 404);
+    if (row.show_revenue === 1 && !can(c.get("actor"), "revenue.view")) return c.json(REVENUE_REPORT, 403);
     const res = await c.env.DB.prepare("DELETE FROM stat_shares WHERE id = ?").bind(id).run();
     if (!res.meta.changes) return c.json({ error: "Share not found" }, 404);
     return c.json({ ok: true });

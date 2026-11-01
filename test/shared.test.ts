@@ -6,6 +6,9 @@ import { normalizeTags, notFoundSchema } from "../src/shared/schemas";
 import { generateSlug, isProbePath, isRoutableSlug, validateSlug } from "../src/shared/slug";
 import { buildLocation, normalizeTarget, renderUtm, splitOwnParams, validateUtmTemplate } from "../src/shared/target";
 import { csvCell } from "../src/worker/hono";
+import { escapeHtml } from "../src/shared/html";
+import { sourceLabel } from "../src/shared/labels";
+import { resolveSource, sanitizeSourceTag } from "../src/worker/analytics";
 
 describe("slugs", () => {
   it("flags scanner probe paths but not plain words", () => {
@@ -193,5 +196,20 @@ describe("page dark mode", () => {
     const parsed = notFoundSchema.parse(old);
     expect(parsed.dark).toBe(true);
     expect(parsed.darkBackground).toBe(DEFAULT_NOT_FOUND.darkBackground);
+  });
+});
+
+describe("click sources named like object properties", () => {
+  it("are refused as tags, and stay text as labels", () => {
+    for (const t of ["__proto__", "constructor", "prototype", "Constructor"]) expect(sanitizeSourceTag(t), t).toBe("");
+    expect(sanitizeSourceTag("newsletter")).toBe("newsletter");
+    expect(resolveSource("__proto__", false, "Mozilla/5.0", "").source).toBe("direct");
+    // Already stored before the fix: shown as the text it is.
+    expect(sourceLabel("constructor")).toBe("constructor");
+    expect(sourceLabel("__proto__")).toBe("__proto__");
+    expect(sourceLabel("toString")).toBe("toString");
+    expect(sourceLabel("li")).toBe("LinkedIn");
+    expect(escapeHtml(sourceLabel("constructor"))).toBe("constructor");
+    expect(escapeHtml(42 as unknown as string)).toBe("42");
   });
 });

@@ -3,7 +3,15 @@
 // password form's POST.
 
 import { derivePassword, hashPassword, parsePasswordHash, toBase64Url } from "../shared/password";
-import { LINK_ACCESS_HOURS, LINK_PASSWORD_ITERATIONS, LINK_PASSWORD_LOCK_MAX_SEC, LINK_PASSWORD_MAX, LINK_PASSWORD_MAX_FAILS, LINK_PASSWORD_WINDOW_SEC } from "../shared/protection";
+import {
+  LINK_ACCESS_HOURS,
+  LINK_PASSWORD_ITERATIONS,
+  LINK_PASSWORD_LOCK_MAX_SEC,
+  LINK_PASSWORD_MAX,
+  LINK_PASSWORD_MAX_FAILS,
+  LINK_PASSWORD_NETWORK_MAX_FAILS,
+  LINK_PASSWORD_WINDOW_SEC,
+} from "../shared/protection";
 import { readCapped } from "./body";
 import { nowSec } from "./db";
 import { chargeAttempt, clearFailuresStmt, ipBucket, lock } from "./session";
@@ -70,10 +78,16 @@ export async function tryPassword(request: Request, env: Env, domain: string, sl
   return attempt.ok ? { ok: true, cookie: await accessCookie(env, domain, slug, hash) } : attempt;
 }
 
+/** The auth_failures key of one network's attempts at `lockKey`: a keyed hash, so no IP address is stored. */
+async function networkKey(env: Env, lockKey: string, ip: string | null): Promise<string> {
+  return `${lockKey}|${(await hmac(env.SESSION_SECRET, `link-net|${ipBucket(ip ?? "unknown")}`)).slice(0, 22)}`;
+}
+
 /**
  * A password form's POST for anything protected by a link-style password:
- * the per-network limiter keyed by `limitKey`, the D1 lock counted across all
- * networks under `lockKey`, then the check.
+ * the per-network limiter keyed by `limitKey`, then the D1 locks: the
+ * network's own, and the link's brake across all networks under `lockKey`
+ * (which holds back only networks that have guessed wrong), then the check.
  */
 export async function checkPasswordForm(
   request: Request,
@@ -100,29 +114,38 @@ export async function checkPasswordForm(
   }
   if (!password) return { ok: false, reason: "wrong" };
 
-  // Counted per link across every network before the check (D1 is strongly
-  // consistent), so many addresses guessing in parallel still hit the lock.
-  const key = lockKey;
+  // The network's attempt is counted before the check (D1 is strongly
+  // consistent), so parallel guesses from one network still hit its lock.
+  const netKey = await networkKey(env, lockKey, ip);
   const now = nowSec();
   let state;
   try {
-    state = await chargeAttempt(env.DB, key, now, LINK_PASSWORD_WINDOW_SEC);
+    state = await chargeAttempt(env.DB, netKey, now, LINK_PASSWORD_WINDOW_SEC);
     if (state.lockedUntil > now) return { ok: false, reason: "limited" };
-    if (state.fails > LINK_PASSWORD_MAX_FAILS) {
-      await lock(env.DB, key, now, state.lockouts, LINK_PASSWORD_LOCK_MAX_SEC);
+    if (state.fails > LINK_PASSWORD_NETWORK_MAX_FAILS) {
+      await lock(env.DB, netKey, now, state.lockouts, LINK_PASSWORD_LOCK_MAX_SEC);
       return { ok: false, reason: "limited" };
     }
+    // The link's brake: on after many failures from anywhere, for networks that already guessed wrong.
+    if (state.fails > 1) {
+      const brake = await env.DB.prepare("SELECT locked_until FROM auth_failures WHERE key = ?").bind(lockKey).first<{ locked_until: number }>();
+      if (brake && brake.locked_until > now) return { ok: false, reason: "limited" };
+    }
   } catch (err) {
-    console.error(JSON.stringify({ message: "link password counter failed", key, error: String(err) }));
+    console.error(JSON.stringify({ message: "link password counter failed", key: lockKey, error: String(err) }));
     return { ok: false, reason: "bad_request" };
   }
 
   if (!(await checkLinkPassword(password, hash))) {
-    if (state.fails >= LINK_PASSWORD_MAX_FAILS) await lock(env.DB, key, now, state.lockouts, LINK_PASSWORD_LOCK_MAX_SEC).catch(() => undefined);
+    try {
+      if (state.fails >= LINK_PASSWORD_NETWORK_MAX_FAILS) await lock(env.DB, netKey, now, state.lockouts, LINK_PASSWORD_LOCK_MAX_SEC);
+      const all = await chargeAttempt(env.DB, lockKey, now, LINK_PASSWORD_WINDOW_SEC);
+      if (all.lockedUntil <= now && all.fails >= LINK_PASSWORD_MAX_FAILS) await lock(env.DB, lockKey, now, all.lockouts, LINK_PASSWORD_LOCK_MAX_SEC);
+    } catch (err) {
+      console.error(JSON.stringify({ message: "link password counter failed", key: lockKey, error: String(err) }));
+    }
     return { ok: false, reason: "wrong" };
   }
-  await clearFailuresStmt(env.DB, key)
-    .run()
-    .catch(() => undefined);
+  await env.DB.batch([clearFailuresStmt(env.DB, netKey), clearFailuresStmt(env.DB, lockKey)]).catch(() => undefined);
   return { ok: true };
 }

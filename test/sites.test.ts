@@ -7,6 +7,9 @@ import { bytesToBase64, bytesToHex, sign } from "../src/worker/revenue/crypto";
 import { convert } from "../src/worker/revenue/fx";
 import { signClickToken, verifyClickToken } from "../src/worker/web/token";
 import { attributionOf } from "../src/worker/web/source";
+import { resetCollectBudget } from "../src/worker/web/budget";
+import { FREE } from "../src/worker/plan";
+import type { SystemHealthDTO } from "../src/shared/types";
 import { API, call, json, ORIGIN, putLink, resetData } from "./helpers";
 import { addUser, adminCall } from "./people";
 
@@ -483,5 +486,35 @@ describe("revenue permission", () => {
     const rows = (await (await adminCall("viewer@example.com", `/sites/${site.id}/breakdown?range=7d&dim=channel`)).json<{ rows: SiteBreakdownRow[] }>()).rows;
     expect(rows.every((r) => r.revenue === 0)).toBe(true);
     expect((await adminCall("viewer@example.com", `/sites/${site.id}/payments?range=7d`)).status).toBe(403);
+  });
+});
+
+describe("the collector's daily budget on Workers Free", () => {
+  beforeEach(() => resetCollectBudget());
+  const today = () => new Date().toISOString().slice(0, 10);
+  const send = (site: SiteDTO, extra: Partial<Env> = { WORKERS_PLAN: "free" }) =>
+    call(
+      `${ORIGIN}/_t/e`,
+      { method: "POST", headers: { "Content-Type": "text/plain", Origin: SITE_ORIGIN, "User-Agent": UA, "CF-Connecting-IP": "203.0.113.7" }, body: JSON.stringify({ s: site.id, t: "pageview", u: `${SITE_ORIGIN}/` }) },
+      extra,
+    );
+  const sessions = async () => (await env.DB.prepare("SELECT COUNT(*) AS n FROM web_sessions").first<{ n: number }>())!.n;
+
+  it("adds its count to D1 every 20 events", async () => {
+    const site = await createSite();
+    for (let i = 0; i < 20; i++) expect((await send(site)).status).toBe(200);
+    expect(await env.DB.prepare("SELECT value FROM settings WHERE key = ?").bind(`collect_events:${today()}`).first()).toEqual({ value: "20" });
+  });
+
+  it("stops storing events once the day's budget is spent, and System status says so", async () => {
+    const site = await createSite();
+    await env.DB.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)").bind(`collect_events:${today()}`, String(FREE.collectEvents)).run();
+    const before = await sessions();
+    expect((await send(site)).status).toBe(202);
+    expect(await sessions()).toBe(before);
+    // Workers Paid has no budget.
+    expect((await send(site, {})).status).toBe(200);
+    const health = await (await adminCall("", "/settings/health", {}, { WORKERS_PLAN: "free" })).json<SystemHealthDTO>();
+    expect(health.checks.find((c) => c.id === "collect")).toMatchObject({ status: "warn", detail: expect.stringContaining("used up") });
   });
 });

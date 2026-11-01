@@ -140,7 +140,10 @@ export function renderConfig(c: SetupConfig): string {
   "name": ${j(c.workerName)},${account}
   "main": "src/worker/index.ts",
   "compatibility_date": "2026-10-19",
-  "compatibility_flags": ["nodejs_compat"],
+  // global_fetch_strictly_public: the Worker's own fetches (link checks, previews,
+  // webhooks) to hostnames in its zone go through Cloudflare like any visitor's,
+  // so Access and WAF rules apply to them too.
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
   "workers_dev": false,
   "preview_urls": false,
   // One custom domain per short domain, plus ADMIN_HOST. Each must be in a zone
@@ -410,7 +413,15 @@ const BUTTON_HEADER = `# The Deploy to Cloudflare button's Wrangler config (see 
 
 /** Comment lines before a key ("vars.SHORT_DOMAINS"). */
 const BUTTON_COMMENTS: Record<string, string[]> = {
-  workers_dev: ["Served on shorthop.<your-subdomain>.workers.dev until you add a domain."],
+  compatibility_flags: [
+    "global_fetch_strictly_public: the Worker's own fetches (link checks, previews,",
+    "webhooks) to hostnames in its zone go through Cloudflare like any visitor's,",
+    "so Access and WAF rules apply to them too.",
+  ],
+  workers_dev: [
+    "Served on shorthop.<your-subdomain>.workers.dev. Once your short domain works, set it",
+    "to false: rate-limiting rules in your zone don't cover the workers.dev address.",
+  ],
   preview_urls: [
     "",
     "Your short domains: one entry each, for a domain in a zone on this account,",

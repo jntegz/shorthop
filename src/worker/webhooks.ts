@@ -15,6 +15,7 @@ import { DELIVERY_RETENTION_DAYS, DELIVERY_TIMEOUT_MS, milestoneFor, RETRY_DELAY
 import { getSetting, nowSec, setSettingStmt, type LinkRow } from "./db";
 import { webhookSignature } from "./mailer";
 import { planLimits } from "./plan";
+import { ipBucket } from "./session";
 
 // ---- Secrets ------------------------------------------------------------------
 
@@ -495,11 +496,20 @@ export interface ClickEvent {
  * Sends link.clicked for one human click, in the background of the redirect:
  * posted directly, signed like every delivery, without an outbox row or retries,
  * so a busy link writes nothing to D1. A tag filter reads the link's tags once
- * per click, only when some subscriber has one.
+ * per click, only when some subscriber has one. `ip` is the visitor's address:
+ * one network's clicks past the public limiter's rate send nothing, so a flood
+ * of clicks isn't multiplied into every receiver.
  */
-export async function sendClickWebhooks(env: Env, click: ClickEvent, fetcher: typeof fetch = fetch): Promise<number> {
+export async function sendClickWebhooks(env: Env, click: ClickEvent, fetcher: typeof fetch = fetch, ip: string | null = null): Promise<number> {
   const hooks = await clickSubscribers(env);
   if (!hooks.length) return 0;
+  if (ip && env.PUBLIC_LIMITER) {
+    try {
+      if (!(await env.PUBLIC_LIMITER.limit({ key: `clickhook:${ipBucket(ip)}` })).success) return 0;
+    } catch (err) {
+      console.error(JSON.stringify({ message: "click webhook limiter failed", error: String(err) }));
+    }
+  }
   let tags: string[] | null = null;
   if (hooks.some((h) => clickTagsOf(h).length)) {
     const row = await env.DB.prepare("SELECT tags FROM links WHERE domain = ? AND slug = ?").bind(click.domain, click.slug).first<{ tags: string }>();

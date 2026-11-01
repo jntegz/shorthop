@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConnectionDTO, FunnelDTO, FunnelReportDTO, SiteDTO } from "../src/shared/sites";
 import { digestData, renderDigest } from "../src/worker/digest";
 import { walkFunnel } from "../src/worker/web/funnels";
+import { importPage } from "../src/worker/revenue/backfill";
 import { aePoint, mockAeSql, type StoredPoint } from "./ae-mock";
 import { API, call, captureClicks, json, ORIGIN, resetData } from "./helpers";
 
@@ -192,5 +193,32 @@ describe("payments list", () => {
     const found = await get("q=NEEDLE");
     expect(found).toMatchObject({ total: 1, payments: [{ id: "api:charge:o-7" }] });
     expect((await get("q=50%25")).total).toBe(0);
+  });
+});
+
+describe("importing past payments on Workers Free", () => {
+  it("stores a few payments a call, and finishes a page over several calls", async () => {
+    const created = Math.floor(Date.now() / 1000) - 3600;
+    const asked: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = input instanceof Request ? input.url : String(input);
+      asked.push(url);
+      // Stripe answers with more than asked for, to check the cut.
+      if (url.includes("/checkout/sessions")) {
+        return Response.json({
+          has_more: false,
+          data: ["a", "b", "c"].map((x) => ({ id: `cs_${x}`, mode: "payment", payment_status: "paid", payment_intent: `pi_${x}`, amount_total: 1000, currency: "usd", livemode: true, created })),
+        });
+      }
+      return Response.json({ has_more: false, data: [] });
+    });
+    const ctx = { apiKey: "rk_test_123", settings: {}, pageSize: 2 }; // gitleaks:allow (test fixture)
+    const first = await importPage("stripe", ctx, created - 60, null);
+    expect(first.events).toHaveLength(2);
+    expect(new URL(asked[0]!).searchParams.get("limit")).toBe("2");
+    expect(first.next).toBe("@2@");
+    const second = await importPage("stripe", ctx, created - 60, first.next);
+    expect(second.events.map((e) => e.payments[0]?.providerId)).toHaveLength(1);
+    expect(second.next).toBe("1:");
   });
 });

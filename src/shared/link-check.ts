@@ -195,7 +195,7 @@ export function isCheckProblem(v: unknown): v is CheckProblem {
 
 // ---- Outbound-request safety -------------------------------------------------
 
-const BLOCKED_SUFFIXES = [".localhost", ".local", ".internal", ".intranet", ".lan", ".home.arpa", ".corp", ".private"];
+const BLOCKED_SUFFIXES = [".localhost", ".local", ".localdomain", ".internal", ".intranet", ".lan", ".home.arpa", ".corp", ".private"];
 const ALLOWED_PORTS = new Set(["", "80", "443", "8080", "8443"]);
 
 function ipv4Private(host: string): boolean | null {
@@ -241,13 +241,17 @@ function ipv6Private(host: string): boolean | null {
     if (g5 === 0 && g6 === 0) return true;
     return ipv4Private(v4Of(g6, g7)) ?? true;
   }
+  // IPv4-translated (::ffff:0:7f00:1) carries one the same way.
+  if (g0 === 0 && g1 === 0 && g2 === 0 && g3 === 0 && g4 === 0xffff && g5 === 0) return ipv4Private(v4Of(g6, g7)) ?? true;
+  // Discard-only 100::/64.
+  if (g0 === 0x100 && g1 === 0 && g2 === 0 && g3 === 0) return true;
   // NAT64 (64:ff9b::/96, and the local-use 64:ff9b:1::/48) reaches the embedded IPv4.
   if (g0 === 0x64 && g1 === 0xff9b) return g2 === 0 ? (ipv4Private(v4Of(g6, g7)) ?? true) : true;
   // 6to4 (2002::/16) carries an IPv4 in the next 32 bits; Teredo (2001::/32) hides one, so refuse it.
   if (g0 === 0x2002) return ipv4Private(v4Of(g1, g2)) ?? true;
   if (g0 === 0x2001 && g1 === 0) return true;
-  // fc00::/7 unique local, fe80::/10 link-local, ff00::/8 multicast.
-  return (g0 & 0xfe00) === 0xfc00 || (g0 & 0xffc0) === 0xfe80 || (g0 & 0xff00) === 0xff00;
+  // fc00::/7 unique local, fe80::/10 link-local, fec0::/10 the old site-local, ff00::/8 multicast.
+  return (g0 & 0xfe00) === 0xfc00 || (g0 & 0xffc0) === 0xfe80 || (g0 & 0xffc0) === 0xfec0 || (g0 & 0xff00) === 0xff00;
 }
 
 /**
@@ -259,7 +263,8 @@ export function isFetchableUrl(url: URL): boolean {
   if (url.protocol !== "https:" && url.protocol !== "http:") return false;
   if (url.username || url.password) return false;
   if (!ALLOWED_PORTS.has(url.port)) return false;
-  const host = url.hostname.toLowerCase().replace(/\.$/, "");
+  // Every trailing dot: "localhost.." is still localhost.
+  const host = url.hostname.toLowerCase().replace(/\.+$/, "");
   if (!host || host === "localhost") return false;
   const v4 = ipv4Private(host);
   if (v4 !== null) return !v4;

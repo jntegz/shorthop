@@ -41,6 +41,7 @@ import { csv, validate, type AppEnv } from "../hono";
 import { actorLabel } from "../users";
 import { recreditSite } from "../revenue/attribute";
 import { reconvertSite, refreshFx } from "../revenue/fx";
+import { planLimits } from "../plan";
 import { importPage } from "../revenue/backfill";
 import { checkConnection, connectionChanges, connectionSecrets, connectionView, settingsOf } from "../revenue/connections";
 import { applyEvent, storePayment, type ConnectionRow } from "../revenue/ingest";
@@ -68,7 +69,6 @@ function hideMoney<T extends object>(row: T): T {
 
 const seesMoney = (actor: Actor) => can(actor, "revenue.view");
 
-const IMPORT_PAGES_PER_CALL = 5;
 const importSchema = z.object({ days: z.number().int().min(1).max(3 * 365).default(365), cursor: z.string().max(2000).nullish() });
 
 const visitorParamSchema = z.object({ id: siteParamSchema.shape.id, visitor: z.string().regex(/^[A-Za-z0-9_-]{8,40}$/) });
@@ -474,13 +474,14 @@ export const sitesApi = new Hono<AppEnv>()
     if (!apiKey.value) return c.json({ error: apiKey.problem ?? "Set an API key for this connection first" }, 400);
     const since = Math.floor(Date.now() / 1000) - days * 86400;
     const now = Math.floor(Date.now() / 1000);
-    const ctx = { apiKey: apiKey.value, settings: settingsOf(row) };
+    const limits = planLimits(c.env);
+    const ctx = { apiKey: apiKey.value, settings: settingsOf(row), pageSize: limits.importPayments };
     let next: string | null = cursor ?? null;
     let imported = 0;
     let seen = 0;
     try {
-      // A few pages per call; the admin calls again with the cursor until it's null.
-      for (let i = 0; i < IMPORT_PAGES_PER_CALL; i++) {
+      // A few pages per call, sized to the plan; the admin calls again with the cursor until it's null.
+      for (let i = 0; i < limits.importPages; i++) {
         const page = await importPage(provider, ctx, since, next);
         seen += page.events.length;
         for (const event of page.events) imported += (await applyEvent(c.env, site, provider, row, event, now)).length;

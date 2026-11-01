@@ -145,6 +145,9 @@ describe("reading a destination's own preview", () => {
     const fetcher = vi.fn(async () => page("<title> Just a title </title>"));
     expect(await fetchDestinationPreview("https://example.com/", fetcher as unknown as typeof fetch)).toMatchObject({ title: "Just a title", description: "", image: null });
     expect(await fetchDestinationPreview("http://127.0.0.1/", fetcher as unknown as typeof fetch)).toEqual({ error: expect.any(String) });
+    // The shortener's own hosts: reading a short link would count as a click.
+    expect(await fetchDestinationPreview("https://sh.example/guide", fetcher as unknown as typeof fetch, ["sh.example"])).toEqual({ error: "That address can't be read from here." });
+    expect(await fetchDestinationPreview("https://www.sh.example./guide", fetcher as unknown as typeof fetch, ["sh.example"])).toEqual({ error: "That address can't be read from here." });
     const pdf = vi.fn(async () => new Response("%PDF", { headers: { "Content-Type": "application/pdf" } }));
     expect(await fetchDestinationPreview("https://example.com/x.pdf", pdf as unknown as typeof fetch)).toEqual({ error: "That address isn't a web page." });
   });

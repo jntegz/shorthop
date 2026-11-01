@@ -30,6 +30,24 @@ const report = async (body: Record<string, unknown>) => {
 const open = (url: string) => call(new Request(url, { headers: { "User-Agent": PERSON, "CF-Connecting-IP": "198.51.100.7" } }));
 
 describe("campaign reports", () => {
+  it("keeps a report that shows revenue from people who may not see revenue", async () => {
+    await link("a", "launch");
+    const { share: money } = await report({ scope: "tag", tag: "launch", title: "With money", showRevenue: true, password: "sponsor password" });
+    const { share: plain } = await report({ scope: "tag", tag: "launch", title: "Clicks only" });
+    await addUser("editor@example.com", "user", ["stats.view", "links.edit"]);
+    const list = await (await adminCall("editor@example.com", "/shares")).json<{ shares: ShareDTO[] }>();
+    expect(list.shares.find((s) => s.id === money!.id)).toMatchObject({ url: null, showRevenue: true });
+    // Addresses are built on the host asked (localhost here), so compare the share's own path.
+    const path = (url: string | null | undefined) => (url ? new URL(url).pathname : null);
+    expect(path(list.shares.find((s) => s.id === plain!.id)?.url)).toBe(path(plain!.url));
+    expect((await adminCall("editor@example.com", `/shares/${money!.id}`, { method: "PATCH", body: { password: null } })).status).toBe(403);
+    expect((await adminCall("editor@example.com", `/shares/${money!.id}`, { method: "DELETE" })).status).toBe(403);
+    expect((await adminCall("editor@example.com", `/shares/${plain!.id}`, { method: "PATCH", body: { showRecent: true } })).status).toBe(200);
+    // Someone who may see revenue still gets its address.
+    const admin = await (await adminCall("", "/shares")).json<{ shares: ShareDTO[] }>();
+    expect(path(admin.shares.find((s) => s.id === money!.id)?.url)).toBe(path(money!.url));
+  });
+
   it("shows every link with a tag, including links tagged later", async () => {
     await link("a", "launch");
     await link("b", "launch");

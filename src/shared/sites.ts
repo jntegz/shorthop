@@ -389,6 +389,8 @@ export interface VisitorProfileDTO {
   visitorId: string;
   email: string | null;
   name: string | null;
+  /** The name and email came from your server (POST /api/sites/:id/identify), not from the page, where anyone can send them. */
+  verified: boolean;
   sessions: SessionDTO[];
   payments: SitePaymentDTO[];
 }

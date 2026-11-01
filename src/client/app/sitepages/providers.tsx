@@ -31,7 +31,7 @@ function StatusBadge({ conn }: { conn: ConnectionDTO | undefined }) {
   if (!conn.enabled) return <Badge>Paused</Badge>;
   const info = PROVIDER_INFO[conn.provider];
   const missing = ((info.webhookSecret || info.urlToken) && !conn.hasSecret) || (info.apiKey?.required && !conn.hasApiKey) || info.settings.some((s) => s.required && !conn.settings[s.key]);
-  if (missing) return <Badge tone="warn">Needs setup</Badge>;
+  if (missing) return <Badge tone="danger">Needs setup</Badge>;
   const refused = conn.lastError && (!conn.lastEventAt || (conn.lastErrorAt ?? 0) > conn.lastEventAt);
   if (refused) return <Badge tone="danger">Last webhook refused</Badge>;
   if (conn.lastCheck && !conn.lastCheck.ok) return <Badge tone="danger">Check failed</Badge>;

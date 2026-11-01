@@ -76,14 +76,24 @@ async function reportSpikes(env: Env, site: SiteDTO, spikes: Spike[], now: numbe
       data: { site: { id: site.id, name: site.name }, source: s.source, channel: s.channel, visits_last_hour: s.visits, usual_per_hour: s.baseline, detected_at: new Date(now * 1000).toISOString() },
     })),
   );
-  const lines = spikes.map((s) => `${s.source || "Unknown"} (${s.channel}): ${s.visits} visits in the last hour, usually ${s.baseline} an hour.`);
+  const lines = spikes.map((s) => `${sourceText(s.source)} (${s.channel}): ${s.visits} visits in the last hour, usually ${s.baseline} an hour.`);
   const top = spikes[0]!;
   await mail(
     env,
-    `Traffic spike on ${site.name}: ${top.source || "Unknown"}`,
+    `Traffic spike on ${site.name}: ${/^[\w.-]{1,40}$/.test(top.source) ? top.source : top.source ? "an unusual source" : "Unknown"}`,
     `${lines.join("\n")}\n\n${siteUrl(env, site)}`,
     `<p>${lines.map(escapeHtml).join("<br>")}</p><p><a href="${escapeHtml(siteUrl(env, site))}">Open ${escapeHtml(site.name)}</a></p>`,
   );
+}
+
+/**
+ * A source as an email shows it. Sources come from visitors (any utm_source),
+ * so a long one is cut: it can't be made to read like a message from Shorthop.
+ */
+function sourceText(source: string): string {
+  const s = source.replace(/\s+/g, " ").trim();
+  if (!s) return "Unknown";
+  return s.length > 40 ? `${s.slice(0, 40)}…` : s;
 }
 
 /** Yesterday in the site's time zone: visitors, revenue and the top sources. */
@@ -106,8 +116,8 @@ async function sendDailyDigest(env: Env, site: SiteDTO, today: string): Promise<
     `Revenue: ${m(t.revenue)} from ${t.payments} payment${t.payments === 1 ? "" : "s"}${vs(t.revenue, prev.revenue)}`,
     `Conversion: ${(t.conversion * 100).toFixed(1)}%`,
   ];
-  const top = sources.filter((r) => r.visitors > 0 || r.revenue > 0).slice(0, 5).map((r) => `${r.value || "Unknown"}: ${r.visitors} visitors${r.revenue ? `, ${m(r.revenue)}` : ""}`);
-  const spikeLines = spikes.map((s) => `Spike from ${s.source || "Unknown"}: ${s.visits} visits in an hour`);
+  const top = sources.filter((r) => r.visitors > 0 || r.revenue > 0).slice(0, 5).map((r) => `${sourceText(r.value)}: ${r.visitors} visitors${r.revenue ? `, ${m(r.revenue)}` : ""}`);
+  const spikeLines = spikes.map((s) => `Spike from ${sourceText(s.source)}: ${s.visits} visits in an hour`);
   const sections: [string, string[]][] = [["", lines], ["Top sources", top], ["Alerts", spikeLines]];
   const text = sections.filter(([, l]) => l.length).map(([h, l]) => (h ? `${h}\n${l.join("\n")}` : l.join("\n"))).join("\n\n");
   const html = sections
