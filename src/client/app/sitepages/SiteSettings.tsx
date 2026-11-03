@@ -434,12 +434,14 @@ function GeneralSection({ site }: { site: SiteDTO }) {
 }
 
 function ApiSection({ site, origin }: { site: SiteDTO; origin: string }) {
-  const curl = `curl -X POST ${origin}/api/sites/${site.id}/payments \\
+  // The API only answers on the admin host, which serves this page. `origin` is a short domain, for the script.
+  const api = `${window.location.origin}/api`;
+  const curl = `curl -X POST ${api}/sites/${site.id}/payments \\
   -H "Authorization: Bearer $SHORTHOP_API_KEY" -H "Content-Type: application/json" \\
   -d '{"id": "order-1001", "amount": 49.00, "currency": "USD", "ref": "<shorthop.ref() from the browser>", "email": "buyer@example.com"}'
 
 # Trusted identify (overwrites what the browser sent)
-curl -X POST ${origin}/api/sites/${site.id}/identify \\
+curl -X POST ${api}/sites/${site.id}/identify \\
   -H "Authorization: Bearer $SHORTHOP_API_KEY" -H "Content-Type: application/json" \\
   -d '{"ref": "<shorthop.ref()>", "email": "buyer@example.com"}'`;
   const prompt = `Add Shorthop revenue analytics to this project.

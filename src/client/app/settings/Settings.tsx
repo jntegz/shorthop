@@ -155,7 +155,8 @@ export function SettingsPage() {
   else if (settings.isError && !s) body = <ErrorState what="Settings" error={settings.error} onRetry={() => void settings.refetch()} retrying={settings.isFetching} />;
   else if (!me || (manage && !s)) body = <SettingsSkeleton />;
   else {
-    const origin = me.workspace.publicOrigin;
+    // This page is served from the admin host, which is also where the API lives.
+    const origin = window.location.origin;
     body = (
       <div ref={tabsRef}>
         <Tabs label="Settings sections" className="settings-tabs" items={tabs.map((t) => ({ value: t, label: TAB_LABELS[t] }))} value={tab} onValueChange={openTab}>

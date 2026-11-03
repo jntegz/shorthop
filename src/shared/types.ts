@@ -488,7 +488,6 @@ export interface MeDTO {
     defaultUtm: string;
     /** The first UTC day with stats or links: the earliest a custom period can start. */
     statsSince: string | null;
-    publicOrigin: string;
     /** Short domains, primary first. */
     domains: string[];
     primaryDomain: string;
@@ -608,7 +607,6 @@ export interface SettingsDTO {
   defaultUtm: string;
   /** The first UTC day with stats or links: the earliest a custom period can start. */
   statsSince: string | null;
-  publicOrigin: string;
   aeAvailable: boolean;
   lastRolled: string | null;
   /** Finished days the next rollup would summarize; null when up to date. */

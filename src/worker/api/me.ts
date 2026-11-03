@@ -7,7 +7,7 @@ import type { MeDTO } from "../../shared/types";
 import { adminAuthMode, fullTokenScope, legacyApiToken } from "../auth";
 import { getDefaultUtm, nowSec, statsSince } from "../db";
 import { demoStatus } from "../demo";
-import { configuredAdminHost, configuredDomains, domainsOf, shortOrigin } from "../domains";
+import { configuredAdminHost, configuredDomains } from "../domains";
 import { validate, type AppEnv } from "../hono";
 import { planLimits } from "../plan";
 import { chargeAttempt, clearFailuresStmt, getEpoch, issueSessionCookie, lock, loginConfig, verifyPasswordHash } from "../session";
@@ -18,7 +18,6 @@ export const meApi = new Hono<AppEnv>()
   .get("/", async (c) => {
     const actor = c.get("actor");
     const [defaultUtm, since, demo, checks] = await Promise.all([getDefaultUtm(c.env.DB), statsSince(c.env.DB), demoStatus(c.env.DB), getCheckSettings(c.env.DB)]);
-    const { primary } = domainsOf(c.env);
     const list = configuredDomains(c.env);
     const me: MeDTO = {
       email: actor.email,
@@ -35,7 +34,6 @@ export const meApi = new Hono<AppEnv>()
       workspace: {
         defaultUtm,
         statsSince: since,
-        publicOrigin: shortOrigin(c.env, c.req.raw, primary),
         domains: list,
         primaryDomain: list[0] ?? "",
         adminHost: configuredAdminHost(c.env),

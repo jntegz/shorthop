@@ -3,6 +3,12 @@
 What changed in each Shorthop release, and what to do when you upgrade.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## [2.0.1] - 2026-11-03
+
+### Fixed
+
+- **API and MCP addresses in Settings.** With a separate `ADMIN_HOST`, Settings → API, MCP & webhooks showed addresses on the primary short domain, which return 404. They now use the admin host, including the MCP setup, the bookmarklet and the iOS Shortcut. The curl examples under Server API on a website's settings page had the same mistake and are fixed too. Addresses you already copied from these pages need changing to the admin host. `/api/me` no longer returns `workspace.publicOrigin` and `/api/settings` no longer returns `publicOrigin`, so read the address from your instance's admin host instead.
+
 ## [2.0.0] - 2026-10-31
 
 A new admin, and the features that make Shorthop a place to move your links to.
@@ -292,6 +298,7 @@ A new admin, and the features that make Shorthop a place to move your links to.
 
 First release.
 
+[2.0.1]: https://github.com/jntegz/shorthop/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/jntegz/shorthop/compare/v1.3.0...v2.0.0
 [1.3.0]: https://github.com/jntegz/shorthop/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/jntegz/shorthop/compare/v1.1.1...v1.2.0
