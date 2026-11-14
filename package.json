@@ -1,6 +1,6 @@
 {
   "name": "shorthop",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "description": "Short links, website analytics and revenue attribution on your own domain, in one Cloudflare Worker you own.",
   "license": "MIT",
   "author": "Jan Tegze (https://jantegze.com)",
@@ -110,7 +110,7 @@
     "clsx": "^2.1.1",
     "cobe": "^2.0.1",
     "fflate": "^0.8.3",
-    "hono": "^4.13.13",
+    "hono": "^4.13.18",
     "jose": "^6.2.12",
     "jsqr": "^1.4.0",
     "lucide-react": "^1.59.0",

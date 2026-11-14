@@ -3,6 +3,52 @@
 What changed in each Shorthop release, and what to do when you upgrade.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## [2.0.2] - 2026-11-13
+
+### Upgrading
+
+- **Run `npm run setup -- upgrade`.** It applies the database migrations 0032–0037, writes the weekly digest's cron as `0 7 * * MON` into `wrangler.jsonc` and deploys. Until then `npm run deploy` stops and says what's missing. A copy from the Deploy to Cloudflare button gets both through the Update Shorthop workflow.
+- **Stripe:** add the `invoice_payment.paid` event to your Stripe webhook endpoint (the site's setup guide lists every event). With it, a refund or dispute on a subscription invoice finds the payment it belongs to.
+
+### Security
+
+- **Hono 4.13.18.** Versions up to 4.13.15 had five advisories, among them wildcard middleware that the router could skip for some routes, and `mount()` paths that could bypass middleware.
+- **Password-protected links:** while a link's brake is on, all networks that hadn't guessed wrong yet get at most 20 tries an hour together, so guesses spread over many networks (an IPv6 /48 holds 65,536 of them) stay bounded. A correct password no longer lifts the brake for the networks that are guessing. Someone guessing from more than 20 networks can use those tries up; then a visitor with the right password also waits until the brake runs out (a minute at first, up to 15).
+- **Every destination is looked up at the security DNS:** the link's own and each enabled routing variant, when a link is created, edited, restored, brought back or imported, and in the half-hourly backlog. A lookup that fails is tried again instead of being saved as clean, and a restored older destination is looked up again.
+- **PayPal webhooks** are sent back for verification exactly as they arrived. Re-encoding the event could change its bytes and fail a genuine signature.
+- **Bio pages behind a password or a click limit** are no longer publicly cacheable or indexable.
+- **Short.io import:** the paging cursor that comes back from the browser is checked, so only whole positive domain ids go into request paths.
+
+### Permissions
+
+- **Click counts need statistics access everywhere:** imported clicks on the link page and in its history, a capped link's counter, and the CSV and JSON exports.
+- **Webhooks:** changing one, making a new signing secret or sending a delivery again needs the permissions for the events it carries, deliveries still waiting to be sent included. `link.clicked` needs statistics access and `link.health_changed` Link health access. Deliveries of events you may not see are left out of the list, which says how many are hidden.
+- **Missed visits in Recent hits** need Link health access, like the rest of the misses report.
+- **A password change** cancels any password-reset or invitation link still waiting.
+
+### Fixed
+
+- **Near-miss slugs arrive:** a slug that differs from exactly one link only by case, or carries trailing punctuation from being pasted (`/guide.`, `/guide)`), is sent to the link instead of the not-found page.
+- **A destination typed without `https://`** (`example.com/page`) gets it added, and the link form shows the address that will be saved.
+- **The weekly digest went out on Sundays:** Cloudflare counts weekday numbers from Sunday = 1. The cron now names the day. A cron no job answers to is logged as an error instead of running the daily job.
+- **Payments:** a webhook event counts as seen only once it is stored, so a retry after a failure is processed again. Refunds find their charge for Stripe (through `invoice_payment.paid`, with an API lookup before the same-amount guess, which now refuses when two charges fit), Creem (the webhook and the import share one refund row) and Lemon Squeezy (a first-invoice refund is counted once with its order).
+- **Exchange rates** are checked per currency, so payments that can't be converted yet no longer hold up the rest. A site's dashboard says how many payments in the period have no rate yet. MRR follows a change of the site's currency.
+- **Attribution:** renewals keep the first payment's credit, also when the site's attribution model changes.
+- **Website analytics:** a visit survives giving consent and midnight UTC (a cookieless visit in progress at midnight continues for up to 30 minutes; on consent, what `identify()` recorded before stays with the day's hash, which someone else on the same network and browser can share), simultaneous events no longer create two visits, and the tracker counts pages restored with the back and forward buttons.
+- **A malformed routing or bio record** falls back to the link's destination instead of an error.
+- **Link health's schedule** counted 48 destination-check runs a day; three of the half-hourly slots do other work, so how often a working destination is checked is now worked out from 45.
+- **Stripe import:** a parameter Stripe rejects stops the import with an error instead of quietly skipping that list. A list the account doesn't have is still skipped, and the log says so.
+- **Recent hits** no longer passes Analytics Engine's own error text to the browser.
+
+### Changed
+
+- **Less work per run:** the security-DNS backlog is read through an index; on domains whose slugs are all lowercase a wrong-case slug is found with one KV read instead of a database query per 404; recrediting a site reads its earlier payments once; "Online now", the live list, the websites list and the daily rollup have their own indexes; link-health webhooks for many destinations are queued in one batch.
+- **Sunday backups:** once the weekly R2 backup is complete, the rest of Sunday morning's half-hourly runs check destinations again.
+
+### Added
+
+- **Confirm a destination Shorthop can't check.** Some sites answer the checker with HTTP 403 although they load for people. On Link health, a "Can't check" row now has **It works**: the destination is listed as working, "confirmed by a person", and is still checked. The first check the site answers properly (a 200, a 404, an error) replaces the confirmation. While the site keeps refusing checks, Shorthop can't see whether the page still exists. Needs migration `0037_check_confirmed.sql`. API: `PUT /api/checks/confirmed`.
+
 ## [2.0.1] - 2026-11-03
 
 ### Fixed
@@ -298,6 +344,7 @@ A new admin, and the features that make Shorthop a place to move your links to.
 
 First release.
 
+[2.0.2]: https://github.com/jntegz/shorthop/compare/v2.0.1...v2.0.2
 [2.0.1]: https://github.com/jntegz/shorthop/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/jntegz/shorthop/compare/v1.3.0...v2.0.0
 [1.3.0]: https://github.com/jntegz/shorthop/compare/v1.2.0...v1.3.0
