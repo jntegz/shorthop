@@ -243,12 +243,16 @@ export async function visitorHash(ip: string, ua: string, date: string, salt: st
 /** Settings key prefix of the per-day salts ("visitor_salt:2026-10-21"). */
 const DAY_SALT_PREFIX = "visitor_salt:";
 
-/** This isolate's copy of today's salt; `stored` is false for a stand-in used while D1 can't be read. */
-let daySalt: { date: string; salt: string; stored: boolean } | null = null;
+/**
+ * This isolate's copies of the salts it uses: today's, and yesterday's while a
+ * visit from before midnight UTC can still be continued. `stored` is false for
+ * a stand-in used while D1 can't be read.
+ */
+const daySalts = new Map<string, { salt: string; stored: boolean }>();
 
-/** Forgets the in-memory salt (between tests). */
+/** Forgets the in-memory salts (between tests). */
 export function resetDaySaltCache(): void {
-  daySalt = null;
+  daySalts.clear();
 }
 
 /**
@@ -258,8 +262,14 @@ export function resetDaySaltCache(): void {
  * owner, who holds VISITOR_SALT.
  */
 export async function daySaltFor(db: D1Database, date: string): Promise<string> {
-  if (daySalt?.date === date && daySalt.stored) return daySalt.salt;
+  const known = daySalts.get(date);
+  if (known?.stored) return known.salt;
   const key = `${DAY_SALT_PREFIX}${date}`;
+  const keep = (entry: { salt: string; stored: boolean }) => {
+    if (!daySalts.has(date) && daySalts.size >= 2) daySalts.delete(daySalts.keys().next().value as string);
+    daySalts.set(date, entry);
+    return entry.salt;
+  };
   try {
     const [, read] = await db.batch<{ value: string }>([
       db.prepare("INSERT INTO settings (key, value) VALUES (?1, ?2) ON CONFLICT (key) DO NOTHING").bind(key, crypto.randomUUID()),
@@ -267,13 +277,11 @@ export async function daySaltFor(db: D1Database, date: string): Promise<string> 
     ]);
     const salt = read?.results[0]?.value;
     if (!salt) throw new Error("day salt missing after insert");
-    daySalt = { date, salt, stored: true };
-    return salt;
+    return keep({ salt, stored: true });
   } catch (err) {
     console.error(JSON.stringify({ message: "day salt read failed", error: String(err) }));
     // Never stored, so nothing reversible is written; this isolate's uniques may count twice until D1 answers.
-    if (daySalt?.date !== date) daySalt = { date, salt: crypto.randomUUID(), stored: false };
-    return daySalt.salt;
+    return known?.salt ?? keep({ salt: crypto.randomUUID(), stored: false });
   }
 }
 

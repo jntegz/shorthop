@@ -207,7 +207,7 @@ function Visitors({ site, settings }: { site: SiteDTO; settings: ReactNode }) {
       <div className="sitepage-prose">
         <ul>
           <li>
-            <strong>Cookieless:</strong> nothing is stored in the browser and no consent banner is needed. A visitor is only recognised within one day, so a payment is credited to a visit of the same day, or through the checkout reference. A short-link click on an earlier day isn’t credited.
+            <strong>Cookieless:</strong> nothing is stored in the browser and no consent banner is needed. A visitor is only recognised within one day (UTC), so a payment is credited to a visit of the same day, or through the checkout reference. A visit in progress at midnight UTC is continued for up to 30 minutes; otherwise days are not linked. A short-link click on an earlier day isn’t credited.
           </li>
           <li>
             <strong>Recognise returning visitors:</strong> one random ID in localStorage (not a cookie) recognises the visitor across days, so a payment is credited to the visit that brought them, within the lookback window ({site.lookbackDays} days). Safari removes it after 7 days without a visit. In the EU this needs consent.

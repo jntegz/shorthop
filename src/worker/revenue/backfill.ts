@@ -43,21 +43,33 @@ const parse = (provider: Provider, body: unknown, c: ImportContext, headers: Rec
 
 const isoDay = (sec: number) => new Date(sec * 1000).toISOString().slice(0, 10);
 
-// Stripe: one-time checkouts, then paid invoices, then refunds (as running totals per charge).
+// Stripe: one-time checkouts, then paid invoices, then what paid each invoice (so a refund finds
+// its invoice), then refunds (as running totals per charge).
 const STRIPE_STAGES = [
-  { path: "checkout/sessions", extra: "&status=complete", type: "checkout.session.completed" },
-  { path: "invoices", extra: "&status=paid", type: "invoice.paid" },
-  { path: "charges", extra: "", type: "charge.refunded" },
+  { path: "checkout/sessions", extra: "&status=complete", type: "checkout.session.completed", optional: false },
+  { path: "invoices", extra: "&status=paid", type: "invoice.paid", optional: false },
+  // Not there before API version 2025-03-31, where the invoice names its PaymentIntent itself. No status
+  // filter: only newer API versions take one, and the parser keeps paid ones (providers/stripe.ts).
+  { path: "invoice_payments", extra: "", type: "invoice_payment.paid", optional: true },
+  { path: "charges", extra: "", type: "charge.refunded", optional: false },
 ] as const;
 
 const stripePage: PageFn = async (c, since, cursor) => {
   const [stageText, after] = (cursor ?? "0:").split(":");
   const stage = Number(stageText) || 0;
   const s = STRIPE_STAGES[stage]!;
-  const body = await getJson(
-    `https://api.stripe.com/v1/${s.path}?limit=${Math.min(100, c.pageSize)}&created[gte]=${since}${s.extra}${after ? `&starting_after=${encodeURIComponent(after)}` : ""}`,
-    { Authorization: `Bearer ${c.apiKey}` },
-  );
+  const url = `https://api.stripe.com/v1/${s.path}?limit=${Math.min(100, c.pageSize)}&created[gte]=${since}${s.extra}${after ? `&starting_after=${encodeURIComponent(after)}` : ""}`;
+  let body: Obj;
+  try {
+    body = await getJson(url, { Authorization: `Bearer ${c.apiKey}` });
+  } catch (err) {
+    // An account (or a restricted key) without this list: the import goes on without it, and says so in the log.
+    // A parameter Stripe rejects (code parameter_unknown, parameter_invalid_…) is a mistake here, not a missing list: it stops the import.
+    const text = String(err);
+    if (!s.optional || !/ answered (400|403|404):/.test(text) || /"code"\s*:\s*"parameters?_/.test(text)) throw err;
+    console.error(JSON.stringify({ message: "stripe import skipped an optional list", list: s.path, error: text }));
+    return { events: [], next: `${stage + 1}:` };
+  }
   const items = arr(body.data).map(obj);
   const events: NormalizedEvent[] = [];
   for (const o of items) {
@@ -134,6 +146,7 @@ const dodoPage: PageFn = async (c, since, cursor) => {
 const creemPage: PageFn = async (c, since, cursor) => {
   const page = Number(cursor ?? "1") || 1;
   const base = c.settings.test ? "https://test-api.creem.io" : "https://api.creem.io";
+  const readAt = Math.floor(Date.now() / 1000);
   const body = await getJson(`${base}/v1/transactions/search?page_number=${page}&page_size=${Math.min(100, c.pageSize)}`, { "x-api-key": c.apiKey });
   const event = emptyEvent(`import:creem:${page}`, "import");
   let older = false;
@@ -162,7 +175,9 @@ const creemPage: PageFn = async (c, since, cursor) => {
     });
     const refunded = num(t.refunded_amount) ?? 0;
     if (refunded > 0) {
-      event.payments.push({ kind: "refund", providerId: id, occurredAt: at, amountMinor: refunded, currency: cur, billing: null, refs: [], parentRef: id, productIds: [], testMode: t.mode === "test", cumulative: true });
+      // The transaction's refund total, under the key the refund.created webhook uses (providers/creem.ts).
+      // Read now: it holds every refund made so far, also ones a webhook stored one by one.
+      event.payments.push({ kind: "refund", providerId: id, occurredAt: at, amountMinor: refunded, currency: cur, billing: null, refs: [], parentRef: id, parentRefs: compact([str(t.order)]), productIds: [], testMode: t.mode === "test", cumulative: true, ofParent: true, totalAt: readAt });
     }
   }
   const pagination = obj(body.pagination);

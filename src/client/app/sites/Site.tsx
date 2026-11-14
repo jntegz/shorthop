@@ -401,6 +401,11 @@ function Dashboard({ d, listed }: { d: Dash; listed: SiteListItem | undefined })
                 <a href="#ui-site-payments">See why under Payments</a>.
               </p>
             ) : null}
+            {d.revenue && o.unconverted ? (
+              <p className="ui-site-note">
+                {num(o.unconverted)} {o.unconverted === 1 ? "payment" : "payments"} in this period {o.unconverted === 1 ? "has" : "have"} no exchange rate into {site.currency} yet, so {o.unconverted === 1 ? "it counts" : "they count"} as 0 in the totals.
+              </p>
+            ) : null}
           </Section>
 
           <Columns className="ui-site-columns">

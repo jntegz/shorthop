@@ -633,6 +633,9 @@ export async function linkRevenue(d1: D1Database, domain: string, slug: string, 
 /** The websites list: a week of traffic against the week before, two weeks of daily visits, a month of revenue. */
 export async function siteSummaries(d1: D1Database, sites: SiteDTO[], now = Math.floor(Date.now() / 1000)): Promise<Map<string, SiteSummary>> {
   const DAY = 86400;
+  // Every query names its sites, so each reads a range of the (site_id, started_at) index and not the whole table.
+  const ids = JSON.stringify(sites.map((s) => s.id));
+  const ofSites = (n: number) => `site_id IN (SELECT value FROM json_each(?${n}))`;
   const [traffic, hourly, sources, seen, money] = await d1.batch<Record<string, string | number | null>>([
     d1
       .prepare(
@@ -642,22 +645,23 @@ export async function siteSummaries(d1: D1Database, sites: SiteDTO[], now = Math
            COUNT(DISTINCT CASE WHEN started_at >= ?4 THEN visitor_id END) AS v7,
            COUNT(DISTINCT CASE WHEN started_at >= ?5 AND started_at < ?4 THEN visitor_id END) AS prev7,
            COUNT(DISTINCT visitor_id) AS v30
-         FROM web_sessions s WHERE started_at >= ?1 AND ${ON_SITE} GROUP BY site_id`,
+         FROM web_sessions s WHERE ${ofSites(6)} AND started_at >= ?1 AND ${ON_SITE} GROUP BY site_id`,
       )
-      .bind(now - 30 * DAY, now - DAY, now - ONLINE_SEC, now - 7 * DAY, now - 14 * DAY),
+      .bind(now - 30 * DAY, now - DAY, now - ONLINE_SEC, now - 7 * DAY, now - 14 * DAY, ids),
     // Hours, so each site's days can be cut in its own time zone below.
-    d1.prepare(`SELECT site_id, started_at / 3600 AS h, COUNT(*) AS n FROM web_sessions s WHERE started_at >= ?1 AND ${ON_SITE} GROUP BY site_id, h`).bind(now - 15 * DAY),
-    d1.prepare(`SELECT site_id, source, COUNT(*) AS n FROM web_sessions s WHERE started_at >= ?1 AND ${ON_SITE} GROUP BY site_id, source`).bind(now - 7 * DAY),
-    d1.prepare(`SELECT site_id, MAX(last_seen_at) AS at FROM web_sessions s WHERE ${ON_SITE} GROUP BY site_id`),
+    d1.prepare(`SELECT site_id, started_at / 3600 AS h, COUNT(*) AS n FROM web_sessions s WHERE ${ofSites(2)} AND started_at >= ?1 AND ${ON_SITE} GROUP BY site_id, h`).bind(now - 15 * DAY, ids),
+    d1.prepare(`SELECT site_id, source, COUNT(*) AS n FROM web_sessions s WHERE ${ofSites(2)} AND started_at >= ?1 AND ${ON_SITE} GROUP BY site_id, source`).bind(now - 7 * DAY, ids),
+    // The latest visit of each site, straight off the (site_id, last_seen_at) index.
+    d1.prepare(`SELECT st.value AS site_id, (SELECT s.last_seen_at FROM web_sessions s WHERE s.site_id = st.value AND ${ON_SITE} ORDER BY s.last_seen_at DESC LIMIT 1) AS at FROM json_each(?1) st`).bind(ids),
     d1
       .prepare(
         `SELECT p.site_id AS site_id,
            SUM(CASE WHEN p.occurred_at >= ?2 THEN ${AMOUNT} ELSE 0 END) AS revenue,
            SUM(CASE WHEN p.occurred_at < ?2 THEN ${AMOUNT} ELSE 0 END) AS prev,
            COUNT(DISTINCT CASE WHEN p.occurred_at >= ?2 AND ${NEW_CHARGE} THEN ${CUSTOMER} END) AS customers
-         FROM payments p WHERE p.occurred_at >= ?1 AND p.test_mode = 0 GROUP BY p.site_id`,
+         FROM payments p WHERE p.site_id IN (SELECT value FROM json_each(?3)) AND p.occurred_at >= ?1 AND p.test_mode = 0 GROUP BY p.site_id`,
       )
-      .bind(now - 60 * DAY, now - 30 * DAY),
+      .bind(now - 60 * DAY, now - 30 * DAY, ids),
   ]);
   const out = new Map<string, SiteSummary>();
   for (const site of sites) {

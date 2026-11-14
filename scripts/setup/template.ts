@@ -375,6 +375,7 @@ export function outdatedProblems(text: string, file = CONFIG_FILE): string[] {
   const problems: string[] = [];
   if (!crons.includes(ROLLUP_CRON)) problems.push(`The cron "${ROLLUP_CRON}" (hourly: daily rollups and website alerts) is missing from triggers.crons.`);
   if (!crons.includes(CHECKS_CRON)) problems.push(`The cron "${CHECKS_CRON}" (destination checks) is missing from triggers.crons.`);
+  if (!crons.includes(DIGEST_CRON)) problems.push(`The cron "${DIGEST_CRON}" (the weekly digest, on Mondays) is missing from triggers.crons.`);
   if (!limiters.includes("LINK_PASSWORD_LIMITER")) problems.push("The LINK_PASSWORD_LIMITER rate limiter (password-protected links) is missing.");
   if (!limiters.includes("PUBLIC_LIMITER")) problems.push("The PUBLIC_LIMITER rate limiter (shared statistics pages and payment webhooks) is missing.");
   if (!limiters.includes("COLLECT_LIMITER")) problems.push("The COLLECT_LIMITER rate limiter (website analytics) is missing.");

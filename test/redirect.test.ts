@@ -45,8 +45,10 @@ describe("redirects", () => {
     expect((await call(get("/v1.2%7Ex"))).headers.get("Location")).toBe("https://example.com/");
   });
 
-  it("is case-sensitive", async () => {
-    expect((await call(get("/Guide"))).status).toBe(404);
+  it("is case-sensitive: another case is sent to the link's own address, never on to its destination", async () => {
+    const res = await call(get("/Guide"));
+    expect(res.status).toBe(302);
+    expect(res.headers.get("Location")).toBe(`${ORIGIN}/guide`);
   });
 
   it("shows the branded 404 for unknown, disabled, expired and reserved slugs", async () => {

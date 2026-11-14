@@ -62,7 +62,7 @@ export type BackupTable = keyof typeof BACKUP_TABLES;
 export const BACKUP_TABLE_NAMES = Object.keys(BACKUP_TABLES) as BackupTable[];
 
 /** Tables kept out of backups on purpose (checked by the test, like the columns). */
-export const NOT_BACKED_UP = ["auth_failures", "login_events", "webhook_deliveries", "payment_events", "payment_claims", "d1_migrations", "_cf_KV", "sqlite_sequence"] as const;
+export const NOT_BACKED_UP = ["auth_failures", "login_events", "webhook_deliveries", "payment_events", "payment_claims", "payment_links", "d1_migrations", "_cf_KV", "sqlite_sequence"] as const;
 
 export const BACKUP_PAGE = 1000;
 
@@ -110,12 +110,31 @@ interface Job {
   startedAt: number;
 }
 
-/** The half-hourly cron's Sunday slots from 04:00 to 07:30 UTC copy the backup to R2 (when BACKUPS is bound). */
+/** The half-hourly cron's Sunday slots from 04:00 to 07:30 UTC can copy the backup to R2 (when BACKUPS is bound); backupPending says which still have to. */
 export function isBackupRun(now: Date): boolean {
   return now.getUTCDay() === 0 && now.getUTCHours() >= 4 && now.getUTCHours() < 8;
 }
 
 type BackupEnv = Env & { BACKUPS?: R2Bucket };
+
+/** The first Sunday slot starts a backup; later ones only carry on one that isn't finished. */
+const isFirstSlot = (now: Date) => now.getUTCHours() === 4 && now.getUTCMinutes() < 30;
+
+/**
+ * Whether a backup slot has work to do: a new backup to start, or one to
+ * carry on. False once the week's backup is complete, so the slots after it
+ * go back to destination checks and webhook deliveries. A failed read counts
+ * as nothing to do, for the same reason.
+ */
+export async function backupPending(env: Env, now: Date): Promise<boolean> {
+  if (isFirstSlot(now)) return true;
+  try {
+    return (await getSetting(env.DB, JOB_KEY)) !== null;
+  } catch (err) {
+    console.error(JSON.stringify({ message: "backup job read failed", error: String(err) }));
+    return false;
+  }
+}
 
 /**
  * Copies the next pages of the backup to R2: as many as the plan's call budget
@@ -129,7 +148,7 @@ export async function scheduledBackup(env: BackupEnv, now: Date, budget: number)
   if (!bucket) return null;
   const saved = await getSetting(env.DB, JOB_KEY);
   let job: Job | null = saved ? (JSON.parse(saved) as Job) : null;
-  const firstSlot = now.getUTCHours() === 4 && now.getUTCMinutes() < 30;
+  const firstSlot = isFirstSlot(now);
   // A job left from an earlier week (or none at all) starts over in the first slot.
   if (!job || (firstSlot && nowSec() - job.startedAt > 3600)) {
     if (!firstSlot && !job) return { done: true, pages: 0 };

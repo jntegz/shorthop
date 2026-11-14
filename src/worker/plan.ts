@@ -19,8 +19,12 @@ export interface PlanLimits {
   pullCalls: number;
   /** Calls one weekly-backup run may make: a D1 read and an R2 write per page of a table. */
   backupCalls: number;
-  /** Destinations one half-hourly run looks up at the security DNS (links never checked, such as imports). */
+  /** Hosts one half-hourly run looks up at the security DNS (links never checked, or not finished when saved). */
   unsafeLookups: number;
+  /** Links one half-hourly run republishes with a warning after finding them flagged: one KV write each. */
+  unsafePublishes: number;
+  /** Hosts one save or import request looks up at the security DNS right away; the half-hourly run does the rest. */
+  inlineLookups: number;
   /** Webhook deliveries one request attempts right away after an action; the cron sends the rest. */
   deliveriesNow: number;
   /** Outbound requests one destination-check run may spend (a redirect hop is one). */
@@ -58,6 +62,8 @@ export const PAID: PlanLimits = {
   pullCalls: 200,
   backupCalls: 400,
   unsafeLookups: 20,
+  unsafePublishes: 100,
+  inlineLookups: 100,
   deliveriesNow: 10,
   checkBudget: 40,
   checkLimit: 25,
@@ -83,6 +89,9 @@ export const FREE: PlanLimits = {
   pullCalls: 40,
   backupCalls: 40,
   unsafeLookups: 3,
+  unsafePublishes: 3,
+  // A full import leaves about a dozen calls; a link has at most 101 destinations.
+  inlineLookups: 10,
   deliveriesNow: 2,
   checkBudget: 20,
   checkLimit: 10,

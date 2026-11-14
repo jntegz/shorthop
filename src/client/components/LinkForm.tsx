@@ -11,7 +11,7 @@ import { validateSlug } from "../../shared/slug";
 import { validatePreview, type LinkPreview } from "../../shared/preview";
 import { linkPasswordProblem, MAX_CLICK_LIMIT } from "../../shared/protection";
 import { describeRouting, validateRouting, type RouteRule } from "../../shared/routing";
-import { normalizeTarget, validateUtmTemplate } from "../../shared/target";
+import { lacksScheme, normalizeTarget, validateUtmTemplate } from "../../shared/target";
 import type { LinkDTO } from "../../shared/types";
 import { api, call, keys, linkFromError } from "../api";
 import { fromLocalInput, toLocalInput } from "../lib/format";
@@ -170,6 +170,8 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
   };
   // Other links already going to this destination: a warning, never a block.
   const normalizedTarget = targetCheck?.ok ? targetCheck.url : "";
+  // Typed without "https://": it is added, and the form shows the result.
+  const addsScheme = Boolean(normalizedTarget) && lacksScheme(f.target);
   const [lookupTarget, setLookupTarget] = useState("");
   useEffect(() => {
     const t = setTimeout(() => setLookupTarget(normalizedTarget), 400);
@@ -310,7 +312,16 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
             placeholder="https://example.com/…"
             value={f.target}
             onChange={(e) => set("target", e.target.value)}
+            // "example.com/page" becomes the address that will be saved, once the field is left.
+            onBlur={() => {
+              if (addsScheme) set("target", normalizedTarget);
+            }}
           />
+          {addsScheme ? (
+            <p className="mt-1.5 text-xs text-muted" role="status">
+              Will be saved as <span className="break-all font-medium text-fg">{normalizedTarget}</span>
+            </p>
+          ) : null}
           {checkout ? <p className="mt-1.5 text-xs text-muted">{checkout}</p> : null}
           {link?.unsafe && f.target.trim() === link.target ? (
             <div className="mt-2 rounded-md border border-danger/30 bg-danger-soft px-3 py-2 text-xs text-danger">

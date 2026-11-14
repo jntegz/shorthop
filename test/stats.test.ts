@@ -37,7 +37,8 @@ async function hits(store: StoredPoint[], ts: number, list: Hit[]) {
       headers: { "User-Agent": h.ua ?? CHROME, "CF-Connecting-IP": h.ip ?? "198.51.100.1" },
       cf: { country: "FR", city: "Paris", region: "Paris", continent: "EU", asn: 3215, asOrganization: "Orange", colo: "CDG", ...h.cf },
     } as RequestInit);
-    await call(req, undefined, { CLICKS, ...TWO });
+    // The fixture sends the same addresses before every test: more in a minute than the public limiter lets through.
+    await call(req, undefined, { CLICKS, ...TWO, PUBLIC_LIMITER: { limit: async () => ({ success: true }) } as RateLimit });
   }
   store.push(...points.map((p) => aePoint(p, ts)));
 }
@@ -51,7 +52,7 @@ beforeEach(async () => {
   await putLink("guide", { u: "https://example.com/guide" });
   await putLink("cv", { u: "https://example.com/cv" });
   await env.DB.prepare(
-    "INSERT INTO links (domain, slug, target, created_at, updated_at) VALUES ('sh.example', 'guide', 'https://example.com/guide', 1, 1), ('sh.example', 'cv', 'https://example.com/cv', 1, 1), ('sh.example', 'Old', 'https://x.com/', 1, 1)",
+    "INSERT INTO links (domain, slug, target, created_at, updated_at) VALUES ('sh.example', 'guide', 'https://example.com/guide', 1, 1), ('sh.example', 'cv', 'https://example.com/cv', 1, 1)",
   ).run();
 
   const y = dayStartSec(YESTERDAY) + 36000;
@@ -61,7 +62,7 @@ beforeEach(async () => {
     { path: "/guide?s=nl", ip: "2.2.2.2", ua: IPHONE, cf: { country: "US", city: "Austin", region: "Texas" } },
     { path: "/guide", ua: "LinkedInBot/1.0" },
     { path: "/cv?q=1", ip: "3.3.3.3" },
-    { path: "/old" }, // case-only miss of "Old"
+    { path: "/old" }, // case-only miss of "Old", a link made after the visit (once it exists, /old is sent on to it)
     { path: "/wp-login.php", ua: "curl/8" },
   ]);
   const t = Math.floor(NOW.getTime() / 1000) - 60;
@@ -69,6 +70,7 @@ beforeEach(async () => {
     { path: "/guide?s=li", ip: "1.1.1.1" }, // same IP as yesterday, new day → new unique
     { path: "/cv", ip: "4.4.4.4", ua: IPHONE },
   ]);
+  await env.DB.prepare("INSERT INTO links (domain, slug, target, created_at, updated_at) VALUES ('sh.example', 'Old', 'https://x.com/', 1, 1)").run();
 });
 
 afterEach(() => vi.restoreAllMocks());
@@ -303,7 +305,8 @@ describe("stats API", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("Invalid query", { status: 422 }));
     const failed = await recent(AE_ENV);
     expect(failed.aeAvailable).toBe(true);
-    expect(failed.error).toContain("422");
+    // Logged, not passed on: the engine's own words stay on the server.
+    expect(failed.error).toBe("Analytics Engine didn't answer. Try again in a moment.");
   });
 
   it("lists 7-day and all-time clicks per link", async () => {

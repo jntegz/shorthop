@@ -5,6 +5,7 @@ import { resetDeadLinkCache } from "../src/worker/dead-link";
 import worker from "../src/worker/index";
 import { resetMissPolicyCache } from "../src/worker/misses";
 import { resetNotFoundCache } from "../src/worker/not-found";
+import { resetSlugRecoveryCache } from "../src/worker/redirect";
 import { resetSiteCaches } from "../src/worker/web/sites";
 
 export const ORIGIN = "https://sh.example";
@@ -49,6 +50,7 @@ export async function resetData(): Promise<void> {
   resetDaySaltCache();
   resetDeadLinkCache();
   resetSiteCaches();
+  resetSlugRecoveryCache();
   await env.DB.batch([
     env.DB.prepare("DELETE FROM links"),
     env.DB.prepare("DELETE FROM target_checks"),

@@ -70,7 +70,10 @@ export const meApi = new Hono<AppEnv>()
 
     const epoch = crypto.randomUUID();
     await c.env.DB.batch([
-      c.env.DB.prepare("UPDATE users SET password_hash = ?1, session_epoch = ?2, updated_at = ?3 WHERE email = ?4").bind(
+      // An emailed reset link (or an invitation) still waiting must not outlive the new password.
+      c.env.DB.prepare(
+        "UPDATE users SET password_hash = ?1, session_epoch = ?2, reset_hash = NULL, reset_expires = NULL, invite_hash = NULL, invite_expires = NULL, updated_at = ?3 WHERE email = ?4",
+      ).bind(
         await hashPassword(next, personIterations(c.env)),
         epoch,
         now,

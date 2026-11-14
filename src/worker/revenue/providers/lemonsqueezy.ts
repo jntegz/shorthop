@@ -4,11 +4,21 @@
 //
 // order_created is the first payment (one-time or a subscription's first);
 // subscription_payment_success with billing_reason "renewal" (or "updated")
-// is each later one. Refunds come as running totals on the order or the
-// subscription invoice. custom_data from checkout[custom][sh_ref] is in meta.
+// is each later one. Refunds come as running totals (refunded_amount) on the
+// order or the subscription invoice.
+//
+// A subscription invoice names its subscription (subscription_id) but no
+// order, and a subscription names its order (order_id). The first invoice
+// (billing_reason "initial") was stored as that order, so its refund is found
+// through the subscription: by the order a subscription event named, or with
+// an API key by reading the subscription. It is kept as the order's refund,
+// the row order_refunded writes for the same money. Should neither be known
+// yet it waits without a charge and joins the order's refund as soon as a
+// subscription event names the order (adoptFirstRefunds in ../ingest).
+// custom_data from checkout[custom][sh_ref] is in meta.
 
 import type { NormalizedEvent, NormalizedSubscription, ProviderAdapter } from "../types";
-import { emptyEvent } from "../types";
+import { emptyEvent, firstOfRef } from "../types";
 import { bytesToHex, hexToBytes, hmacKey, sign, verifyAny } from "../crypto";
 import { apiCheck, TEST_BODY, testContext } from "./check";
 import { compact, currency, email, num, obj, parseJson, sec, str, visitRef } from "../read";
@@ -37,6 +47,20 @@ export const lemonsqueezy: ProviderAdapter = {
   },
 
   testApiKey: (key) => apiCheck("https://api.lemonsqueezy.com/v1/users/me", { Authorization: `Bearer ${key}`, Accept: "application/vnd.api+json" }),
+
+  async parentRefs(p, ctx) {
+    // A refund of a subscription's first invoice: the subscription names the order it was stored as.
+    const sub = p.refs.find((r) => r.startsWith(firstOfRef("")))?.slice(firstOfRef("").length);
+    if (!sub || !ctx.apiKey) return [];
+    const res = await fetch(`https://api.lemonsqueezy.com/v1/subscriptions/${encodeURIComponent(sub)}`, {
+      headers: { Authorization: `Bearer ${ctx.apiKey}`, Accept: "application/vnd.api+json" },
+      redirect: "manual",
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) throw new Error(`api.lemonsqueezy.com answered ${res.status}`);
+    const order = str(obj(obj(obj(await res.json()).data).attributes).order_id);
+    return order ? [`order:${order}`] : [];
+  },
 
   async verify(headers, body, secret) {
     if (!secret) return "No signing secret";
@@ -104,6 +128,9 @@ export const lemonsqueezy: ProviderAdapter = {
       const refunded = num(a.refunded_amount) ?? 0;
       if (refunded <= 0) return out;
       const parent = type === "order_refunded" ? `order:${id}` : `invoice:${id}`;
+      const sub = str(a.subscription_id);
+      // The first invoice has no charge of its own: its payment is the order that started the subscription.
+      const first = type === "subscription_payment_refunded" && sub && str(a.billing_reason) === "initial" ? sub : null;
       out.payments.push({
         kind: "refund",
         providerId: parent,
@@ -112,16 +139,20 @@ export const lemonsqueezy: ProviderAdapter = {
         currency: currency(a.currency) ?? "USD",
         billing: null,
         customerId: str(a.customer_id),
-        refs: [],
+        // Marks it until that order is known.
+        refs: first ? [firstOfRef(first)] : [],
         parentRef: parent,
+        parentHint: first ? { firstOf: first } : null,
         productIds: [],
         testMode,
         cumulative: true,
+        ofParent: true,
       });
       return out;
     }
 
-    if (type.startsWith("subscription_")) {
+    // subscription_payment_* events carry a subscription invoice, not a subscription.
+    if (type.startsWith("subscription_") && !type.startsWith("subscription_payment_")) {
       const status = SUB_STATUS[str(a.status) ?? ""] ?? "active";
       out.subscriptions.push({
         providerId: id,
@@ -132,7 +163,7 @@ export const lemonsqueezy: ProviderAdapter = {
         startedAt: sec(a.created_at),
         canceledAt: status === "canceled" || status === "ended" ? sec(a.updated_at) : null,
         endedAt: sec(a.ends_at) && status === "ended" ? sec(a.ends_at) : null,
-        firstOrderRef: type === "subscription_created" && str(a.order_id) ? `order:${str(a.order_id)}` : null,
+        firstOrderRef: str(a.order_id) ? `order:${str(a.order_id)}` : null,
       });
       if (type === "subscription_created" && ref) out.claims.push({ ref, ids: compact([`order:${str(a.order_id) ?? ""}`, id]) });
     }

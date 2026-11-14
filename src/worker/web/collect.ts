@@ -6,7 +6,8 @@
 // it isn't a bot, and on Workers Free the day's budget isn't spent (budget.ts). Every event updates the visit's D1 row and writes one data
 // point to Analytics Engine (the AE_WEB_DATASET dataset, layout in WEB_BLOBS).
 // No IP address is stored; cookieless sites get a visitor hash that changes
-// every day and can't be linked across days.
+// every day at midnight UTC. A visit in progress at midnight UTC is continued
+// for up to 30 minutes (by matching yesterday's hash); otherwise days are not linked.
 
 import { hostBelongs, pathMatches, type SiteDTO } from "../../shared/sites";
 import { daySaltFor, detectBot, detectBrowser, detectDevice, detectOs, primaryLanguage, truncateUtf8, visitorHash } from "../analytics";
@@ -15,7 +16,7 @@ import { claimRefs } from "../revenue/match";
 import { ipBucket } from "../session";
 import { collectBudgetAllows } from "./budget";
 import { attributionOf, inAppBrowser } from "./source";
-import { identifyVisitor, touchSession, type TouchKind } from "./sessions";
+import { identifyVisitor, SESSION_GAP_SEC, touchSession, type TouchKind } from "./sessions";
 import { cachedSite } from "./sites";
 import { verifyClickToken } from "./token";
 
@@ -188,19 +189,37 @@ export async function handleCollect(request: Request, env: Env, ctx: ExecutionCo
   const persistent = wantsId && !gpcOff;
   // a: 1 lets a built-in consent banner know there's a question to ask (never when GPC/DNT already answered it).
   const mode = { m: persistent ? "p" : "c", ...(site.idMode === "consent" && !gpcOff ? { a: 1 } : {}) };
+  const hashOf = async (day: string) => visitorHash(ip, `${ua}|${site.id}`, day, `${env.VISITOR_SALT ?? ""}|${await daySaltFor(env.DB, day)}`);
   let visitorId: string;
-  if (persistent && typeof p.v === "string" && /^[A-Za-z0-9_-]{16,40}$/.test(p.v)) {
-    visitorId = p.v;
+  const ownId = persistent && typeof p.v === "string" && /^[A-Za-z0-9_-]{16,40}$/.test(p.v) ? p.v : null;
+  if (ownId) {
+    visitorId = ownId;
   } else {
-    let daily: string;
     try {
-      daily = await daySaltFor(env.DB, date);
+      visitorId = await hashOf(date);
     } catch (err) {
       console.error(JSON.stringify({ message: "visitor salt unavailable", error: String(err) }));
       return reply(503, origin);
     }
-    visitorId = await visitorHash(ip, `${ua}|${site.id}`, date, `${env.VISITOR_SALT ?? ""}|${daily}`);
   }
+  // The daily hashes this visitor's open visit may still be under. On a consent site, a first-party id
+  // may have only just been allowed: today's hash (and yesterday's just after midnight). A cookieless
+  // visitor: yesterday's, while a visit from before midnight UTC can still be open. A first-party id
+  // doesn't change at midnight, and a site that always uses one never had a hash to come from.
+  const overMidnight = now % 86400 < SESSION_GAP_SEC;
+  const afterConsent = ownId !== null && site.idMode === "consent";
+  const yesterday = new Date((now - 86400) * 1000).toISOString().slice(0, 10);
+  const hashDays = afterConsent ? [date, ...(overMidnight ? [yesterday] : [])] : !ownId && overMidnight ? [yesterday] : [];
+  const earlierVisitors = hashDays.length
+    ? async () => {
+        try {
+          return await Promise.all(hashDays.map(hashOf));
+        } catch (err) {
+          console.error(JSON.stringify({ message: "visitor salt unavailable", error: String(err) }));
+          return [];
+        }
+      }
+    : undefined;
 
   if (kind === "identify") {
     const e = p.e ?? {};
@@ -248,6 +267,9 @@ export async function handleCollect(request: Request, env: Env, ctx: ExecutionCo
     referrerHost: refHost,
     geo,
     client,
+    earlierVisitors,
+    // From one daily hash to the next only: a hash may be shared, a first-party id is kept for good.
+    adoptIdentity: !ownId,
   });
   if (!session) return reply(202, origin);
 

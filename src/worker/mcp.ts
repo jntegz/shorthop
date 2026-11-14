@@ -242,17 +242,17 @@ export const mcpApi = new Hono<AppEnv>()
         // The same API, with the caller's key: its permissions decide.
         const base = new URL(c.req.url);
         const prefix = base.pathname.startsWith("/_admin/api") ? "/_admin/api" : "/api";
+        // Everything the API's guards read (src/worker/auth.ts): the key, or the admin's
+        // Access token and session cookie, and the caller's address for the failure limiter.
+        const headers: Record<string, string> = { Origin: base.origin, ...(req.body === undefined ? {} : { "Content-Type": "application/json" }) };
+        for (const name of ["Authorization", "Cookie", "Cf-Access-Jwt-Assertion", "CF-Connecting-IP"]) {
+          const value = c.req.header(name);
+          if (value) headers[name] = value;
+        }
         const res = await app.fetch(
           new Request(`${base.origin}${prefix}${req.path}`, {
             method: req.method,
-            headers: {
-              Authorization: c.req.header("Authorization") ?? "",
-              Cookie: c.req.header("Cookie") ?? "",
-              // The admin's session is checked together with its Cloudflare Access login.
-              "Cf-Access-Jwt-Assertion": c.req.header("Cf-Access-Jwt-Assertion") ?? "",
-              Origin: base.origin,
-              ...(req.body === undefined ? {} : { "Content-Type": "application/json" }),
-            },
+            headers,
             body: req.body === undefined ? undefined : JSON.stringify(req.body),
           }),
           c.env,

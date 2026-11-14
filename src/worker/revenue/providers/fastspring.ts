@@ -11,13 +11,12 @@ import { minorFactor } from "../../../shared/sites";
 import type { NormalizedEvent, NormalizedPayment, NormalizedSubscription, ProviderAdapter } from "../types";
 import { emptyEvent } from "../types";
 import { base64ToBytes, bytesToBase64, bytesToHex, hmacKey, sign, verifyAny } from "../crypto";
-import { arr, compact, currency, email, num, obj, parseJson, sec, str, visitRef, type Obj } from "../read";
+import { arr, compact, currency, email, idOf, num, obj, parseJson, sec, str, visitRef, type Obj } from "../read";
 import { apiCheck, TEST_BODY, testContext } from "./check";
 
 export const FASTSPRING_API = "https://api.fastspring.com";
 
 const minor = (v: unknown, cur: string) => Math.round((num(v) ?? 0) * minorFactor(cur));
-const idOf = (v: unknown) => (typeof v === "string" ? str(v) : str(obj(v).id));
 
 const SUB_STATUS: Record<string, NormalizedSubscription["status"]> = {
   active: "active",

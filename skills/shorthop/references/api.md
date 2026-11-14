@@ -20,7 +20,7 @@ Generated from the server's own catalog (`scripts/skill-reference.ts`). Base URL
 | `GET /links/{domain}/{slug}/dependents` | Links that send their visitors to this one | any key |
 | `GET /links/{domain}/{slug}/history` | A link's saved versions | any key |
 | `POST /links/{domain}/{slug}/history/{id}/restore` | Put a link back the way it was in a version | links.edit |
-| `GET /links/{domain}/{slug}/cap` | A capped link's click counter | any key |
+| `GET /links/{domain}/{slug}/cap` | A capped link's click counter (the count needs stats.view; without it only the limit) | any key |
 | `POST /links/{domain}/{slug}/cap/reset` | Start a capped link's count again | links.edit |
 | `GET /links/by-target` | Links that already go to a destination | any key |
 | `POST /links/bulk` | Enable, disable, tag, untag or delete many links (20 per request on Workers Free, 100 on Paid) | links.edit or links.delete |
@@ -32,7 +32,7 @@ Generated from the server's own catalog (`scripts/skill-reference.ts`). Base URL
 | `POST /import` | Import links (20 rows per request on Workers Free, 100 on Paid) | links.create |
 | `POST /resync` | Republish links to the edge, a page at a time; call again with next until it is null | links.edit or settings.manage |
 | `GET /export/links.csv` | Links as CSV, optionally filtered | any key |
-| `GET /export/links.json` | Every link with its settings, as import rows (never passwords) | any key |
+| `GET /export/links.json` | Every link with its settings, as import rows (never passwords; click counts need stats.view) | any key |
 
 ## Sharing
 
@@ -40,9 +40,9 @@ Generated from the server's own catalog (`scripts/skill-reference.ts`). Base URL
 |---|---|---|
 | `GET /links/{domain}/{slug}/shares` | A link's shared statistics pages | stats.view and links.edit |
 | `POST /links/{domain}/{slug}/shares` | Share a link's statistics on a read-only page | stats.view and links.edit |
-| `GET /shares` | Shared campaign reports (a tag or a set of links) | stats.view and links.edit |
+| `GET /shares` | Shared campaign reports (a tag or a set of links; a report with revenue comes without its address unless you have revenue.view) | stats.view and links.edit |
 | `POST /shares` | Share a report on every link with a tag, or a set of links (a tag or links is required) | stats.view and links.edit |
-| `PATCH /shares/{id}` | Change or stop a share | stats.view and links.edit |
+| `PATCH /shares/{id}` | Change or stop a share (a report with revenue needs revenue.view) | stats.view and links.edit |
 | `DELETE /shares/{id}` | Remove an ended share from the list | stats.view and links.edit |
 
 ## Statistics
@@ -55,7 +55,7 @@ Generated from the server's own catalog (`scripts/skill-reference.ts`). Base URL
 | `GET /stats/peak-hours` | All links' clicks by weekday and hour (tz, days up to 89) | stats.view |
 | `GET /stats/links/{domain}/{slug}/peak-hours` | One link's clicks by weekday and hour (tz, days up to 89) | stats.view |
 | `GET /stats/live` | Human clicks with a city-level location in the last minutes (minutes, default 15; domain), for a live map | stats.view |
-| `GET /stats/recent` | Latest hits (domain, slug, limit, event, country, device, hours) | stats.view |
+| `GET /stats/recent` | Latest hits (domain, slug, limit, event, country, device, hours; missed visits need health.manage) | stats.view |
 | `GET /stats/export.csv` | Daily clicks per link as CSV | stats.view |
 
 ## Link health
@@ -74,6 +74,7 @@ Generated from the server's own catalog (`scripts/skill-reference.ts`). Base URL
 | `GET /checks` | Destination checks for every link | health.manage |
 | `PUT /checks/settings` | Turn checks on or off, and how often | settings.manage |
 | `POST /checks/recheck` | Check destinations with problems now | health.manage |
+| `PUT /checks/confirmed` | Say a destination that refuses checks works, or take that back | health.manage |
 | `GET /checks/links/{domain}/{slug}` | One link's destination checks | any key |
 | `POST /checks/links/{domain}/{slug}` | Check one link's destinations now | health.manage |
 
@@ -97,13 +98,13 @@ Generated from the server's own catalog (`scripts/skill-reference.ts`). Base URL
 | Endpoint | What it does | Permission |
 |---|---|---|
 | `GET /webhooks` | Webhooks and their delivery status | settings.manage |
-| `POST /webhooks` | Add a webhook | settings.manage |
-| `PUT /webhooks/{id}` | Change a webhook | settings.manage |
-| `POST /webhooks/{id}/rotate` | Make a new signing secret | settings.manage |
+| `POST /webhooks` | Add a webhook (site.payment needs revenue.view; link.clicked, link.milestone and site.traffic_spike need stats.view; link.health_changed needs health.manage) | settings.manage |
+| `PUT /webhooks/{id}` | Change a webhook (needs the permissions of the events it has, of deliveries still waiting, and of those it gets) | settings.manage |
+| `POST /webhooks/{id}/rotate` | Make a new signing secret (needs the permissions of the webhook's events) | settings.manage |
 | `DELETE /webhooks/{id}` | Delete a webhook | settings.manage |
 | `POST /webhooks/{id}/test` | Send a test event | settings.manage |
-| `GET /webhooks/{id}/deliveries` | The last deliveries | settings.manage |
-| `POST /webhooks/deliveries/{delivery}/redeliver` | Send a delivery again | settings.manage |
+| `GET /webhooks/{id}/deliveries` | The last deliveries (only of events you may see) | settings.manage |
+| `POST /webhooks/deliveries/{delivery}/redeliver` | Send a delivery again (needs the permission of its event) | settings.manage |
 
 ## AI assistants
 

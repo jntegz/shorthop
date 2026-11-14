@@ -73,7 +73,7 @@ export const sharesApi = new Hono<AppEnv>()
     const { results } = await c.env.DB.prepare("SELECT * FROM stat_shares WHERE scope != 'link' ORDER BY created_at DESC LIMIT 100").all<ShareRow>();
     const origin = shareOrigin(c.env, c.req.raw);
     const money = can(c.get("actor"), "revenue.view");
-    const shares = await Promise.all(results.map(async (r) => ({ ...(await shareToDTO(c.env, r, origin)), ...(money || r.show_revenue !== 1 ? {} : { url: null }) })));
+    const shares = await Promise.all(results.map((r) => shareToDTO(c.env, r, origin, { withUrl: money || r.show_revenue !== 1 })));
     return c.json({ shares });
   })
 

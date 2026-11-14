@@ -40,7 +40,7 @@ import { configuredDomains, domainsOf } from "../domains";
 import { csv, validate, type AppEnv } from "../hono";
 import { actorLabel } from "../users";
 import { recreditSite } from "../revenue/attribute";
-import { reconvertSite, refreshFx } from "../revenue/fx";
+import { reconvertSite, refreshFx, unconvertedCount } from "../revenue/fx";
 import { planLimits } from "../plan";
 import { importPage } from "../revenue/backfill";
 import { checkConnection, connectionChanges, connectionSecrets, connectionView, settingsOf } from "../revenue/connections";
@@ -147,7 +147,7 @@ export const sitesApi = new Hono<AppEnv>()
     const w = windowOf(site, q);
     const f = filtersOf(q, 4);
     const span = w.end - w.start;
-    const [current, previous, points, previousPoints, spikes, online, unmatched] = await Promise.all([
+    const [current, previous, points, previousPoints, spikes, online, unmatched, unconverted] = await Promise.all([
       totals(c.env.DB, site, w.start, w.end, f),
       // The period before, of the same length; none for all time.
       q.range === "all" ? Promise.resolve(null) : totals(c.env.DB, site, w.start - span, w.start, f),
@@ -156,6 +156,7 @@ export const sitesApi = new Hono<AppEnv>()
       spikesIn(c.env.DB, site.id, w),
       onlineNow(c.env.DB, site.id),
       unmatchedCount(c.env.DB, site.id, w.start, w.end),
+      unconvertedCount(c.env.DB, site.id, w.start, w.end),
     ]);
     const money = seesMoney(c.get("actor"));
     const dto: SiteOverviewDTO = {
@@ -170,6 +171,7 @@ export const sitesApi = new Hono<AppEnv>()
       spikes,
       online,
       unmatched: money ? unmatched : 0,
+      ...(money && unconverted ? { unconverted } : {}),
       aeAvailable: aeAvailable(c.env),
     };
     return c.json(dto);

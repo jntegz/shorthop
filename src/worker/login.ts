@@ -477,14 +477,14 @@ for (const kind of ["invite", "reset"] as const) {
     if (password.length > MAX_PASSWORD_LENGTH) return retry("That password is too long.");
     if (password !== (form.get("confirm") ?? "")) return retry("The two passwords don't match.");
 
-    // Atomic: of two posts at once, only one uses the link. A new epoch ends every other session.
+    // Atomic: of two posts at once, only one uses the link. A new epoch ends every other session,
+    // and the other kind of link, if one is still waiting, ends with this password too.
     const epoch = crypto.randomUUID();
+    const set = "password_hash = ?1, session_epoch = ?2, invite_hash = NULL, invite_expires = NULL, reset_hash = NULL, reset_expires = NULL, updated_at = ?3, last_login_at = ?3";
     const sql =
       kind === "invite"
-        ? `UPDATE users SET password_hash = ?1, session_epoch = ?2, invite_hash = NULL, invite_expires = NULL, updated_at = ?3, last_login_at = ?3
-           WHERE email = ?4 AND invite_hash = ?5 AND invite_expires > ?3 RETURNING email`
-        : `UPDATE users SET password_hash = ?1, session_epoch = ?2, reset_hash = NULL, reset_expires = NULL, updated_at = ?3, last_login_at = ?3
-           WHERE email = ?4 AND reset_hash = ?5 AND reset_expires > ?3 RETURNING email`;
+        ? `UPDATE users SET ${set} WHERE email = ?4 AND invite_hash = ?5 AND invite_expires > ?3 RETURNING email`
+        : `UPDATE users SET ${set} WHERE email = ?4 AND reset_hash = ?5 AND reset_expires > ?3 RETURNING email`;
     const saved = await env.DB.prepare(sql)
       .bind(await hashPassword(password, personIterations(env)), epoch, now, access.email, await sha256Hex(token))
       .first<{ email: string }>();

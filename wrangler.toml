@@ -79,7 +79,7 @@ tag = "v1"
 new_sqlite_classes = ["ClickCap"]
 
 [triggers]
-crons = ["15 * * * *", "0 7 * * 1", "*/30 * * * *"]
+crons = ["15 * * * *", "0 7 * * MON", "*/30 * * * *"]
 
 [vars]
 # "password": the ADMIN_PASSWORD secret alone. Cloudflare Access can come later (docs/SETUP.md#access).

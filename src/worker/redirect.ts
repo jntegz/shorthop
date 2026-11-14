@@ -1,5 +1,9 @@
-// The click path: one KV read, then a 302. Nothing else runs before the
-// response; analytics is written afterwards via ctx.waitUntil.
+// The click path. A plain link is one KV read, then a 302; analytics is
+// written afterwards via ctx.waitUntil. Some links wait for more before the
+// response: a destination that may be a tracked site or a hosted checkout
+// reads D1 (cached per isolate), a click limit asks its Durable Object, a
+// password POST counts the attempt in D1, and a KV miss may try to recover a
+// near-miss slug (KV reads, and D1 only on domains with mixed-case slugs).
 
 import { isProbePath, isRoutableSlug } from "../shared/slug";
 import { buildLocation, renderUtm, splitOwnParams } from "../shared/target";
@@ -65,6 +69,70 @@ function slugFromPath(pathname: string): string | null {
   }
 }
 
+/** Characters a pasted or quoted link picks up at its end ("see sh.example/guide)."). */
+const TRAILING_JUNK_RE = /[.,;:!?)\]}>'"`*\u2019\u201D\u00BB\u2026]+$/;
+/** The case-insensitive lookup must not hold up a not-found page. */
+const RECOVERY_TIMEOUT_MS = 500;
+
+/**
+ * A near miss, after KV had nothing for the path as typed: the slug without
+ * trailing punctuation, or the one link on this domain that matches apart
+ * from case. Returns the slug to send the visitor to, or null. Scanner paths
+ * are not looked up in D1, and two links that differ only by case are
+ * ambiguous: neither is chosen.
+ */
+export async function recoverSlug(env: Env, domain: string, slug: string): Promise<string | null> {
+  const candidate = slug.replace(TRAILING_JUNK_RE, "");
+  if (!isRoutableSlug(candidate)) return null;
+  try {
+    if (candidate !== slug && (await readLink(env, kvKey(domain, candidate)))) return candidate;
+    if (isProbePath(candidate)) return null;
+    // With every slug on the domain in lower case, that form is the only possible match: one KV read, not D1 per miss.
+    if (!(await hasMixedCaseSlugs(env.DB, domain))) {
+      const lower = candidate.toLowerCase();
+      return lower !== candidate && (await readLink(env, kvKey(domain, lower))) ? lower : null;
+    }
+    const { results } = await withTimeout(
+      env.DB.prepare("SELECT slug FROM links WHERE domain = ?1 AND slug = ?2 COLLATE NOCASE LIMIT 2").bind(domain, candidate).all<{ slug: string }>(),
+      RECOVERY_TIMEOUT_MS,
+      "slug recovery read",
+    );
+    const found = results.length === 1 ? results[0]!.slug : null;
+    // The same slug KV just missed would only redirect to another miss.
+    return found !== null && found !== slug && found !== candidate ? found : null;
+  } catch (err) {
+    console.error(JSON.stringify({ message: "slug recovery failed", domain, slug: candidate, error: String(err) }));
+    return null;
+  }
+}
+
+const MIXED_CASE_TTL_MS = 60_000;
+let mixedCase = new Map<string, { mixed: boolean; at: number }>();
+
+/**
+ * Whether any slug on the domain has a capital letter (one indexed read,
+ * cached a minute per isolate, like a new link's KV miss). A failed read
+ * counts as yes, so recovery looks in D1 as it would without this.
+ */
+async function hasMixedCaseSlugs(db: D1Database, domain: string): Promise<boolean> {
+  const cached = mixedCase.get(domain);
+  if (cached && Date.now() - cached.at < MIXED_CASE_TTL_MS) return cached.mixed;
+  let mixed = true;
+  try {
+    const row = await withTimeout(db.prepare("SELECT 1 FROM links INDEXED BY links_mixed_case WHERE domain = ?1 AND slug != lower(slug) LIMIT 1").bind(domain).first(), RECOVERY_TIMEOUT_MS, "mixed-case slugs read");
+    mixed = row !== null;
+  } catch (err) {
+    console.error(JSON.stringify({ message: "mixed-case slugs read failed", domain, error: String(err) }));
+  }
+  if (mixedCase.size >= 1000) mixedCase = new Map();
+  mixedCase.set(domain, { mixed, at: Date.now() });
+  return mixed;
+}
+
+export function resetSlugRecoveryCache(): void {
+  mixedCase.clear();
+}
+
 function cacheTtl(env: Env): number {
   const n = Number(env.KV_CACHE_TTL);
   return Number.isFinite(n) && n >= MIN_CACHE_TTL ? Math.floor(n) : DEFAULT_CACHE_TTL;
@@ -90,7 +158,8 @@ export function chooseRoute(request: Request, rules: readonly KvRule[]): { url: 
   if (bot && bot !== PREFETCH) return null;
   const device = routeDevice(detectOs(ua, request.headers.get("Sec-CH-UA-Platform")), detectDevice(ua, request.headers.get("Sec-CH-UA-Mobile")));
   const picked = pickRoute(rules, { device, country: routeCountry(cf?.country) }, Math.random());
-  if (!picked) return null;
+  // A malformed record (no usable destination) gets the fallback.
+  if (!picked || typeof picked.url !== "string" || !/^https?:\/\//i.test(picked.url)) return null;
   const rule = rules.find((r) => r.id === picked.ruleId);
   const variant = rule && rule.variants.length > 1 ? rule.variants.find((v) => v.id === picked.variantId)?.l : rule?.n;
   return { url: picked.url, key: picked.key, variant: variant || picked.key };
@@ -124,7 +193,13 @@ export async function handleRedirect(request: Request, env: Env, ctx: ExecutionC
   const own = splitOwnParams(url.search);
   const slug = slugFromPath(url.pathname);
 
+  // A near miss is sent to the link's own address, where everything (password, limits, routing, statistics) happens as usual.
+  const canRecover = request.method === "GET" || request.method === "HEAD";
+  const recovered = (canonical: string) => redirectTo(`${url.origin}/${encodeURIComponent(canonical)}${url.search}`);
+
   if (slug === null || !isRoutableSlug(slug)) {
+    const near = slug !== null && canRecover ? await recoverSlug(env, domain, slug) : null;
+    if (near) return recovered(near);
     ctx.waitUntil(logHit(request, env, url, { domain, slug: slug ?? url.pathname, kind: "miss", probe: true, sourceTag: own.sourceTag, qr: own.qr }));
     return notFoundResponse(env, domain, null);
   }
@@ -139,6 +214,11 @@ export async function handleRedirect(request: Request, env: Env, ctx: ExecutionC
   }
 
   if (request.method === "POST" && !link?.pw) return notAllowed();
+
+  if (!link && canRecover) {
+    const near = await recoverSlug(env, domain, slug);
+    if (near) return recovered(near);
+  }
 
   const expired = link !== null && link.e !== null && link.e * 1000 <= Date.now();
   if (link && link.a !== 1 && link.o && !expired) {
@@ -216,11 +296,26 @@ export async function handleRedirect(request: Request, env: Env, ctx: ExecutionC
 
   // A link-in-bio page: shown here instead of redirecting; its buttons are links of their own.
   if (link.bio) {
-    ctx.waitUntil(logHit(request, env, url, { domain, slug, kind: "hit", sourceTag: own.sourceTag, qr: own.qr }));
-    return bioResponse(env, request, link.bio, domain, slug);
+    let page: Response | null = null;
+    try {
+      page = bioResponse(env, request, link.bio, domain, slug, Boolean(link.pw || link.mc));
+    } catch (err) {
+      // A malformed page can't be drawn: on to the link's destination, like any other link.
+      console.error(JSON.stringify({ message: "bio page failed", domain, slug, error: String(err) }));
+    }
+    if (page) {
+      ctx.waitUntil(logHit(request, env, url, { domain, slug, kind: "hit", sourceTag: own.sourceTag, qr: own.qr }));
+      return page;
+    }
   }
 
-  const routed = link.ro?.length ? chooseRoute(request, link.ro) : null;
+  let routed: ReturnType<typeof chooseRoute> = null;
+  try {
+    routed = link.ro?.length ? chooseRoute(request, link.ro) : null;
+  } catch (err) {
+    // Malformed rules: the plain destination rather than an error.
+    console.error(JSON.stringify({ message: "routing failed", domain, slug, error: String(err) }));
+  }
   const target = routed?.url ?? link.u;
   let location = target;
   try {
@@ -376,7 +471,8 @@ async function clickWebhooks(request: Request, env: Env, url: URL, domain: strin
   }
 }
 
-function bioResponse(env: Env, request: Request, bio: BioPage, domain: string, slug: string): Response {
+function bioResponse(env: Env, request: Request, bio: BioPage, domain: string, slug: string, restricted: boolean): Response {
+  if (typeof bio !== "object" || bio === null || !Array.isArray(bio.blocks)) throw new Error("Malformed bio record");
   const html = renderBio(bio, {
     domain,
     linkHref: (l) => `${shortOrigin(env, request, l.domain)}/${encodeURIComponent(l.slug)}?s=bio`,
@@ -388,8 +484,9 @@ function bioResponse(env: Env, request: Request, bio: BioPage, domain: string, s
     headers: {
       ...PAGE_HEADERS,
       // Indexable, unlike error pages: a bio page is meant to be found. Cached briefly at the browser.
-      "Cache-Control": "public, max-age=60",
-      "X-Robots-Tag": "all",
+      // Behind a password or a click limit it is neither: every view has to pass the check again.
+      "Cache-Control": restricted ? "private, no-store" : "public, max-age=60",
+      "X-Robots-Tag": restricted ? "noindex" : "all",
     },
   });
 }

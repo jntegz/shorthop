@@ -272,6 +272,7 @@ function DeliveriesDialog({ hook, onClose }: { hook: WebhookDTO; onClose: () => 
     refetchInterval: 15_000,
   });
   const list = q.data?.deliveries ?? [];
+  const hidden = q.data?.hidden ?? 0;
   return (
     <Dialog
       open
@@ -284,7 +285,7 @@ function DeliveriesDialog({ hook, onClose }: { hook: WebhookDTO; onClose: () => 
         <RowsLoading rows={4} />
       ) : q.isError && !q.data ? (
         <ErrorState what="Deliveries" error={q.error} onRetry={() => void q.refetch()} retrying={q.isFetching} compact />
-      ) : list.length === 0 ? (
+      ) : list.length === 0 && !hidden ? (
         <Empty compact title="Nothing sent yet">
           <p>Send a test event, or change a link, to see deliveries here.</p>
         </Empty>
@@ -295,6 +296,11 @@ function DeliveriesDialog({ hook, onClose }: { hook: WebhookDTO; onClose: () => 
           ))}
         </ul>
       )}
+      {hidden ? (
+        <p className="mt-2 text-xs text-muted">
+          {hidden} more {hidden === 1 ? "delivery isn't" : "deliveries aren't"} shown: you don't have the permission to see what {hidden === 1 ? "it carries" : "they carry"}.
+        </p>
+      ) : null}
     </Dialog>
   );
 }

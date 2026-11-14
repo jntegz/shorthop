@@ -34,14 +34,22 @@ function CapCounter({ domain, slug, limit }: { domain: string; slug: string; lim
   });
   if (q.isError && !q.data) return <p className="text-xs text-muted">The visit count couldn’t load. <button type="button" className="text-accent underline" onClick={() => void q.refetch()}>Try again</button></p>;
   if (!q.data) return null;
-  const used = Math.min(q.data.count, limit);
+  // The count is statistics: without that permission it's null, and only the reset is offered.
+  const count = q.data.count;
+  const used = Math.min(count ?? 0, limit);
   return (
     <div className="space-y-1.5">
       <div className="flex items-center justify-between gap-2 text-xs">
         <span className="text-muted">
-          <span className="font-medium text-fg tabular">{num(q.data.count)}</span> of {num(limit)} used{q.data.count >= limit ? " · visitors now see the “limit reached” page" : ""}
+          {count === null ? (
+            <>Opens {num(limit)} times</>
+          ) : (
+            <>
+              <span className="font-medium text-fg tabular">{num(count)}</span> of {num(limit)} used{count >= limit ? " · visitors now see the “limit reached” page" : ""}
+            </>
+          )}
         </span>
-        <button type="button" className="inline-flex items-center gap-1 font-medium text-accent hover:underline disabled:opacity-50" onClick={() => setConfirming(true)} disabled={reset.isPending || q.data.count === 0}>
+        <button type="button" className="inline-flex items-center gap-1 font-medium text-accent hover:underline disabled:opacity-50" onClick={() => setConfirming(true)} disabled={reset.isPending || count === 0}>
           <RotateCcw className="size-3" /> Reset count
         </button>
       </div>
@@ -55,9 +63,11 @@ function CapCounter({ domain, slug, limit }: { domain: string; slug: string; lim
         loading={reset.isPending}
         onConfirm={() => reset.mutate()}
       />
-      <div className="h-1.5 overflow-hidden rounded-full bg-surface-2" aria-hidden>
-        <div className={cn("h-full rounded-full", used >= limit ? "bg-danger" : "bg-accent")} style={{ width: `${(used / limit) * 100}%` }} />
-      </div>
+      {count === null ? null : (
+        <div className="h-1.5 overflow-hidden rounded-full bg-surface-2" aria-hidden>
+          <div className={cn("h-full rounded-full", used >= limit ? "bg-danger" : "bg-accent")} style={{ width: `${(used / limit) * 100}%` }} />
+        </div>
+      )}
     </div>
   );
 }

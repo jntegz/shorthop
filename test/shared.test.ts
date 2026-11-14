@@ -4,7 +4,7 @@ import { DEFAULT_DEAD_LINK, normalizeDeadLink, renderDeadLink } from "../src/sha
 import { DEFAULT_NOT_FOUND, normalizeNotFound, renderNotFound } from "../src/shared/not-found";
 import { normalizeTags, notFoundSchema } from "../src/shared/schemas";
 import { generateSlug, isProbePath, isRoutableSlug, validateSlug } from "../src/shared/slug";
-import { buildLocation, normalizeTarget, renderUtm, splitOwnParams, validateUtmTemplate } from "../src/shared/target";
+import { buildLocation, lacksScheme, normalizeTarget, renderUtm, splitOwnParams, validateUtmTemplate } from "../src/shared/target";
 import { csvCell } from "../src/worker/hono";
 import { escapeHtml } from "../src/shared/html";
 import { sourceLabel } from "../src/shared/labels";
@@ -66,6 +66,29 @@ describe("targets", () => {
     expect(normalizeTarget("https://sh.example./x", { selfHosts: ["sh.example"] }).ok).toBe(false);
     expect(normalizeTarget("https://WWW.Sh.Example./x", { selfHosts: ["sh.example"] }).ok).toBe(false);
     expect(normalizeTarget("https://localhost./x").ok).toBe(false);
+  });
+
+  it("adds https:// to a destination typed without a scheme, and only then", () => {
+    expect(normalizeTarget("example.com/page")).toEqual({ ok: true, url: "https://example.com/page" });
+    expect(normalizeTarget(" www.example.com ")).toEqual({ ok: true, url: "https://www.example.com/" });
+    expect(normalizeTarget("example.com:8443/a?b=1#c")).toEqual({ ok: true, url: "https://example.com:8443/a?b=1#c" });
+    expect(normalizeTarget("příklad.cz")).toEqual({ ok: true, url: "https://xn--pklad-zsa96e.cz/" });
+    expect(lacksScheme("example.com/page")).toBe(true);
+    expect(lacksScheme("https://example.com/page")).toBe(false);
+    // Another scheme is never rewritten, with or without "//".
+    for (const t of ["http://example.com", "javascript:alert(1)", "mailto:me@example.com", "ftp://example.com/x", "ftp:example.com", "data:text/html,hi", "me@example.com", "localhost:3000", "example", "two words.com", "//example.com"]) {
+      expect(lacksScheme(t), t).toBe(false);
+      expect(normalizeTarget(t).ok, t).toBe(false);
+    }
+    expect(normalizeTarget("sh.example/x", { selfHosts: ["sh.example"] })).toEqual({ ok: false, error: "Destination can't point back at the shortener." });
+  });
+
+  it("names the field the way the form does", () => {
+    expect(normalizeTarget("")).toEqual({ ok: false, error: "Destination URL is required." });
+    expect(normalizeTarget("not a url")).toEqual({ ok: false, error: "Destination is not a valid URL." });
+    expect(normalizeTarget("http://example.com")).toEqual({ ok: false, error: "Destination must start with https://." });
+    expect(normalizeTarget("ftp://example.com", { allowHttp: true })).toEqual({ ok: false, error: "Destination must start with http:// or https://." });
+    expect(normalizeTarget("https://user:pw@example.com")).toEqual({ ok: false, error: "Destination must not contain a username or password." });
   });
 
   it("normalizes to ASCII", () => {

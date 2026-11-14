@@ -7,7 +7,7 @@ import { capCount, capReset } from "../click-cap";
 import { hashLinkPassword } from "../link-password";
 import { parseRouting, splitChanged, validateRouting, type RouteRule, type Routing, type RoutingError } from "../../shared/routing";
 import { pullLinks, VendorError } from "../import/vendors";
-import { anyFlagged, UNSAFE_FLAGGED, UNSAFE_NONE, UNSAFE_TRUSTED } from "../safety";
+import { destinationsOf, safetyOf, safetyOfEach, UNSAFE_FLAGGED, UNSAFE_NONE, UNSAFE_TRUSTED } from "../safety";
 import { parseBio, validateBio, type BioPage } from "../../shared/bio";
 import { bulkSchema, byTargetQuerySchema, pullSchema, createLinkSchema, exportQuerySchema, importSchema, linkParamSchema, normalizeTags, tagParamSchema, tagRenameSchema, versionParamSchema, listQuerySchema, resyncQuerySchema, updateLinkSchema } from "../../shared/schemas";
 import { isCheckProblem, isChecked, MONITOR_DEFAULT, MONITOR_NEVER, MONITOR_ON, type CheckStatus } from "../../shared/link-check";
@@ -31,8 +31,12 @@ function isUniqueViolation(err: unknown): boolean {
 
 /** A link as the API returns it, with the short URL of its own domain. */
 function dto(c: Context<AppEnv>, row: LinkRow): LinkDTO {
-  return toDTO(row, shortOrigin(c.env, c.req.raw, row.domain));
+  const link = toDTO(row, shortOrigin(c.env, c.req.raw, row.domain));
+  // Clicks counted before an import are statistics too.
+  return seesStats(c) ? link : { ...link, importedClicks: null };
 }
+
+const seesStats = (c: Context<AppEnv>) => can(c.get("actor"), "stats.view");
 
 const notConfigured = (domain: string) => `domain: "${domain}" is not one of your short domains (SHORT_DOMAINS).`;
 
@@ -45,14 +49,21 @@ function insertStmt(db: D1Database, r: LinkRow): D1PreparedStatement {
     .bind(r.domain, r.slug, r.target, r.active, r.expires_at, r.utm, r.utm_template, r.pass_query, r.title, r.tags, r.notes, r.source, r.imported_clicks, r.broken, r.replacement, r.off_redirect, r.monitor, r.routing, r.preview, r.qr, r.password_hash, r.max_clicks, r.unsafe ?? 0, r.unsafe_at ?? null, r.bio ?? null, r.created_at, r.updated_at);
 }
 
+/**
+ * New destinations are new to the security-DNS backlog too: failed lookups of
+ * the old ones don't put them last (src/worker/health.ts). The comparison reads
+ * the row's old target and routing: SQLite evaluates every SET before assigning.
+ */
 function updateStmt(db: D1Database, r: LinkRow): D1PreparedStatement {
   return db
     .prepare(
       `UPDATE links SET target = ?, active = ?, expires_at = ?, utm = ?, utm_template = ?, pass_query = ?,
        title = ?, tags = ?, notes = ?, broken = ?, replacement = ?, off_redirect = ?, monitor = ?, routing = ?, preview = ?, qr = ?, password_hash = ?, max_clicks = ?,
-       unsafe = COALESCE(?, unsafe), unsafe_at = COALESCE(?, unsafe_at), bio = ?, updated_at = ? WHERE domain = ? AND slug = ? RETURNING *`,
+       unsafe = COALESCE(?, unsafe), unsafe_at = CASE WHEN ? = 1 THEN NULL ELSE COALESCE(?, unsafe_at) END,
+       unsafe_tried_at = CASE WHEN target IS NOT ? OR routing IS NOT ? THEN NULL ELSE unsafe_tried_at END,
+       bio = ?, updated_at = ? WHERE domain = ? AND slug = ? RETURNING *`,
     )
-    .bind(r.target, r.active, r.expires_at, r.utm, r.utm_template, r.pass_query, r.title, r.tags, r.notes, r.broken, r.replacement, r.off_redirect, r.monitor, r.routing, r.preview, r.qr, r.password_hash, r.max_clicks, r.unsafe ?? null, r.unsafe_at ?? null, r.bio ?? null, r.updated_at, r.domain, r.slug);
+    .bind(r.target, r.active, r.expires_at, r.utm, r.utm_template, r.pass_query, r.title, r.tags, r.notes, r.broken, r.replacement, r.off_redirect, r.monitor, r.routing, r.preview, r.qr, r.password_hash, r.max_clicks, r.unsafe ?? null, r.unsafe_at === null ? 1 : 0, r.unsafe_at ?? null, r.target, r.routing, r.bio ?? null, r.updated_at, r.domain, r.slug);
 }
 
 /** Publishes a saved link to KV; false when that failed (it's saved in D1 either way: answer 502 with the link). */
@@ -208,10 +219,16 @@ async function bioFor(c: Context<AppEnv>, input: BioPage | null | undefined, pre
   return { ok: true, json: JSON.stringify(checked.bio) };
 }
 
-/** A link's destinations: its target and every enabled routing variant. */
-function destinationsOf(target: string, routing: string | null): string[] {
-  const rules = parseRouting(routing)?.rules.filter((r) => r.enabled) ?? [];
-  return [target, ...rules.flatMap((r) => r.variants.map((v) => v.url))];
+/**
+ * Looks a link's destinations up at the security DNS (the target and every
+ * enabled routing variant) and sets its flag. A lookup that failed, or a host
+ * past the request's lookups, is no answer: unsafe_at stays empty and the
+ * cron's backlog looks it up (src/worker/health.ts).
+ */
+async function checkSafety(env: Env, row: Pick<LinkRow, "target" | "routing" | "unsafe" | "unsafe_at">): Promise<void> {
+  const safety = await safetyOf(env, destinationsOf(row.target, row.routing), planLimits(env).inlineLookups);
+  row.unsafe = safety === "flagged" ? UNSAFE_FLAGGED : UNSAFE_NONE;
+  row.unsafe_at = safety === "unknown" ? null : nowSec();
 }
 
 /** stat_shares rows that still work (not revoked, not expired), for the links list. */
@@ -317,7 +334,8 @@ export const linksApi = new Hono<AppEnv>()
         .bind(...params)
         .all<LinkRow>(),
       counts,
-      c.env.DB.prepare("SELECT target, status, problem, http_status, checked_at FROM target_checks").all<{
+      // A refused destination a person confirmed counts as working, as on Link health (src/worker/link-check.ts).
+      c.env.DB.prepare("SELECT target, CASE WHEN status = 'blocked' AND confirmed_at IS NOT NULL THEN 'ok' ELSE status END AS status, problem, http_status, checked_at FROM target_checks").all<{
         target: string;
         status: CheckStatus;
         problem: string | null;
@@ -474,11 +492,12 @@ export const linksApi = new Hono<AppEnv>()
 
     const now = nowSec();
     // Malware or phishing, per Cloudflare's security DNS: saved, but visitors are warned first.
-    const flagged = await anyFlagged(c.env, destinationsOf(target.url, routing.json));
+    const checked = { target: target.url, routing: routing.json } as Pick<LinkRow, "target" | "routing" | "unsafe" | "unsafe_at">;
+    await checkSafety(c.env, checked);
     const base: Omit<LinkRow, "slug"> = {
       domain,
-      unsafe: flagged ? UNSAFE_FLAGGED : UNSAFE_NONE,
-      unsafe_at: now,
+      unsafe: checked.unsafe,
+      unsafe_at: checked.unsafe_at,
       bio: bio.json,
       target: target.url,
       active: body.active === false ? 0 : 1,
@@ -619,10 +638,7 @@ export const linksApi = new Hono<AppEnv>()
 
     // New destinations are looked up again; trusting a flagged one is the owner's call.
     const destinationsChanged = next.target !== row.target || next.routing !== row.routing;
-    if (destinationsChanged) {
-      next.unsafe = (await anyFlagged(c.env, destinationsOf(next.target, next.routing))) ? UNSAFE_FLAGGED : UNSAFE_NONE;
-      next.unsafe_at = nowSec();
-    }
+    if (destinationsChanged) await checkSafety(c.env, next);
     if (body.trustDestination !== undefined && (next.unsafe ?? 0) !== UNSAFE_NONE) next.unsafe = body.trustDestination ? UNSAFE_TRUSTED : UNSAFE_FLAGGED;
     const unsafeChanged = (next.unsafe ?? 0) !== (row.unsafe ?? 0);
 
@@ -676,7 +692,9 @@ export const linksApi = new Hono<AppEnv>()
 
   .get("/links/:domain/:slug/history", validate("param", linkParamSchema), async (c) => {
     const { domain, slug } = c.req.valid("param");
-    return c.json({ versions: await listVersions(c.env.DB, domain, slug) });
+    const versions = await listVersions(c.env.DB, domain, slug);
+    // Each version remembers the clicks imported with the link: statistics, like the link's own.
+    return c.json({ versions: seesStats(c) ? versions : versions.map((v) => ({ ...v, snapshot: { ...v.snapshot, imported_clicks: null } })) });
   })
 
   /** Puts a link back the way it was in an earlier version. */
@@ -689,6 +707,8 @@ export const linksApi = new Hono<AppEnv>()
     const invalid = restoreProblem(c, next);
     if (invalid) return c.json({ error: invalid }, 400);
     if (sameSnapshot(snapshotOf(row), snapshotOf(next))) return c.json({ error: "The link already matches this version." }, 409);
+    // An older destination is looked up again, as a saved change would be: a flag or "trusted anyway" was about the current one.
+    if (next.target !== row.target || next.routing !== row.routing) await checkSafety(c.env, next);
     return saveEdit(c, next, versionStmt(c.env.DB, next, "restore", c.get("identity"), { at: next.updated_at, restoredFrom: id }), async (saved) => {
       await emit(c.env, "link.updated", { link: linkPayload(saved), changes: changedFields(row, saved), restored_version: id }, { ctx: c.executionCtx });
     });
@@ -699,7 +719,8 @@ export const linksApi = new Hono<AppEnv>()
     const { domain, slug } = c.req.valid("param");
     const row = await getLink(c.env.DB, domain, slug);
     if (!row) return c.json({ error: "Link not found" }, 404);
-    const cap: CapDTO = { limit: row.max_clicks, count: row.max_clicks ? await capCount(c.env, domain, slug) : 0 };
+    // The limit is a setting; how far the count has got is statistics.
+    const cap: CapDTO = { limit: row.max_clicks, count: !seesStats(c) ? null : row.max_clicks ? await capCount(c.env, domain, slug) : 0 };
     return c.json(cap);
   })
 
@@ -730,6 +751,8 @@ export const linksApi = new Hono<AppEnv>()
     const row = withSnapshot({ domain, slug, source: s.source, imported_clicks: s.imported_clicks, created_at: s.created_at } as LinkRow, s, now);
     const invalid = restoreProblem(c, row);
     if (invalid) return c.json({ error: invalid }, 400);
+    // Looked up as a new link would be: what was known when it was deleted may no longer hold.
+    await checkSafety(c.env, row);
     try {
       await c.env.DB.batch([insertStmt(c.env.DB, row), versionStmt(c.env.DB, row, "restore", c.get("identity"), { at: now, restoredFrom: gone.versionId })]);
     } catch (err) {
@@ -787,13 +810,15 @@ export const linksApi = new Hono<AppEnv>()
     const domainFor = (r: (typeof rows)[number]) => r.domain || fallbackDomain;
 
     const { results: existing } = await c.env.DB.prepare(
-      `SELECT json_extract(j.value, '$[0]') AS domain, json_extract(j.value, '$[1]') AS wanted, l.slug
+      `SELECT json_extract(j.value, '$[0]') AS domain, json_extract(j.value, '$[1]') AS wanted, l.slug, l.target, l.routing
        FROM json_each(?1) j
        JOIN links l ON l.domain = json_extract(j.value, '$[0]') AND l.slug = json_extract(j.value, '$[1]') COLLATE NOCASE`,
     )
       .bind(JSON.stringify(rows.map((r) => [domainFor(r), r.slug])))
-      .all<{ domain: string; wanted: string; slug: string }>();
-    const exact = new Set(existing.filter((e) => e.wanted === e.slug).map((e) => linkKey(e.domain, e.slug)));
+      .all<{ domain: string; wanted: string; slug: string; target: string; routing: string | null }>();
+    /** The links an overwrite would replace, as they are now. */
+    const before = new Map(existing.filter((e) => e.wanted === e.slug).map((e) => [linkKey(e.domain, e.slug), e]));
+    const exact = new Set(before.keys());
     const caseClash = new Map(existing.filter((e) => e.wanted !== e.slug).map((e) => [linkKey(e.domain, e.wanted), e.slug]));
 
     for (const r of rows) {
@@ -898,25 +923,45 @@ export const linksApi = new Hono<AppEnv>()
 
     if (!dryRun && valid.length > 0) {
       // Skip mode never overwrites, even a link created since the check above.
-      // Settings from a JSON export (?22 = 1) replace the existing link's; otherwise they're kept.
-      const fromConfig = (col: string) => `${col} = CASE WHEN ?22 = 1 THEN excluded.${col} ELSE links.${col} END`;
+      // Settings from a JSON export (?24 = 1) replace the existing link's; otherwise they're kept.
+      // New links and new destinations are looked up at the security DNS now, each host once across the
+      // batch, while the request has lookups left (the plan's inlineLookups). The rest, and lookups that
+      // failed, keep unsafe_at NULL: the cron's backlog takes those first (src/worker/health.ts).
+      const lookups = valid.map((r) => {
+        const key = linkKey(r.domain, r.slug);
+        const old = before.get(key);
+        // An overwrite without settings keeps the link's routing: those destinations stay in use.
+        const routing = old && !withConfig.has(key) ? old.routing : r.routing;
+        return { routing, urls: !old || old.target !== r.target || old.routing !== routing ? destinationsOf(r.target, routing) : null };
+      });
+      const { verdicts } = await safetyOfEach(c.env, lookups.flatMap((l) => (l.urls ? [l.urls] : [])), planLimits(c.env).inlineLookups);
+      let looked = 0;
+      const safety = lookups.map((l) => (l.urls ? verdicts[looked++] : undefined));
+      // A changed destination's old flag (or "trusted anyway") doesn't carry over. The answer looked up is used
+      // only while the link still has the routing it was looked up with (?25); otherwise the backlog decides.
+      const DESTINATIONS_CHANGED = "(links.target != excluded.target OR (?24 = 1 AND links.routing IS NOT excluded.routing))";
+      const LOOKED_UP = "(?24 = 1 OR links.routing IS ?25)";
+      const fromConfig = (col: string) => `${col} = CASE WHEN ?24 = 1 THEN excluded.${col} ELSE links.${col} END`;
       const onConflict =
         mode === "overwrite"
           ? `DO UPDATE SET target = excluded.target, title = COALESCE(excluded.title, links.title),
            imported_clicks = COALESCE(excluded.imported_clicks, links.imported_clicks), source = 'import',
            import_from = COALESCE(excluded.import_from, links.import_from),
+           unsafe = CASE WHEN NOT ${DESTINATIONS_CHANGED} THEN links.unsafe WHEN ${LOOKED_UP} THEN excluded.unsafe ELSE 0 END,
+           unsafe_at = CASE WHEN NOT ${DESTINATIONS_CHANGED} THEN links.unsafe_at WHEN ${LOOKED_UP} THEN excluded.unsafe_at ELSE NULL END,
+           unsafe_tried_at = CASE WHEN ${DESTINATIONS_CHANGED} THEN NULL ELSE links.unsafe_tried_at END,
            ${["active", "expires_at", "utm", "utm_template", "pass_query", "notes", "routing", "preview", "qr", "max_clicks"].map(fromConfig).join(", ")},
            updated_at = excluded.updated_at`
           : "DO NOTHING";
       const stmt = c.env.DB.prepare(
         `INSERT INTO links (domain, slug, target, active, expires_at, utm, utm_template, pass_query, title, tags, notes, source, imported_clicks, monitor,
-           routing, preview, qr, max_clicks, import_from, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
+           routing, preview, qr, max_clicks, import_from, created_at, updated_at, unsafe, unsafe_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)
          ON CONFLICT (domain, slug) ${onConflict}`,
       );
       const keysJson = JSON.stringify(valid.map((r) => [r.domain, r.slug]));
       await c.env.DB.batch([
-        ...valid.map((r) =>
+        ...valid.map((r, i) =>
           stmt.bind(
             r.domain,
             r.slug,
@@ -939,8 +984,10 @@ export const linksApi = new Hono<AppEnv>()
             r.import_from ?? null,
             r.created_at,
             r.updated_at,
-            // ?22 only appears in the overwrite statement.
-            ...(mode === "overwrite" ? [withConfig.has(linkKey(r.domain, r.slug)) ? 1 : 0] : []),
+            safety[i] === "flagged" ? UNSAFE_FLAGGED : UNSAFE_NONE,
+            safety[i] === "flagged" || safety[i] === "clean" ? now : null,
+            // ?24 and ?25 only appear in the overwrite statement.
+            ...(mode === "overwrite" ? [withConfig.has(linkKey(r.domain, r.slug)) ? 1 : 0, lookups[i]?.routing ?? null] : []),
           ),
         ),
         // A version per imported link, with what D1 now holds (an overwrite keeps the link's other settings).
@@ -1065,7 +1112,7 @@ export const linksApi = new Hono<AppEnv>()
         r.tags,
         r.notes,
         r.source,
-        r.imported_clicks,
+        seesStats(c) ? r.imported_clicks : null,
         iso(r.created_at),
         iso(r.updated_at),
         r.broken,
@@ -1091,12 +1138,14 @@ export const linksApi = new Hono<AppEnv>()
    * here, plus any imported before). Passwords are never exported.
    */
   .get("/export/links.json", async (c) => {
+    const stats = seesStats(c);
     const [{ results }, counted] = await Promise.all([
       c.env.DB.prepare("SELECT * FROM links ORDER BY created_at").all<LinkRow>(),
-      can(c.get("actor"), "stats.view") ? clicksByLink(c.env, "all") : Promise.resolve(new Map<string, number>()),
+      stats ? clicksByLink(c.env, "all") : Promise.resolve(new Map<string, number>()),
     ]);
     const links = results.map((r) => {
-      const clicks = (r.imported_clicks ?? 0) + (counted.get(linkKey(r.domain, r.slug)) ?? 0);
+      // Without stats.view the export carries no counts at all, imported ones included.
+      const clicks = stats ? (r.imported_clicks ?? 0) + (counted.get(linkKey(r.domain, r.slug)) ?? 0) : 0;
       return {
         domain: r.domain,
         slug: r.slug,

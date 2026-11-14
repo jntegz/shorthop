@@ -180,7 +180,7 @@ describe("permissions of the data in events", () => {
     expect(put.status).toBe(403);
   });
 
-  it("hides payloads someone may not see in the delivery log", async () => {
+  it("leaves deliveries someone may not see out of the delivery log", async () => {
     await addUser(SETTINGS_ONLY, "user", ["settings.manage"]);
     const { body } = await addHook(["site.payment", "link.created"]);
     await env.DB.batch([
@@ -193,7 +193,7 @@ describe("permissions of the data in events", () => {
     const res = await adminCall(SETTINGS_ONLY, `/webhooks/${body.id}/deliveries`);
     const list = ((await res.json()) as { deliveries: WebhookDeliveryDTO[] }).deliveries;
     expect(JSON.stringify(list)).not.toContain("buyer@example.com");
-    expect(list.find((d) => d.id === "dlv_pay")!.payload).toMatch(/^Hidden: needs the See revenue permission/);
+    expect(list.find((d) => d.id === "dlv_pay")).toBeUndefined();
     expect(list.find((d) => d.id === "dlv_link")!.payload).toBe('{"slug":"a"}');
     // The owner still sees everything.
     expect(JSON.stringify(await deliveries(body.id))).toContain("buyer@example.com");

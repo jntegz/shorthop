@@ -44,12 +44,13 @@ import {
   type CheckScope,
   type CheckStatus,
 } from "../shared/link-check";
+import { CHECK_RUNS_PER_DAY } from "../shared/schedule";
 import type { CheckSettings, LinkChecksDTO, TargetCheckDTO } from "../shared/types";
 import { getSetting, nowSec, setSettingStmt } from "./db";
 import { domainsOf } from "./domains";
 import { MailerError, mailerStatus, sendMail, withMailSettings } from "./mailer";
 import { planLimits } from "./plan";
-import { emit } from "./webhooks";
+import { emitAll } from "./webhooks";
 
 /** Concurrent checks in a run. */
 const POOL = 4;
@@ -57,8 +58,12 @@ const POOL = 4;
 const MIN_BUDGET_PER_CHECK = 3;
 /** Spreads rechecks so they don't all fall due in the same run. */
 const JITTER_SEC = 30 * 60;
-/** Must match the cron in wrangler.jsonc. */
-export const RUNS_PER_DAY = 48;
+/**
+ * Runs a day that check destinations: the half-hourly cron in wrangler.jsonc
+ * (48 slots), without the ones that do other work (src/shared/schedule.ts).
+ * Sunday's backup takes a few more, once a week.
+ */
+export const RUNS_PER_DAY = CHECK_RUNS_PER_DAY;
 
 /** Sent with every check. Browser-like, so fewer sites refuse it, and named, so site owners can tell what it is. */
 export const CHECK_USER_AGENT =
@@ -219,6 +224,8 @@ interface CheckRow {
   since: number;
   next_at: number;
   notified: number;
+  /** When a person said a refused destination works; only read from SELECT * rows. */
+  confirmed_at?: number | null;
 }
 
 const toRecord = (r: CheckRow): CheckRecord => ({ status: r.status, fails: r.fails, since: r.since, lastOkAt: r.last_ok_at, notified: r.notified === 1 });
@@ -296,7 +303,8 @@ async function checkAndStore(
      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
      ON CONFLICT (target) DO UPDATE SET status = excluded.status, http_status = excluded.http_status, problem = excluded.problem,
        final_url = excluded.final_url, hops = excluded.hops, ms = excluded.ms, fails = excluded.fails, checked_at = excluded.checked_at,
-       last_ok_at = excluded.last_ok_at, since = excluded.since, next_at = excluded.next_at, notified = excluded.notified`,
+       last_ok_at = excluded.last_ok_at, since = excluded.since, next_at = excluded.next_at, notified = excluded.notified,
+       confirmed_at = CASE WHEN excluded.status = 'blocked' THEN target_checks.confirmed_at ELSE NULL END`,
   );
   const writes = results.map(({ target, prev, outcome }) => {
     const next = nextRecord(prev ? toRecord(prev) : null, outcome, now, okInterval);
@@ -330,24 +338,34 @@ async function checkAndStore(
  * Sent by the next cron run.
  */
 async function emitHealthChanges(env: Env, results: { target: string; prev: CheckRow | null; outcome: CheckOutcome }[], now: number): Promise<void> {
-  for (const { target, prev, outcome } of results) {
+  const changes = results.flatMap(({ target, prev, outcome }) => {
     const next = nextRecord(prev ? toRecord(prev) : null, outcome, now);
     const wentDown = next.status === "down" && prev?.status !== "down";
     const cameBack = prev?.status === "down" && next.status === "ok";
-    if (!wentDown && !cameBack) continue;
-    const { results: links } = await env.DB.prepare("SELECT DISTINCT domain, slug, title FROM link_destinations WHERE url = ? ORDER BY domain, slug")
-      .bind(target)
-      .all<{ domain: string; slug: string; title: string | null }>();
-    await emit(env, "link.health_changed", {
-      destination: target,
-      state: wentDown ? "down" : "working",
-      previous_state: prev?.status ?? "unchecked",
-      problem: outcome.problem,
-      http_status: outcome.httpStatus,
-      failing_since: wentDown ? new Date(next.since * 1000).toISOString() : null,
-      links: links.map((l) => ({ ...l, short_url: `https://${l.domain}/${encodeURIComponent(l.slug)}` })),
-    });
-  }
+    return wentDown || cameBack ? [{ target, prev, outcome, next, wentDown }] : [];
+  });
+  if (!changes.length) return;
+  // One query for every changed destination's links and one batch for the events, however many changed.
+  const { results: links } = await env.DB.prepare(
+    "SELECT DISTINCT url, domain, slug, title FROM link_destinations WHERE url IN (SELECT value FROM json_each(?1)) ORDER BY domain, slug",
+  )
+    .bind(JSON.stringify(changes.map((ch) => ch.target)))
+    .all<{ url: string; domain: string; slug: string; title: string | null }>();
+  await emitAll(
+    env,
+    changes.map(({ target, prev, outcome, next, wentDown }) => ({
+      type: "link.health_changed" as const,
+      data: {
+        destination: target,
+        state: wentDown ? "down" : "working",
+        previous_state: prev?.status ?? "unchecked",
+        problem: outcome.problem,
+        http_status: outcome.httpStatus,
+        failing_since: wentDown ? new Date(next.since * 1000).toISOString() : null,
+        links: links.filter((l) => l.url === target).map(({ domain, slug, title }) => ({ domain, slug, title, short_url: `https://${domain}/${encodeURIComponent(slug)}` })),
+      },
+    })),
+  );
 }
 
 /** The scheduled run: due targets, the email for changes, and cleanup of rows no link uses. */
@@ -467,10 +485,21 @@ function renderCheckEmail(env: Env, down: CheckRow[], back: string[], links: Lin
   return { subject, text, html };
 }
 
+/** A person says a destination that refuses checks works (or takes that back). False when it isn't one. */
+export async function confirmTarget(env: Env, target: string, confirmed: boolean): Promise<boolean> {
+  const res = await env.DB.prepare("UPDATE target_checks SET confirmed_at = ?1 WHERE target = ?2 AND status = 'blocked'")
+    .bind(confirmed ? nowSec() : null, target)
+    .run();
+  return res.meta.changes > 0;
+}
+
 function toDTO(target: string, row: CheckRow | undefined, links: TargetCheckDTO["links"]): TargetCheckDTO {
+  const confirmedAt = row?.status === "blocked" ? (row.confirmed_at ?? null) : null;
   return {
     target,
-    state: row?.status ?? "unchecked",
+    // A refused destination a person confirmed counts as working until a check says otherwise.
+    state: confirmedAt ? "ok" : (row?.status ?? "unchecked"),
+    confirmedAt,
     httpStatus: row?.http_status ?? null,
     problem: row && isCheckProblem(row.problem) ? row.problem : null,
     finalUrl: row?.final_url ?? null,

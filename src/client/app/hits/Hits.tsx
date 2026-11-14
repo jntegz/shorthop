@@ -10,6 +10,7 @@ import { IMPORT_SLUG_RE } from "../../../shared/slug";
 import { api, call, keys } from "../../api";
 import { countryName, sourceLabel, when } from "../../lib/format";
 import { linkPath, useDomains, useLinkLabel } from "../../lib/links";
+import { useCan, useMe } from "../../lib/me";
 import { Button, Empty, ErrorState, Segmented, Select, Skeleton, Table, TD, TH, TextButton } from "../ui";
 import { liveInterval, StatsFreshness } from "./freshness";
 // The page opens on the map, so the globe (cobe, about 6 kB) comes with it rather than after it.
@@ -76,7 +77,13 @@ function HitList() {
   const label = useLinkLabel();
   const { domains, multiple } = useDomains();
   const get = (k: string) => params.get(k) ?? "";
-  const event = get("event") as "" | "click" | "bot" | "miss";
+  // Missed visits belong to Link health: without it they're neither offered nor asked for (an old address may still say so).
+  // Until /me has loaded, an address asking for misses waits for it instead of showing every hit first.
+  const meLoaded = useMe().data !== undefined;
+  const seesMisses = useCan()("health.manage");
+  const asked = get("event") as "" | "click" | "bot" | "miss";
+  const waitForMe = asked === "miss" && !meLoaded;
+  const event = asked === "miss" && meLoaded && !seesMisses ? "" : asked;
   const device = get("device") as "" | "desktop" | "mobile" | "tablet";
   const country = get("country");
   const domain = get("domain");
@@ -109,6 +116,7 @@ function HitList() {
     queryKey: [...keys.recent(domain, slug), query],
     queryFn: () => call(api.stats.recent.$get({ query })),
     refetchInterval: liveInterval({ range: "7d" }),
+    enabled: !waitForMe,
   });
 
   // The link box is applied on Enter, not per keystroke: each change is one Analytics Engine query.
@@ -174,7 +182,7 @@ function HitList() {
               { value: "", label: "Every type" },
               { value: "click", label: "Clicks" },
               { value: "bot", label: "Bots and previews" },
-              { value: "miss", label: "Misses" },
+              ...(seesMisses || waitForMe ? [{ value: "miss", label: "Misses" }] : []),
             ]}
           />
           <Select label="Country" hideLabel className="hits-pill" value={country} onChange={(e) => setParam("country", e.target.value)} options={[{ value: "", label: "Any country" }, ...countries.map((c) => ({ value: c, label: countryName(c) }))]} />

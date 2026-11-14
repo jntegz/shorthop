@@ -118,6 +118,13 @@ describe("configs from older versions", () => {
     assert.match(problems.join(" "), /\*\/30 \* \* \* \*.*LINK_PASSWORD_LIMITER.*CLICK_CAPS/);
   });
 
+  it("names the digest cron a config with the weekday as a number has", () => {
+    const old = renderConfig(REAL).replace(JSON.stringify(DIGEST_CRON), JSON.stringify("0 7 * * 1"));
+    const problems = outdatedProblems(old);
+    assert.equal(problems.length, 1, problems.join("\n"));
+    assert.match(problems[0]!, /0 7 \* \* MON/);
+  });
+
   it("names the hourly cron, rate limiters and dataset a config from before websites lacks", () => {
     const old = renderConfig(REAL)
       .replace(JSON.stringify(ROLLUP_CRON), JSON.stringify("15 1 * * *"))

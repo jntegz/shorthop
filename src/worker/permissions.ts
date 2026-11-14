@@ -96,6 +96,7 @@ export const RULES: Record<string, Rule> = {
   "GET /checks": need("health.manage"),
   "PUT /checks/settings": need("settings.manage"),
   "POST /checks/recheck": need("health.manage"),
+  "PUT /checks/confirmed": need("health.manage"),
   "GET /checks/links/:domain/:slug": signedIn,
   "POST /checks/links/:domain/:slug": need("health.manage"),
 

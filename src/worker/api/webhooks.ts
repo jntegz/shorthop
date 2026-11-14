@@ -1,7 +1,6 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { can, PERMISSION_INFO, type Actor, type Permission } from "../../shared/permissions";
-import type { WebhookDeliveryDTO } from "../../shared/types";
 import { EVENT_TYPES, MAX_WEBHOOKS, WEBHOOK_EVENTS, webhookUrlProblem } from "../../shared/webhooks";
 import { normalizeTags } from "../../shared/schemas";
 import { nowSec } from "../db";
@@ -13,6 +12,10 @@ const EVENT_PERMISSION: Partial<Record<string, Permission>> = {
   "site.payment": "revenue.view",
   "site.traffic_spike": "stats.view",
   "link.milestone": "stats.view",
+  // Every click's country, city, device and referrer.
+  "link.clicked": "stats.view",
+  // What the destination checks found, as on Link health.
+  "link.health_changed": "health.manage",
 };
 
 function forbiddenEvent(actor: Actor, events: string[]): string | null {
@@ -23,10 +26,30 @@ function forbiddenEvent(actor: Actor, events: string[]): string | null {
   return null;
 }
 
-/** A delivery's payload only for someone who may see what's in it. */
-function visible(actor: Actor, d: WebhookDeliveryDTO): WebhookDeliveryDTO {
-  const need = EVENT_PERMISSION[d.type];
-  return need && !can(actor, need) ? { ...d, payload: `Hidden: needs the ${PERMISSION_INFO[need].label} permission.` } : d;
+/** Whether someone may see, and send again, a delivery of this event. */
+const visible = (actor: Actor, type: string) => forbiddenEvent(actor, [type]) === null;
+
+/**
+ * The events a stored webhook carries: the ones it subscribes to, and those of
+ * deliveries still waiting to be sent, which go to its address as it is when
+ * they are (also after the event was taken off it). Undefined when there's no
+ * such webhook.
+ */
+async function eventsOf(db: D1Database, id: number): Promise<string[] | undefined> {
+  const [hook, waiting] = await db.batch<{ events?: string; event_type?: string }>([
+    db.prepare("SELECT events FROM webhooks WHERE id = ?").bind(id),
+    db.prepare("SELECT DISTINCT event_type FROM webhook_deliveries WHERE webhook_id = ? AND status = 'pending'").bind(id),
+  ]);
+  const row = hook?.results[0];
+  if (!row) return undefined;
+  let events: string[] = [];
+  try {
+    const v = JSON.parse(row.events ?? "") as unknown;
+    if (Array.isArray(v)) events = v.filter((e): e is string => typeof e === "string");
+  } catch {
+    // Not JSON: no events of its own.
+  }
+  return [...new Set([...events, ...(waiting?.results ?? []).flatMap((r) => (r.event_type ? [r.event_type] : []))])];
 }
 
 const idParam = z.object({ id: z.coerce.number().int().positive() });
@@ -80,7 +103,11 @@ export const webhooksApi = new Hono<AppEnv>()
     const b = c.req.valid("json");
     const problem = check(b);
     if (problem) return c.json({ error: problem }, 400);
-    const forbidden = forbiddenEvent(c.get("actor"), b.events);
+    // Changing where a webhook sends needs the permission for what it already carries (deliveries still
+    // waiting included), and for what it will.
+    const before = await eventsOf(c.env.DB, id);
+    if (!before) return c.json({ error: "Webhook not found" }, 404);
+    const forbidden = forbiddenEvent(c.get("actor"), [...before, ...b.events]);
     if (forbidden) return c.json({ error: forbidden }, 403);
     const { meta } = await c.env.DB.prepare("UPDATE webhooks SET url = ?, description = ?, events = ?, active = ?, filters = ?, updated_at = ? WHERE id = ?")
       .bind(new URL(b.url).href, b.description, JSON.stringify([...new Set(b.events)]), b.active ? 1 : 0, filtersOf(b), nowSec(), id)
@@ -92,6 +119,9 @@ export const webhooksApi = new Hono<AppEnv>()
   /** A new secret; the old one stops working at once. */
   .post("/:id/rotate", validate("param", idParam), async (c) => {
     const { id } = c.req.valid("param");
+    // Whoever holds the secret can sign as this webhook: the same permissions as changing it.
+    const forbidden = forbiddenEvent(c.get("actor"), (await eventsOf(c.env.DB, id)) ?? []);
+    if (forbidden) return c.json({ error: forbidden }, 403);
     const secret = newSecret();
     const { meta } = await c.env.DB.prepare("UPDATE webhooks SET secret = ?, updated_at = ? WHERE id = ?").bind(await encryptSecret(c.env, "webhook", secret), nowSec(), id).run();
     if (!meta.changes) return c.json({ error: "Webhook not found" }, 404);
@@ -114,17 +144,24 @@ export const webhooksApi = new Hono<AppEnv>()
     if (!ids.length) return c.json({ error: "Webhook not found, or paused" }, 404);
     await deliver(c.env, { ids });
     const delivery = (await listDeliveries(c.env, id)).find((d) => d.id === ids[0]);
-    return c.json({ delivery: visible(c.get("actor"), delivery!) });
+    return c.json({ delivery: delivery! });
   })
 
-  .get("/:id/deliveries", validate("param", idParam), async (c) =>
-    c.json({ deliveries: (await listDeliveries(c.env, c.req.valid("param").id)).map((d) => visible(c.get("actor"), d)) }),
-  )
+  /** Deliveries of events the caller may not see are left out, and only counted in `hidden`. */
+  .get("/:id/deliveries", validate("param", idParam), async (c) => {
+    const all = await listDeliveries(c.env, c.req.valid("param").id);
+    const deliveries = all.filter((d) => visible(c.get("actor"), d.type));
+    return c.json({ deliveries, hidden: all.length - deliveries.length });
+  })
 
   .post("/deliveries/:delivery/redeliver", validate("param", z.object({ delivery: z.string().regex(/^dlv_[A-Za-z0-9_-]{16}$/) })), async (c) => {
     const id = c.req.valid("param").delivery;
+    const row = await c.env.DB.prepare("SELECT webhook_id, event_type FROM webhook_deliveries WHERE id = ?").bind(id).first<{ webhook_id: number; event_type: string }>();
+    if (!row) return c.json({ error: "Delivery not found" }, 404);
+    // Sending it again posts the stored payload to the webhook's address as it is now.
+    const forbidden = forbiddenEvent(c.get("actor"), [row.event_type]);
+    if (forbidden) return c.json({ error: forbidden }, 403);
     if (!(await redeliver(c.env, id))) return c.json({ error: "Delivery not found" }, 404);
-    const row = await c.env.DB.prepare("SELECT webhook_id FROM webhook_deliveries WHERE id = ?").bind(id).first<{ webhook_id: number }>();
-    const delivery = (await listDeliveries(c.env, row!.webhook_id)).find((d) => d.id === id);
-    return c.json({ delivery: visible(c.get("actor"), delivery!) });
+    const delivery = (await listDeliveries(c.env, row.webhook_id)).find((d) => d.id === id);
+    return c.json({ delivery: delivery! });
   });

@@ -5,6 +5,7 @@
 import { derivePassword, hashPassword, parsePasswordHash, toBase64Url } from "../shared/password";
 import {
   LINK_ACCESS_HOURS,
+  LINK_PASSWORD_BRAKE_TOTAL,
   LINK_PASSWORD_ITERATIONS,
   LINK_PASSWORD_LOCK_MAX_SEC,
   LINK_PASSWORD_MAX,
@@ -87,7 +88,8 @@ async function networkKey(env: Env, lockKey: string, ip: string | null): Promise
  * A password form's POST for anything protected by a link-style password:
  * the per-network limiter keyed by `limitKey`, then the D1 locks: the
  * network's own, and the link's brake across all networks under `lockKey`
- * (which holds back only networks that have guessed wrong), then the check.
+ * (which holds back networks that have guessed wrong, and caps the others
+ * together at LINK_PASSWORD_BRAKE_TOTAL), then the check.
  */
 export async function checkPasswordForm(
   request: Request,
@@ -119,6 +121,7 @@ export async function checkPasswordForm(
   const netKey = await networkKey(env, lockKey, ip);
   const now = nowSec();
   let state;
+  let braked = false;
   try {
     state = await chargeAttempt(env.DB, netKey, now, LINK_PASSWORD_WINDOW_SEC);
     if (state.lockedUntil > now) return { ok: false, reason: "limited" };
@@ -126,10 +129,14 @@ export async function checkPasswordForm(
       await lock(env.DB, netKey, now, state.lockouts, LINK_PASSWORD_LOCK_MAX_SEC);
       return { ok: false, reason: "limited" };
     }
-    // The link's brake: on after many failures from anywhere, for networks that already guessed wrong.
-    if (state.fails > 1) {
-      const brake = await env.DB.prepare("SELECT locked_until FROM auth_failures WHERE key = ?").bind(lockKey).first<{ locked_until: number }>();
-      if (brake && brake.locked_until > now) return { ok: false, reason: "limited" };
+    // The link's brake: on after many failures from anywhere. Networks that already guessed wrong wait;
+    // the others share one budget, so many networks can't add up to many guesses.
+    const brake = await env.DB.prepare("SELECT locked_until FROM auth_failures WHERE key = ?").bind(lockKey).first<{ locked_until: number }>();
+    braked = !!brake && brake.locked_until > now;
+    if (braked) {
+      if (state.fails > 1) return { ok: false, reason: "limited" };
+      const all = await chargeAttempt(env.DB, `${lockKey}|braked`, now, LINK_PASSWORD_WINDOW_SEC);
+      if (all.fails > LINK_PASSWORD_BRAKE_TOTAL) return { ok: false, reason: "limited" };
     }
   } catch (err) {
     console.error(JSON.stringify({ message: "link password counter failed", key: lockKey, error: String(err) }));
@@ -146,6 +153,7 @@ export async function checkPasswordForm(
     }
     return { ok: false, reason: "wrong" };
   }
-  await env.DB.batch([clearFailuresStmt(env.DB, netKey), clearFailuresStmt(env.DB, lockKey)]).catch(() => undefined);
+  // A brake stays until it runs out: one correct password doesn't reopen the door to whoever is guessing.
+  await env.DB.batch([clearFailuresStmt(env.DB, netKey), ...(braked ? [] : [clearFailuresStmt(env.DB, lockKey)])]).catch(() => undefined);
   return { ok: true };
 }

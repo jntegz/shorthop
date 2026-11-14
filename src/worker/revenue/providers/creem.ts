@@ -5,14 +5,25 @@
 // checkout.completed is the first payment; subscription.paid is each payment
 // of a subscription (the first one too, which is recognised by its
 // transaction id and counted once); refund.created and dispute.created take
-// money back. Metadata from checkout (?metadata[sh_ref]=) is on the checkout
-// and repeated on the subscription.
+// money back.
+//
+// A refund (id, refund_amount, refund_currency, status) carries its
+// transaction, whose refunded_amount is the total refunded so far. That total
+// is stored once per transaction: the row the import of past payments writes
+// from the same field, so a refund seen by both is counted once, and a second
+// partial refund replaces the total. refunded_amount is optional: without it
+// (or with only the transaction's id) the transaction is read through the API
+// when there is a key; failing that the refund is stored on its own, and a
+// total read later takes its place while one read earlier does not hide it.
+//
+// Metadata from checkout (?metadata[sh_ref]=) is on the checkout and repeated
+// on the subscription.
 
 import type { NormalizedEvent, NormalizedSubscription, ProviderAdapter } from "../types";
 import { emptyEvent } from "../types";
 import { bytesToHex, hexToBytes, hmacKey, sign, verifyAny } from "../crypto";
 import { apiCheck, TEST_BODY, testContext } from "./check";
-import { compact, currency, email, num, obj, parseJson, sec, str, visitRef, type Obj } from "../read";
+import { compact, currency, email, idOf, num, obj, parseJson, sec, str, visitRef, type Obj } from "../read";
 
 const SUB_STATUS: Record<string, NormalizedSubscription["status"]> = {
   active: "active",
@@ -33,8 +44,8 @@ const PERIODS: Record<string, { unit: "month" | "year"; count: number }> = {
   "every-year": { unit: "year", count: 1 },
 };
 
-/** The amount of a transaction, when the webhook doesn't carry it. */
-async function transactionAmount(apiKey: string, transactionId: string, test: boolean): Promise<{ amount: number; currency: string } | null> {
+/** A transaction's amounts, when the webhook doesn't carry them. */
+async function transactionAmount(apiKey: string, transactionId: string, test: boolean): Promise<{ amount: number; currency: string; refunded: number | null } | null> {
   const base = test ? "https://test-api.creem.io" : "https://api.creem.io";
   try {
     const res = await fetch(`${base}/v1/transactions?transaction_id=${encodeURIComponent(transactionId)}`, {
@@ -46,14 +57,10 @@ async function transactionAmount(apiKey: string, transactionId: string, test: bo
     const t = obj(await res.json());
     const amount = num(t.amount_paid) ?? num(t.amount);
     const cur = currency(t.currency);
-    return amount !== null && cur ? { amount, currency: cur } : null;
+    return amount !== null && cur ? { amount, currency: cur, refunded: num(t.refunded_amount) } : null;
   } catch {
     return null;
   }
-}
-
-function idOf(v: unknown): string | null {
-  return typeof v === "string" ? str(v) : str(obj(v).id);
 }
 
 function productId(o: Obj): string | null {
@@ -138,17 +145,45 @@ export const creem: ProviderAdapter = {
       return out;
     }
 
-    if (type === "refund.created" || type === "dispute.created") {
-      const refund = type === "refund.created";
+    if (type === "refund.created") {
+      // A refund that didn't go through takes nothing back.
+      const status = str(o.status);
+      if (status === "failed" || status === "canceled") return out;
+      const txn = idOf(o.transaction);
+      const refundedAt = sec(o.created_at) ?? at;
+      const cur = currency(o.refund_currency) ?? currency(obj(o.transaction).currency) ?? "USD";
+      const parentRefs = compact([idOf(o.order), str(obj(o.transaction).order)]);
+      // The transaction's running total, as of this refund.
+      let total = num(obj(o.transaction).refunded_amount);
+      let totalAt = refundedAt;
+      if (!(total !== null && total > 0) && txn && ctx.apiKey) {
+        const readAt = Math.floor(Date.now() / 1000);
+        total = (await transactionAmount(ctx.apiKey, txn, testMode))?.refunded ?? null;
+        totalAt = readAt;
+      }
+      if (txn && total !== null && total > 0) {
+        out.payments.push({ kind: "refund", providerId: txn, occurredAt: refundedAt, amountMinor: total, currency: cur, billing: null, refs: [], parentRef: txn, parentRefs, productIds: [], testMode, cumulative: true, ofParent: true, totalAt });
+        return out;
+      }
+      // No total to be had: this refund alone, under its own id, next to the transaction's others.
+      const amount = num(o.refund_amount) ?? 0;
+      if (amount <= 0) return out;
+      out.payments.push({ kind: "refund", providerId: str(o.id) ?? "", occurredAt: refundedAt, amountMinor: amount, currency: cur, billing: null, refs: [], parentRef: txn ?? parentRefs[0] ?? null, parentRefs, productIds: [], testMode, partOfTotal: true });
+      return out;
+    }
+
+    if (type === "dispute.created") {
+      const txn = idOf(o.transaction);
       out.payments.push({
-        kind: refund ? "refund" : "dispute",
+        kind: "dispute",
         providerId: str(o.id) ?? "",
         occurredAt: sec(o.created_at) ?? at,
-        amountMinor: num(refund ? o.refund_amount : o.amount) ?? 0,
-        currency: currency(refund ? o.refund_currency : o.currency) ?? "USD",
+        amountMinor: num(o.amount) ?? 0,
+        currency: currency(o.currency) ?? "USD",
         billing: null,
         refs: [],
-        parentRef: idOf(o.transaction) ?? idOf(o.order) ?? null,
+        parentRef: txn ?? idOf(o.order) ?? null,
+        parentRefs: compact([idOf(o.order)]),
         productIds: [],
         testMode,
       });

@@ -9,12 +9,15 @@
 //             before, and no other payment claims it                      low
 //
 // Then the site's attribution model picks the visit that gets the credit
-// (src/worker/revenue/attribute.ts). Refunds and disputes follow their charge.
+// (src/worker/revenue/attribute.ts). A renewal, or any payment matched only
+// through its customer, gets the credit of the payment it follows: the visit
+// that won the customer, not whichever one happened before the renewal.
+// Refunds and disputes follow their charge.
 
 import type { SiteDTO } from "../../shared/sites";
 import { shortLinkSource } from "../web/source";
 import { nowSec } from "../db";
-import { creditedSession } from "./attribute";
+import { creditedSession, inheritedCredit } from "./attribute";
 
 const TIMING_WINDOW_SEC = 3 * 3600;
 // An email the browser reported (anyone can send one) only counts for a visit
@@ -165,7 +168,7 @@ export async function matchPayment(db: D1Database, site: SiteDTO, p: PaymentRow)
     await db.prepare("UPDATE payments SET unmatched_reason = ?2, last_match_at = ?3 WHERE id = ?1 AND session_id IS NULL").bind(p.id, m.reason, nowSec()).run();
     return false;
   }
-  const credited = await creditedSession(db, site, m.visitorId, m.sessionId, p.occurred_at);
+  const credited = (await inheritedCredit(db, p, m.by)) ?? (await creditedSession(db, site, m.visitorId, m.sessionId, p.occurred_at));
   await db.batch([
     db
       .prepare("UPDATE payments SET session_id = ?2, visitor_id = ?3, credited_session_id = ?4, matched_by = ?5, confidence = ?6, unmatched_reason = NULL WHERE id = ?1")

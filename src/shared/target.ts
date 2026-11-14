@@ -1,4 +1,4 @@
-// Target URL validation (write time) and Location building (redirect time).
+// Destination (target) URL validation (write time) and Location building (redirect time).
 // Building uses string operations only, so a stored target is returned
 // byte-for-byte when nothing needs to be appended.
 
@@ -14,28 +14,45 @@ export interface TargetOptions {
   selfHosts?: readonly string[];
 }
 
-/** Validates a target and returns its normalized, ASCII-only href. */
+/**
+ * A destination typed without a scheme: host[:port][/path], such as
+ * "example.com/page". The host needs a dot, and nothing before it may look
+ * like a scheme or credentials, so "mailto:me@example.com", "javascript:..."
+ * and "localhost:3000" are left as they are (and rejected below).
+ */
+const BARE_HOST_RE = /^[^\s/?#:@\\]+\.[^\s/?#:@\\.]{2,}\.?(?::\d{1,5})?(?:[/?#]\S*)?$/;
+
+/** True when https:// would be added to this input (the form says so before saving). */
+export function lacksScheme(input: string): boolean {
+  return BARE_HOST_RE.test(input.trim());
+}
+
+/**
+ * Validates a destination and returns its normalized, ASCII-only href.
+ * "example.com/page" is read as "https://example.com/page".
+ */
 export function normalizeTarget(input: string, opts: TargetOptions = {}): TargetResult {
-  const raw = input.trim();
-  if (!raw) return { ok: false, error: "Target URL is required." };
+  let raw = input.trim();
+  if (!raw) return { ok: false, error: "Destination URL is required." };
+  if (BARE_HOST_RE.test(raw)) raw = `https://${raw}`;
   let url: URL;
   try {
     url = new URL(raw);
   } catch {
-    return { ok: false, error: "Target is not a valid URL." };
+    return { ok: false, error: "Destination is not a valid URL." };
   }
   if (url.protocol !== "https:" && !(opts.allowHttp && url.protocol === "http:")) {
-    return { ok: false, error: opts.allowHttp ? "Target must be http(s)." : "Target must start with https://." };
+    return { ok: false, error: opts.allowHttp ? "Destination must start with http:// or https://." : "Destination must start with https://." };
   }
-  if (url.username || url.password) return { ok: false, error: "Target must not contain credentials." };
-  // "sh.example." is the same host as "sh.example": drop the root dot before comparing.
-  const host = url.hostname.toLowerCase().replace(/\.$/, "");
-  if (!host.includes(".")) return { ok: false, error: "Target host looks invalid." };
+  if (url.username || url.password) return { ok: false, error: "Destination must not contain a username or password." };
+  // "sh.example." is the same host as "sh.example": drop the root dots before comparing.
+  const host = url.hostname.toLowerCase().replace(/\.+$/, "");
+  if (!host.includes(".")) return { ok: false, error: "Destination host looks invalid." };
   if (opts.selfHosts?.some((h) => host === h || host === `www.${h}`)) {
-    return { ok: false, error: "Target can't point back at the shortener." };
+    return { ok: false, error: "Destination can't point back at the shortener." };
   }
   const href = url.href;
-  if (href.length > MAX_TARGET_LENGTH) return { ok: false, error: "Target is longer than 2048 characters." };
+  if (href.length > MAX_TARGET_LENGTH) return { ok: false, error: "Destination is longer than 2048 characters." };
   return { ok: true, url: href };
 }
 

@@ -6,6 +6,8 @@ import { APP_NAME } from "../shared/brand";
 import { rollupWebEvents } from "./web/rollup";
 import { addDays, daysBetween, isoWeek, utcDate } from "../shared/dates";
 import { isPlaceholderHost } from "../shared/domains";
+// The half-hourly slots that do other work, defined with the crons (src/worker/index.ts uses them).
+export { isCleanupRun, isRevenueRun, isWebRollupRun } from "../shared/schedule";
 import { escapeHtml } from "../shared/html";
 import type { HealthCheck, HealthStatus, JobRun, SystemHealthDTO } from "../shared/types";
 import { MIN_ADMIN_PASSWORD_LENGTH, parsePasswordHash, PLAN_ITERATIONS } from "../shared/password";
@@ -14,7 +16,7 @@ import { daySaltPruneStmt } from "./analytics";
 import { accessConfigured, adminAuthMode, legacyApiToken } from "./auth";
 import { getDefaultUtm, getSetting, nowSec, publish, setSettingStmt, type LinkRow } from "./db";
 import { autoClearDemo } from "./demo";
-import { anyFlagged } from "./safety";
+import { destinationsOf, hostsOf, safetyOfEach, UNSAFE_FLAGGED, UNSAFE_NONE, UNSAFE_TRUSTED } from "./safety";
 import { domainsOf } from "./domains";
 import { runDigest } from "./digest";
 import { pruneHistory } from "./history";
@@ -95,40 +97,98 @@ export async function scheduledLinkChecks(env: Env): Promise<void> {
   }
   // Destinations never looked up at the security DNS (imports, links from before it): a few each run.
   try {
-    await checkUnsafeBacklog(env, planLimits(env).unsafeLookups);
+    const { unsafeLookups, unsafePublishes } = planLimits(env);
+    await checkUnsafeBacklog(env, unsafeLookups, unsafePublishes);
   } catch (err) {
     console.error(JSON.stringify({ message: "unsafe-link backlog failed", error: String(err) }));
   }
 }
 
+/** Links one backlog run reads: far more than it has lookups for, since many links share a host. */
+const UNSAFE_LINKS_PER_RUN = 200;
+/** Hosts found clean for links still waiting on other hosts, so the next run doesn't spend its lookups on them again. */
+const CLEAN_HOSTS_KEY = "safety_clean_hosts";
+const CLEAN_HOST_SEC = 86400;
+const MAX_CLEAN_HOSTS = 500;
+
 /**
- * Looks up destinations no one has checked yet, at most `limit` a run, and
- * marks every link to a flagged one (republishing it, so visitors are warned).
- * Links the owner trusts stay trusted.
+ * Looks up the destinations of links no one has checked yet: the target and
+ * every enabled routing variant, each host once, at most `limit` lookups a run.
+ * A link is flagged when any of its destinations is (and republished, so
+ * visitors are warned; at most `publishes` a run, the rest wait for the next).
+ * Links the owner trusts stay trusted. A lookup that fails is no answer: the
+ * link stays unchecked (unsafe_at NULL) and is tried again, after the ones
+ * never tried, so a host whose lookup keeps failing can't hold up the rest. A
+ * link with more hosts than a run has lookups is finished over several runs.
+ * Counts are links.
  */
-export async function checkUnsafeBacklog(env: Env, limit: number): Promise<{ checked: number; flagged: number }> {
-  const { results } = await env.DB.prepare(`SELECT DISTINCT target FROM links WHERE unsafe_at IS NULL LIMIT ${Math.max(0, Math.floor(limit))}`).all<{ target: string }>();
-  if (!results.length) return { checked: 0, flagged: 0 };
-  const now = nowSec();
-  const flagged: string[] = [];
-  for (const { target } of results) if (await anyFlagged(env, [target])) flagged.push(target);
-  await env.DB.batch(
-    results.map(({ target }) =>
-      env.DB.prepare("UPDATE links SET unsafe = CASE WHEN unsafe = 2 THEN 2 ELSE ?1 END, unsafe_at = ?2 WHERE target = ?3 AND unsafe_at IS NULL").bind(flagged.includes(target) ? 1 : 0, now, target),
+export async function checkUnsafeBacklog(env: Env, limit: number, publishes = Number.POSITIVE_INFINITY): Promise<{ checked: number; flagged: number; unknown: number }> {
+  type Row = Pick<LinkRow, "domain" | "slug" | "target" | "routing" | "unsafe">;
+  const [linkRows, settingRows] = await env.DB.batch<Row | { value: string }>([
+    env.DB.prepare(
+      `SELECT domain, slug, target, routing, unsafe FROM links WHERE unsafe_at IS NULL
+       ORDER BY COALESCE(unsafe_tried_at, 0), target, domain, slug LIMIT ${UNSAFE_LINKS_PER_RUN}`,
     ),
-  );
+    env.DB.prepare("SELECT value FROM settings WHERE key = ?").bind(CLEAN_HOSTS_KEY),
+  ]);
+  const results = (linkRows?.results ?? []) as Row[];
+  if (!results.length) return { checked: 0, flagged: 0, unknown: 0 };
+  const now = nowSec();
+  let clean: Record<string, number> = {};
+  try {
+    clean = JSON.parse((settingRows?.results[0] as { value: string } | undefined)?.value ?? "{}") as Record<string, number>;
+  } catch {
+    // Not JSON: start again.
+  }
+  const fresh = Object.entries(clean).filter(([, at]) => now - at < CLEAN_HOST_SEC);
+
+  const destinations = results.map((r) => destinationsOf(r.target, r.routing));
+  const { verdicts, looked } = await safetyOfEach(env, destinations, Math.max(0, Math.floor(limit)), new Set(fresh.map(([h]) => h)));
+
+  const stmts: D1PreparedStatement[] = [];
+  const flagged: [string, string][] = [];
+  const waiting = new Set<string>();
+  const count = { checked: 0, flagged: 0, unknown: 0 };
+  let toPublish = 0;
+  results.forEach((r, i) => {
+    const verdict = verdicts[i];
+    if (verdict === "flagged" && r.unsafe !== UNSAFE_TRUSTED && ++toPublish > publishes) return;
+    if (verdict === "pending" || verdict === "unknown") for (const h of hostsOf(destinations[i] ?? [])) waiting.add(h);
+    if (verdict === "pending" || verdict === undefined) return;
+    if (verdict === "unknown") {
+      count.unknown++;
+      stmts.push(env.DB.prepare("UPDATE links SET unsafe_tried_at = ?1 WHERE domain = ?2 AND slug = ?3 AND unsafe_at IS NULL").bind(now, r.domain, r.slug));
+      return;
+    }
+    count.checked++;
+    if (verdict === "flagged") {
+      count.flagged++;
+      flagged.push([r.domain, r.slug]);
+    }
+    // Only while the link still has the destinations looked up.
+    stmts.push(
+      env.DB.prepare(
+        `UPDATE links SET unsafe = CASE WHEN unsafe = ${UNSAFE_TRUSTED} THEN ${UNSAFE_TRUSTED} ELSE ?1 END, unsafe_at = ?2, unsafe_tried_at = NULL
+         WHERE domain = ?3 AND slug = ?4 AND unsafe_at IS NULL AND target = ?5 AND routing IS ?6`,
+      ).bind(verdict === "flagged" ? UNSAFE_FLAGGED : UNSAFE_NONE, now, r.domain, r.slug, r.target, r.routing),
+    );
+  });
+  // Clean answers are kept only for links that are still waiting: a finished link needs none.
+  const kept = [...fresh, ...[...looked].filter(([, s]) => s === "clean").map(([h]) => [h, now] as [string, number])].filter(([h]) => waiting.has(h));
+  if (kept.length || Object.keys(clean).length) stmts.push(setSettingStmt(env.DB, CLEAN_HOSTS_KEY, JSON.stringify(Object.fromEntries(kept.slice(-MAX_CLEAN_HOSTS)))));
+  if (stmts.length) await env.DB.batch(stmts);
   if (flagged.length) {
-    const { results: links } = await env.DB.prepare("SELECT * FROM links WHERE unsafe = 1 AND target IN (SELECT value FROM json_each(?1))").bind(JSON.stringify(flagged)).all<LinkRow>();
+    const { results: links } = await env.DB.prepare(
+      `SELECT * FROM links WHERE unsafe = ${UNSAFE_FLAGGED} AND (domain, slug) IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?1))`,
+    )
+      .bind(JSON.stringify(flagged))
+      .all<LinkRow>();
     const defaultUtm = await getDefaultUtm(env.DB);
     await Promise.all(links.map((r) => publish(env, r, defaultUtm)));
   }
-  return { checked: results.length, flagged: flagged.length };
+  return count;
 }
 
-/** The half-hourly cron's 02:00 UTC slot runs the daily cleanup instead of destination checks. */
-export function isCleanupRun(now: Date): boolean {
-  return now.getUTCHours() === 2 && now.getUTCMinutes() < 30;
-}
 
 /**
  * The daily cleanup, in the half-hourly cron's 02:00 UTC slot, after the
@@ -518,10 +578,6 @@ export async function scheduledDaily(env: Env, now = new Date()): Promise<void> 
   }
 }
 
-/** The half-hourly cron's 02:30 UTC slot copies website totals to D1 instead of checking destinations. */
-export function isWebRollupRun(now: Date): boolean {
-  return now.getUTCHours() === 2 && now.getUTCMinutes() >= 30;
-}
 
 /**
  * Website page, goal and outbound totals from Analytics Engine to D1, in an
@@ -537,10 +593,6 @@ export async function scheduledWebRollup(env: Env, now = new Date()): Promise<vo
   }
 }
 
-/** The half-hourly cron's 03:00 UTC slot does the revenue work instead of destination checks. */
-export function isRevenueRun(now: Date): boolean {
-  return now.getUTCHours() === 3 && now.getUTCMinutes() < 30;
-}
 
 /**
  * Exchange rates for revenue, then another go at payments no visit was found

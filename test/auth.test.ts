@@ -325,6 +325,26 @@ describe("admin password", () => {
     expect(ok.status).toBe(200);
   });
 
+  it("lets the admin's MCP mount call the API as the signed-in person", async () => {
+    mockCerts();
+    const jwt = await token({});
+    const cookie = await sessionCookie(jwt);
+    const res = await call(
+      new Request(`${ORIGIN}/_admin/api/mcp`, {
+        method: "POST",
+        headers: { "Cf-Access-Jwt-Assertion": jwt, Cookie: cookie, Origin: ORIGIN, "Content-Type": "application/json", "CF-Connecting-IP": "203.0.113.20" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "create_link", arguments: { url: "https://example.com/from-admin", slug: "from-admin" } } }),
+      }),
+      undefined,
+      LOGIN_ENV,
+    );
+    expect(res.status).toBe(200);
+    const { result } = await res.json<{ result: { isError?: boolean; content: { text: string }[]; structuredContent?: { link?: { slug: string } } } }>();
+    // The inner API request carries the Access token along with the session, or it would be refused.
+    expect(result.isError, result.content[0]?.text).toBeUndefined();
+    expect(result.structuredContent?.link?.slug).toBe("from-admin");
+  });
+
   it("serves the login form with strict headers and bounces cross-site arrivals", async () => {
     mockCerts();
     const jwt = await token({});
@@ -569,6 +589,7 @@ describe("API token", () => {
         ["POST", "/links/sh.example/a/history/1/restore"],
         ["POST", "/deleted/sh.example/a/restore"],
         ["POST", "/checks/links/sh.example/a"],
+        ["PUT", "/checks/confirmed", { target: "https://example.com/a", confirmed: true }],
         ["POST", "/links/sh.example/a/cap/reset"],
         ["POST", "/utm-presets", { name: "x", template: "utm_source=x" }],
         ["PUT", "/qr/default", {}],

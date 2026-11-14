@@ -1,10 +1,10 @@
 import { Hono } from "hono";
-import { checkSettingsSchema, linkParamSchema } from "../../shared/schemas";
+import { checkConfirmSchema, checkSettingsSchema, linkParamSchema } from "../../shared/schemas";
 import type { CheckRunDTO, LinkChecksDTO } from "../../shared/types";
 import { getLink } from "../db";
 import { lastJobRun } from "../health";
 import { validate, type AppEnv } from "../hono";
-import { checkLinkNow, linkCheck, listChecks, recheckProblems, saveCheckSettings } from "../link-check";
+import { checkLinkNow, confirmTarget, linkCheck, listChecks, recheckProblems, saveCheckSettings } from "../link-check";
 
 export const checksApi = new Hono<AppEnv>()
   .get("/", async (c) => {
@@ -23,6 +23,13 @@ export const checksApi = new Hono<AppEnv>()
     const { checked, remaining } = await recheckProblems(c.env);
     const dto: CheckRunDTO = { checked, remaining };
     return c.json(dto);
+  })
+
+  /** A person opened a destination that refuses checks and it loads: it counts as working until a check says otherwise. */
+  .put("/confirmed", validate("json", checkConfirmSchema), async (c) => {
+    const { target, confirmed } = c.req.valid("json");
+    if (!(await confirmTarget(c.env, target, confirmed))) return c.json({ error: "Only a destination that refuses checks can be confirmed." }, 409);
+    return c.json({ ok: true });
   })
 
   .get("/links/:domain/:slug", validate("param", linkParamSchema), async (c) => {

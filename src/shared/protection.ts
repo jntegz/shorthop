@@ -17,11 +17,19 @@ export const LINK_PASSWORD_ITERATIONS = { free: 30_000, paid: 100_000 } as const
 export const LINK_PASSWORD_NETWORK_MAX_FAILS = 10;
 /**
  * Wrong passwords for one link from anywhere within the window before the
- * link's brake goes on. The brake holds back only networks that have already
- * guessed wrong, so many networks guessing in parallel get one try each, while
- * a visitor who knows the password is never locked out by someone else.
+ * link's brake goes on (a minute, doubling up to LINK_PASSWORD_LOCK_MAX_SEC).
+ * The brake holds back networks that have already guessed wrong; every other
+ * network gets one try, within LINK_PASSWORD_BRAKE_TOTAL for all of them.
  */
 export const LINK_PASSWORD_MAX_FAILS = 20;
+/**
+ * The tries all networks that hadn't guessed yet get together during the
+ * link's brakes in one window, so guesses spread over many networks (an IPv6
+ * /48 holds 65,536 of them) stay bounded. The price: once someone guessing has
+ * spent it, a visitor who knows the password also waits until the brake runs
+ * out. A cap that let the right password through would cap nothing.
+ */
+export const LINK_PASSWORD_BRAKE_TOTAL = 20;
 export const LINK_PASSWORD_WINDOW_SEC = 60 * 60;
 /** The lock doubles from a minute with each lockout in a row, up to this. */
 export const LINK_PASSWORD_LOCK_MAX_SEC = 15 * 60;

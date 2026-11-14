@@ -105,6 +105,8 @@ export interface CheckSettings {
 export interface TargetCheckDTO {
   target: string;
   state: CheckState;
+  /** When a person confirmed a destination that refuses checks (its state is then "ok"); null otherwise. */
+  confirmedAt: number | null;
   httpStatus: number | null;
   problem: CheckProblem | null;
   /** Where redirects ended, when not at the target itself. */
@@ -164,7 +166,8 @@ export interface VersionDTO {
 /** A capped link's counter (Link page → Protection). */
 export interface CapDTO {
   limit: number | null;
-  count: number;
+  /** Clicks counted so far; null for someone without stats.view. */
+  count: number | null;
 }
 
 export interface DeletedLinkDTO {
@@ -703,7 +706,7 @@ export type ShareRange = (typeof SHARE_RANGES)[number];
 /** A read-only statistics page for one link (Link page → Share). */
 export interface ShareDTO {
   id: string;
-  /** The page's address; null when it can't be decrypted (its encryption key changed). */
+  /** The page's address; null when it can't be decrypted (its encryption key changed), or for a report with revenue when the caller lacks revenue.view. */
   url: string | null;
   status: "active" | "expired" | "revoked";
   /** Unix seconds, or null until revoked. */

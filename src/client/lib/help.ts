@@ -27,7 +27,7 @@ export const LINK_HELP = {
   ),
   target: h(
     "Destination URL",
-    "Where visitors end up. It must start with https:// (links imported from another shortener may keep http://), can't contain a username or password, can't point back at one of your short domains, and can be up to 2,048 characters. Changes reach every Cloudflare location within about a minute.",
+    "Where visitors end up. It must start with https:// (links imported from another shortener may keep http://); an address typed without it, such as example.com/page, gets https:// added. It can't contain a username or password, can't point back at one of your short domains, and can be up to 2,048 characters. Changes reach every Cloudflare location within about a minute.",
     "https://example.com/guide",
   ),
   slug: h(
@@ -173,7 +173,7 @@ export const CHECKS_HELP = {
   ),
   states: h(
     "What each state means",
-    `Working: the last check loaded the page (HTTP 2xx, after any redirects). Problem, confirming: it failed once or twice; one bad check can be a short outage, so it's rechecked sooner. Not working: ${DOWN_AFTER_FAILS} failures in a row, usually over about 5 hours; you get one email. Can't check: the site answered but refused an automated visitor (HTTP 401, 403, 429, LinkedIn's 999, or a Cloudflare challenge). People can usually still open it; it's rechecked every ${duration(BLOCKED_INTERVAL)} and never alerts.`,
+    `Working: the last check loaded the page (HTTP 2xx, after any redirects). Problem, confirming: it failed once or twice; one bad check can be a short outage, so it's rechecked sooner. Not working: ${DOWN_AFTER_FAILS} failures in a row, usually over about 5 hours; you get one email. Can't check: the site answered but refused an automated visitor (HTTP 401, 403, 429, LinkedIn's 999, or a Cloudflare challenge). People can usually still open it; it's rechecked every ${duration(BLOCKED_INTERVAL)} and never alerts. Open it yourself and press “It works” to list it as working, confirmed by a person; that lasts until a check gets a real answer from the site.`,
   ),
   limits: h(
     "Limits that keep checks cheap and polite",

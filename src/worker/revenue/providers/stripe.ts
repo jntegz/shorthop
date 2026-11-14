@@ -6,12 +6,24 @@
 // payments come from invoice.paid; their checkout only passes the visit
 // reference on (as a claim on the subscription). Refunds arrive as a running
 // total per charge (charge.refunded), disputes as charge.dispute.*.
+//
+// From API version 2025-03-31 an invoice no longer names its PaymentIntent or
+// charge, and a charge no longer names its invoice: the two are joined by
+// InvoicePayment objects. A refund or dispute (which names only the charge
+// and its PaymentIntent) finds its invoice, in this order:
+//   1. ids the stored invoice has: its own fields (older API versions), its
+//      payments list when the payload includes one, and what
+//      invoice_payment.paid reported (before or after invoice.paid);
+//   2. with an API key, the PaymentIntent's invoice payments, asked of Stripe;
+//   3. a refund only: the customer's one payment of the charged amount within
+//      a day. With two alike it is left without a charge, not guessed.
+// The invoice learns the ids from 2 and 3.
 
 import type { Billing, NormalizedEvent, NormalizedSubscription, ProviderAdapter } from "../types";
 import { emptyEvent } from "../types";
 import { bytesToHex, hexToBytes, hmacKey, sign, TOLERANCE_SEC, verifyAny } from "../crypto";
 import { apiCheck, TEST_BODY, testContext } from "./check";
-import { arr, compact, currency, email, num, obj, parseJson, sec, str, visitRef, type Obj } from "../read";
+import { arr, compact, currency, email, idOf, num, obj, parseJson, sec, str, visitRef, type Obj } from "../read";
 
 const SUB_STATUS: Record<string, NormalizedSubscription["status"]> = {
   active: "active",
@@ -28,6 +40,24 @@ function invoiceSubscription(inv: Obj): string | null {
   return str(inv.subscription) ?? str(obj(obj(inv.parent).subscription_details).subscription) ?? str(obj(inv.subscription_details).subscription);
 }
 
+/** The PaymentIntents and charges that paid an invoice: its own fields (older API versions) and its payments list (newer ones, when included). */
+function invoicePaymentIds(inv: Obj): string[] {
+  const ids = [idOf(inv.payment_intent), idOf(inv.charge)];
+  for (const entry of arr(obj(inv.payments).data)) {
+    const payment = obj(obj(entry).payment);
+    ids.push(idOf(payment.payment_intent), idOf(payment.charge));
+  }
+  return compact(ids);
+}
+
+/** The invoices a PaymentIntent paid, by its InvoicePayments. Throws when Stripe can't be asked. */
+async function invoicesOfPaymentIntent(apiKey: string, paymentIntent: string): Promise<string[]> {
+  const url = `https://api.stripe.com/v1/invoice_payments?limit=10&payment[type]=payment_intent&payment[payment_intent]=${encodeURIComponent(paymentIntent)}`;
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${apiKey}` }, redirect: "manual", signal: AbortSignal.timeout(5000) });
+  if (!res.ok) throw new Error(`api.stripe.com answered ${res.status}: ${(await res.text()).slice(0, 160)}`);
+  return compact(arr(obj(await res.json()).data).map((entry) => idOf(obj(entry).invoice)));
+}
+
 function invoiceMetadata(inv: Obj): unknown[] {
   return [obj(obj(inv.parent).subscription_details).metadata, obj(inv.subscription_details).metadata, inv.metadata];
 }
@@ -42,6 +72,12 @@ export const stripe: ProviderAdapter = {
   },
 
   testApiKey: (key) => apiCheck("https://api.stripe.com/v1/checkout/sessions?limit=1", { Authorization: `Bearer ${key}` }),
+
+  async parentRefs(p, ctx) {
+    // Invoice payments can be listed by PaymentIntent only, not by charge.
+    const pi = [p.parentRef, ...(p.parentRefs ?? [])].find((r) => r?.startsWith("pi_"));
+    return ctx.apiKey && pi ? invoicesOfPaymentIntent(ctx.apiKey, pi) : [];
+  },
 
   async verify(headers, body, secret, now) {
     if (!secret) return "No signing secret";
@@ -111,7 +147,7 @@ export const stripe: ProviderAdapter = {
         customerId: str(o.customer),
         email: email(o.customer_email),
         subscriptionId: sub,
-        refs: compact([str(o.id), str(o.payment_intent), str(o.charge)]),
+        refs: compact([str(o.id), ...invoicePaymentIds(o)]),
         ref: visitRef(...invoiceMetadata(o)),
         productIds: compact(arr(obj(o.lines).data).map((l) => str(obj(obj(l).price).product) ?? str(obj(obj(obj(l).pricing).price_details).product))),
         testMode,
@@ -119,19 +155,34 @@ export const stripe: ProviderAdapter = {
       return out;
     }
 
+    if (type === "invoice_payment.paid") {
+      // The InvoicePayment that joins an invoice to what paid it. Its invoice may not be stored yet.
+      const invoice = idOf(o.invoice);
+      const payment = obj(o.payment);
+      const refs = compact([idOf(payment.payment_intent), idOf(payment.charge)]);
+      if (invoice && refs.length && (str(o.status) ?? "paid") === "paid") out.links.push({ chargeRef: invoice, refs });
+      return out;
+    }
+
     if (type === "charge.refunded") {
       const refunded = num(o.amount_refunded) ?? 0;
       if (refunded <= 0) return out;
+      const customer = idOf(o.customer);
+      const charged = num(o.amount);
+      const cur = currency(o.currency) ?? "USD";
       out.payments.push({
         kind: "refund",
         providerId: str(o.id) ?? "",
         occurredAt: at,
         amountMinor: refunded,
-        currency: currency(o.currency) ?? "USD",
+        currency: cur,
         billing: null,
-        customerId: str(o.customer),
+        customerId: customer,
         refs: [],
-        parentRef: str(o.payment_intent) ?? str(o.invoice) ?? str(o.id),
+        parentRef: idOf(o.payment_intent) ?? idOf(o.invoice) ?? str(o.id),
+        parentRefs: compact([idOf(o.invoice), str(o.id)]),
+        // An invoice stored without its PaymentIntent: the customer's payment of the charged amount at that time.
+        parentHint: customer && charged ? { customerId: customer, amountMinor: charged, currency: cur, at: sec(o.created) ?? at, lacking: ["pi_", "ch_", "py_"] } : null,
         productIds: [],
         testMode,
         cumulative: true,
@@ -150,7 +201,8 @@ export const stripe: ProviderAdapter = {
         currency: currency(o.currency) ?? "USD",
         billing: null,
         refs: [],
-        parentRef: str(o.payment_intent) ?? str(o.charge),
+        parentRef: idOf(o.payment_intent) ?? idOf(o.charge),
+        parentRefs: compact([idOf(o.charge)]),
         productIds: [],
         testMode,
       });

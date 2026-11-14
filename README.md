@@ -56,7 +56,7 @@ Earlier releases are in the [changelog](CHANGELOG.md).
 
 ### Links
 
-- **Fast redirects:** one KV read, then a `302`. Analytics is written after the response, so it never slows down or breaks a click.
+- **Fast redirects:** one KV read, then a `302`. Analytics is written after the response, so it never slows down or breaks a click. A near miss still arrives: a slug that differs from exactly one link only by case (`/talk26` for `/Talk26`), or carries punctuation picked up when pasted (`/guide.`, `/guide)`), is sent to the link instead of the not-found page.
 - **Several domains:** each short domain has its own slugs and stats. The admin can live on the primary domain or on a separate host.
 - **Admin at `/_admin`:** create, edit, disable, expire, tag and search links, with custom slugs and a live preview of the short link. Select links to enable, disable, tag or delete them together, and rename or merge tags.
 - **Bio pages:** a link can be a link-in-bio page instead of a redirect, with buttons to your own short links or any address, short texts, section titles, social icons, a share panel and your own colours.
@@ -66,7 +66,7 @@ Earlier releases are in the [changelog](CHANGELOG.md).
 - **QR studio:** colours with a contrast check, dot and corner shapes, a logo, frames with a caption, a live scan test, SVG or PNG up to 4096 px, print sheets, and a ZIP of every link's code. Scans count as their own source.
 - **Password-protected links and click limits:** visitors enter a password first, or a link stops after a set number of clicks, counted exactly by a Durable Object. Bots and previews don't count.
 - **Links that no longer work:** mark one as retired and pick a replacement. Visitors get a page with a button to it, or are sent on to your site after a few seconds. Unknown slugs get your own 404 page, in light and dark.
-- **Unsafe destinations:** a destination Cloudflare's security DNS flags as malware or phishing gets a warning page before the redirect. "I trust this destination" lifts it.
+- **Unsafe destinations:** a destination Cloudflare's security DNS flags as malware or phishing gets a warning page before the redirect. Every destination counts: the link's own and each one its routing rules send visitors to. "I trust this destination" lifts it.
 - **Link history:** every change is saved as a version with who made it, and any earlier version can be restored. Deleted links can be brought back for 90 days.
 - **Import and export:** import from Bitly, Rebrandly, Short.io or Dub by their API or their CSV export (old click counts are kept), or any CSV. Export links as CSV, or as JSON with every setting for another Shorthop.
 
@@ -110,7 +110,7 @@ Earlier releases are in the [changelog](CHANGELOG.md).
 
 ### Keeping links working
 
-- **Link health:** destination checks for the links you pick (**Check that the destination works**, off by default) or for all links, once you turn automatic checking on and choose how often. **Never check this link** keeps a link out either way. A destination that fails 3 times in a row sends one email and gets a Fix dialog. Sites that refuse automated checks show as "can't check" and never alert.
+- **Link health:** destination checks for the links you pick (**Check that the destination works**, off by default) or for all links, once you turn automatic checking on and choose how often. **Never check this link** keeps a link out either way. A destination that fails 3 times in a row sends one email and gets a Fix dialog. Sites that refuse automated checks show as "can't check" and never alert; open one yourself and press **It works** to list it as working.
 - **Missed visits:** a report of slugs people tried that don't exist, with scanners and bots kept apart, so you can create the link someone mistyped, send the path to an existing link, or ignore it for good (the ignored list exports and imports as CSV).
 - **System status:** setup checks for storage, analytics, email, domains and sign-in, each with the command that fixes it, the version you run, and an alert email when something breaks.
 - **Backups:** Settings → General → Backup downloads every table as one ZIP, without secrets; bind an R2 bucket for a copy every week ([how](docs/SETUP.md#backup)).
@@ -264,7 +264,9 @@ Without `wrangler.jsonc`, local development uses `wrangler.example.jsonc`. On lo
 ```sh
 curl -sI 'localhost:5173/guide?s=li'                               # 302 with UTM parameters
 curl -sI localhost:5173/nope                                       # the 404 page
-curl 'localhost:5173/cdn-cgi/handler/scheduled?cron=15+1+*+*+*'    # run the daily rollup
+curl 'localhost:5173/cdn-cgi/handler/scheduled?cron=15+1+*+*+*'    # run the daily rollup now (a local name: the hourly cron does it at 01:15 UTC)
+curl 'localhost:5173/cdn-cgi/handler/scheduled?cron=15+*+*+*+*'    # run the hourly cron: website alerts (the daily rollup when it is 01:xx UTC)
+curl 'localhost:5173/cdn-cgi/handler/scheduled?cron=0+7+*+*+MON'   # run the weekly digest
 curl 'localhost:5173/cdn-cgi/handler/scheduled?cron=*/30+*+*+*+*'  # run the destination checks (real requests)
 ```
 
@@ -421,7 +423,7 @@ If it lets you add a script to the page head, yes: HTML, Next.js, WordPress, Sho
 Yes. Settings → API, MCP & webhooks has the setup for Claude Code, Cursor and VS Code: they connect to `/api/mcp` with a personal API key and can do whatever that key is allowed to. For agents that use Agent Skills, `npx skills add jntegz/shorthop` installs Shorthop's.
 
 **What if Cloudflare flags one of my destinations?**
-New and changed destinations are checked at Cloudflare's security DNS. A flagged one shows visitors a warning page with a "Continue anyway" link instead of redirecting, and the link is marked in the admin. If you know the site is fine, choose **I trust this destination** in the link form. `SAFETY_DNS = "off"` turns the lookups off.
+New and changed destinations, including the ones routing rules send visitors to, are checked at Cloudflare's security DNS. Imports are checked as they arrive, as far as the request's share of lookups goes, and the rest in the next half-hourly runs. A flagged one shows visitors a warning page with a "Continue anyway" link instead of redirecting, and the link is marked in the admin. If you know the site is fine, choose **I trust this destination** in the link form. `SAFETY_DNS = "off"` turns the lookups off.
 
 **Will my Bitly QR codes keep working?**
 Codes on your own branded domain will. Import the links, point the domain to Shorthop, and the same addresses resolve. Codes that contain a `bit.ly` address keep pointing at Bitly.

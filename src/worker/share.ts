@@ -78,8 +78,9 @@ export function newShareSecret(): string {
   return randomToken(24);
 }
 
-export async function shareToDTO(env: Env, row: ShareRow, origin: string): Promise<ShareDTO> {
-  const secret = await decryptSecret(env, "share", row.secret_enc).catch(() => null);
+/** withUrl false: for someone who may know the share exists but not open it (a report with revenue, without revenue.view). */
+export async function shareToDTO(env: Env, row: ShareRow, origin: string, opts: { withUrl?: boolean } = {}): Promise<ShareDTO> {
+  const secret = opts.withUrl === false ? null : await decryptSecret(env, "share", row.secret_enc).catch(() => null);
   return {
     id: row.id,
     url: secret ? `${origin}${SHARE_PREFIX}${row.id}.${secret}` : null,

@@ -83,6 +83,13 @@ async function addHook(events: string[]) {
 /** Webhook deliveries waiting for the cron. */
 const makeDeliveriesDue = () => env.DB.prepare("UPDATE webhook_deliveries SET status = 'pending', next_at = 0").run();
 
+const DNS_HOST = "security.cloudflare-dns.com";
+/** The security DNS's answer: hosts named phish* are blocked. */
+const dnsAnswer = (url: string) => {
+  const name = new URL(url).searchParams.get("name") ?? "";
+  return Response.json({ Status: 0, Answer: [{ name, type: 1, data: name.startsWith("phish") ? "0.0.0.0" : "93.184.215.14" }] });
+};
+
 let fetchRoute: (url: string, init?: RequestInit) => Response;
 beforeEach(async () => {
   await resetData();
@@ -121,6 +128,19 @@ describe("Workers Free: at most 45 subrequests per invocation", () => {
     expect(await tooMany.json()).toMatchObject({ code: "too_many_rows" });
   });
 
+  it("imports a full batch with its share of security lookups, and no more", async () => {
+    await addHook(["link.created"]);
+    await addHook(["link.created", "link.updated"]);
+    fetchRoute = dnsAnswer;
+    const rows = Array.from({ length: 20 }, (_, i) => ({ slug: `dns${i}`, target: `https://host${i}.sub-import.example/` }));
+    const c = counting({ SAFETY_DNS: "" } as Partial<Env>);
+    const res = await call(`${API}/import`, json({ rows }), c.env);
+    expect(((await res.json()) as ImportResult).created).toBe(20);
+    expect(c.calls.filter((x) => x.includes(DNS_HOST))).toHaveLength(10);
+    expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM links WHERE unsafe_at IS NULL").first<{ n: number }>())?.n).toBe(10);
+    expect(c.count(), c.calls.join("\n")).toBeLessThanOrEqual(FREE_MAX);
+  });
+
   it("runs a full bulk action with two webhooks subscribed", async () => {
     await addHook(["link.updated", "link.deleted"]);
     await addHook(["link.updated"]);
@@ -147,11 +167,18 @@ describe("Workers Free: at most 45 subrequests per invocation", () => {
       await env.DB.prepare("UPDATE target_checks SET next_at = 0").run();
     }
     expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM target_checks WHERE status = 'down'").first<{ n: number }>())?.n).toBe(3);
-    fetchRoute = () => new Response(null, { status: 200 });
+    fetchRoute = (url) => (url.includes(DNS_HOST) ? dnsAnswer(url) : new Response(null, { status: 200 }));
     await makeDeliveriesDue();
+    // And links no one has looked up at the security DNS, every one flagged.
+    await env.DB.prepare(
+      `INSERT INTO links (domain, slug, target, monitor, created_at, updated_at)
+       SELECT 'sh.example', 'un' || value, 'https://phish' || value || '.sub-cron.example/', 0, 1, 1 FROM json_each('[0,1,2,3,4,5,6,7]')`,
+    ).run();
 
-    const c = counting(MAIL_ENV);
+    const c = counting({ ...MAIL_ENV, SAFETY_DNS: "" } as Partial<Env>);
     await cron(c.env, "*/30 * * * *", todayAt(10, 30));
+    expect(c.calls.filter((x) => x.includes(DNS_HOST))).toHaveLength(3);
+    expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM links WHERE unsafe = 1").first<{ n: number }>())?.n).toBe(3);
     expect(c.calls.some((x) => x.includes("api.resend.com")), c.calls.join("\n")).toBe(true);
     expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM target_checks WHERE status = 'down'").first<{ n: number }>())?.n).toBeLessThan(3);
     expect(c.count(), c.calls.join("\n")).toBeLessThanOrEqual(FREE_MAX);
@@ -249,7 +276,7 @@ describe("Workers Free: at most 45 subrequests per invocation", () => {
     const queries = mockAeSql([]);
     await env.DB.prepare("INSERT INTO settings (key, value) VALUES ('last_rolled', ?)").bind(addDays(utcDate(new Date()), -3)).run();
     const c = counting({ ...AE_ENV, ...MAIL_ENV });
-    await cron(c.env, "0 7 * * 1", todayAt(7, 0));
+    await cron(c.env, "0 7 * * MON", todayAt(7, 0));
     expect(c.calls.some((x) => x.includes("api.resend.com")), c.calls.join("\n")).toBe(true);
     // One rollup's worth of Analytics Engine queries, not two.
     expect(queries.length).toBeLessThanOrEqual(15);

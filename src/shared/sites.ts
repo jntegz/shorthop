@@ -66,9 +66,9 @@ export const PROVIDER_INFO: Record<Provider, ProviderInfo> = {
     label: "Stripe",
     checkout: "Payment Links get client_reference_id=sh_<ref> from the script, and from a short link that points straight at one. Checkout Sessions you create: client_reference_id: \"sh_\" + shorthop.ref().",
     where: "Developers → Webhooks → Add endpoint",
-    events: ["checkout.session.completed", "checkout.session.async_payment_succeeded", "invoice.paid", "charge.refunded", "charge.dispute.created", "charge.dispute.closed", "customer.subscription.created", "customer.subscription.updated", "customer.subscription.deleted"],
+    events: ["checkout.session.completed", "checkout.session.async_payment_succeeded", "invoice.paid", "invoice_payment.paid", "charge.refunded", "charge.dispute.created", "charge.dispute.closed", "customer.subscription.created", "customer.subscription.updated", "customer.subscription.deleted"],
     webhookSecret: { label: "Signing secret", hint: "Developers → Webhooks → your endpoint → Signing secret (Reveal).", prefix: "whsec_", suggestedName: "STRIPE_WEBHOOK_SECRET" },
-    apiKey: { label: "Restricted API key", hint: "Developers → API keys → Create restricted key: Read for Checkout Sessions, Invoices and Charges.", use: "Only needed to import past payments.", required: false, suggestedName: "STRIPE_API_KEY" },
+    apiKey: { label: "Restricted API key", hint: "Developers → API keys → Create restricted key: Read for Checkout Sessions, Invoices and Charges.", use: "Needed to import past payments. With it, a refund or dispute also finds its invoice when the invoice_payment.paid event was missed.", required: false, suggestedName: "STRIPE_API_KEY" },
     settings: [],
     importable: true,
     docs: "https://docs.stripe.com/webhooks",
@@ -310,6 +310,8 @@ export interface SiteOverviewDTO {
   online: number;
   /** Payments in the period not linked to any visit. */
   unmatched: number;
+  /** Payments in the period still without an amount in the site's currency (no exchange rate): they count as 0 in the totals. */
+  unconverted?: number;
   aeAvailable: boolean;
 }
 

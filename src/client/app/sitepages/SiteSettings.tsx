@@ -258,7 +258,7 @@ shorthop("consent", false); // back to cookieless; the stored id is removed`;
 
 const ID_MODE_NOTE: Record<IdMode, string> = {
   cookieless:
-    "Nothing is stored in the visitor's browser and no consent banner is needed. Visitors are counted per day, so a payment is linked to visits of the same day, or through the checkout reference. A short-link click on an earlier day isn't credited.",
+    "Nothing is stored in the visitor's browser and no consent banner is needed. Visitors are counted per day (UTC), so a payment is linked to visits of the same day, or through the checkout reference. A visit in progress at midnight UTC is continued for up to 30 minutes; otherwise days are not linked. A short-link click on an earlier day isn't credited.",
   consent:
     "Cookieless until the visitor accepts, in the script's built-in banner or yours calling shorthop(\"consent\", true); from then on a random ID in localStorage recognises the visitor across days. Visitors who decline stay cookieless.",
   persistent:

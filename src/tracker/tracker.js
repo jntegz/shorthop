@@ -271,6 +271,9 @@
   wrap("replaceState");
   w.addEventListener("popstate", function () { pageview(false); });
   if (hashMode) w.addEventListener("hashchange", function () { pageview(false); });
+  // Back/forward can bring a page back from the browser's cache without running this script again:
+  // that is a view too. A normal load also fires pageshow, with persisted false, and is already counted.
+  w.addEventListener("pageshow", function (e) { if (e.persisted) pageview(true); });
 
   // ---- Checkout links: carry the visit reference into the provider's metadata.
   function rootOf(host) { return host.replace(/^www\./, ""); }

@@ -149,6 +149,7 @@ export async function deleteSite(db: D1Database, id: string): Promise<boolean> {
     db.prepare("DELETE FROM web_visitors WHERE site_id = ?").bind(id),
     db.prepare("DELETE FROM payments WHERE site_id = ?").bind(id),
     db.prepare("DELETE FROM payment_claims WHERE site_id = ?").bind(id),
+    db.prepare("DELETE FROM payment_links WHERE site_id = ?").bind(id),
     db.prepare("DELETE FROM subscriptions WHERE site_id = ?").bind(id),
     db.prepare("DELETE FROM payment_events WHERE connection_id IN (SELECT id FROM payment_connections WHERE site_id = ?)").bind(id),
     db.prepare("DELETE FROM payment_connections WHERE site_id = ?").bind(id),

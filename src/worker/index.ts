@@ -1,12 +1,12 @@
 import { NOT_FOUND_IMAGE_PATH, NOT_FOUND_PREVIEW_PATH } from "../shared/not-found";
-import { CHECKS_CRON, DIGEST_CRON, ROLLUP_CRON } from "../shared/schedule";
+import { CHECKS_CRON, DAILY_RUN, DIGEST_CRON, LEGACY_DIGEST_CRON, ROLLUP_CRON } from "../shared/schedule";
 import { serveAdmin } from "./admin";
 import { app } from "./app";
 import { SERVED_BY_HEADER } from "./dns-check";
 import { resolveSite } from "./domains";
 import { runSiteAlerts } from "./web/alerts";
 import { isCleanupRun, isRevenueRun, isWebRollupRun, scheduledCleanup, scheduledDaily, scheduledDigest, scheduledLinkChecks, scheduledRevenue, scheduledWebRollup } from "./health";
-import { isBackupRun, scheduledBackup } from "./backup";
+import { backupPending, isBackupRun, scheduledBackup } from "./backup";
 import { planLimits } from "./plan";
 import { PREVIEW_IMAGE_PATH } from "../shared/preview";
 import { servePreviewImage } from "./preview";
@@ -82,7 +82,8 @@ export default {
   // One job per invocation, so each stays inside the plan's subrequest limit
   // (src/worker/plan.ts). The half-hourly cron's 02:00 UTC slot does the
   // daily cleanup, its 02:30 slot the website rollup and its 03:00 slot the
-  // revenue work, instead of that run's destination checks. The hourly cron
+  // revenue work, instead of that run's destination checks; on Sunday mornings
+  // its slots copy the weekly backup until that is complete. The hourly cron
   // does the daily run at 01:15 UTC and website alerts (spikes, daily
   // digests) the other hours.
   async scheduled(controller, env, ctx) {
@@ -90,15 +91,20 @@ export default {
     const now = new Date(controller.scheduledTime);
     const run = (what: string, work: Promise<unknown>) =>
       ctx.waitUntil(work.catch((err: unknown) => console.error(JSON.stringify({ message: `${what} failed`, error: String(err) }))));
-    if (controller.cron === DIGEST_CRON) run("digest run", scheduledDigest(env, now));
+    if (controller.cron === DIGEST_CRON || controller.cron === LEGACY_DIGEST_CRON) run("digest run", scheduledDigest(env, now));
     else if (controller.cron === CHECKS_CRON) {
       if (isCleanupRun(now)) run("cleanup run", scheduledCleanup(env, now));
       else if (isWebRollupRun(now)) run("website rollup run", scheduledWebRollup(env, now));
       else if (isRevenueRun(now)) run("revenue run", scheduledRevenue(env));
       // Sunday mornings copy the weekly backup to R2, when a bucket is bound (BACKUPS).
-      else if (isBackupRun(now) && (env as { BACKUPS?: unknown }).BACKUPS) run("backup run", scheduledBackup(env, now, planLimits(env).backupCalls));
+      // Once it is complete, the remaining slots check destinations as on any other day.
+      else if (isBackupRun(now) && (env as { BACKUPS?: unknown }).BACKUPS && (await backupPending(env, now))) run("backup run", scheduledBackup(env, now, planLimits(env).backupCalls));
       else run("link checks run", scheduledLinkChecks(env));
-    } else if (controller.cron === ROLLUP_CRON && now.getUTCHours() !== 1) run("site alerts run", runSiteAlerts(env, Math.floor(now.getTime() / 1000)));
-    else run("daily run", scheduledDaily(env, now));
+    } else if (controller.cron === ROLLUP_CRON) {
+      if (now.getUTCHours() === 1) run("daily run", scheduledDaily(env, now));
+      else run("site alerts run", runSiteAlerts(env, Math.floor(now.getTime() / 1000)));
+    } else if (controller.cron === DAILY_RUN) run("daily run", scheduledDaily(env, now));
+    // A cron in wrangler.jsonc that no job answers to: nothing runs under a guess.
+    else console.error(JSON.stringify({ message: "unknown cron, nothing run", cron: controller.cron }));
   },
 } satisfies ExportedHandler<Env>;

@@ -332,6 +332,12 @@ export const checkSettingsSchema = z.object({
   scope: z.enum(CHECK_SCOPES).optional(),
 });
 
+/** A person says a destination that refuses automated checks works (or takes that back). */
+export const checkConfirmSchema = z.object({
+  target: z.string().url(),
+  confirmed: z.boolean(),
+});
+
 export const utmPresetSchema = z.object({
   name: z.string().trim().min(1, "Name the preset").max(40),
   template: z.string().trim().min(1).max(512),

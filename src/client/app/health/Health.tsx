@@ -7,7 +7,7 @@
 // destination).
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BellOff, CornerDownRight, ExternalLink, Pencil, Power, RefreshCw, Settings2, Wrench, X } from "lucide-react";
+import { BellOff, Check, CornerDownRight, ExternalLink, Pencil, Power, RefreshCw, Settings2, Undo2, Wrench, X } from "lucide-react";
 import { useDeferredValue, useMemo, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { toast } from "sonner";
@@ -48,7 +48,7 @@ const TILE_NOTE: Record<CheckState, string> = {
   down: `Failed ${DOWN_AFTER_FAILS}+ checks in a row`,
   warning: "Failed recently, rechecking soon",
   unchecked: "Waiting for the first check",
-  blocked: "The site refuses automated checks",
+  blocked: "The site refuses automated checks. Open it and confirm",
   ok: "Loaded on the last check",
 };
 
@@ -69,6 +69,13 @@ function UrlText({ url }: { url: string }) {
 /** What the last check found, in one short line. */
 function Finding({ item, automatic }: { item: TargetCheckDTO; automatic: boolean }) {
   if (item.state === "unchecked") return <span className="health-finding">{automatic ? "Checked within 30 minutes" : "Not checked yet"}</span>;
+  if (item.confirmedAt) {
+    return (
+      <span className="health-finding">
+        Confirmed by a person {ago(item.confirmedAt)} · {problemText(item.problem, item.httpStatus)}
+      </span>
+    );
+  }
   const detail = item.state === "ok" ? (item.httpStatus ? `HTTP ${item.httpStatus}` : "") : problemText(item.problem, item.httpStatus);
   const parts = [
     detail,
@@ -475,11 +482,25 @@ export function HealthPage() {
       refresh();
       const state = r.check?.state ?? "unchecked";
       const host = hostOf(item.target);
-      if (state === "ok") toast.success(`${host} is working`, { description: r.check?.ms ? `Loaded in ${num(r.check.ms)} ms.` : undefined });
+      if (r.check?.confirmedAt) toast.info(`${host} still refuses automated checks`, { description: "It stays listed as working, confirmed by a person." });
+      else if (state === "ok") toast.success(`${host} is working`, { description: r.check?.ms ? `Loaded in ${num(r.check.ms)} ms.` : undefined });
       else if (state === "blocked") toast.info(`${host} refuses automated checks`, { description: "People can usually still open it." });
       else toast.error(`${host}: ${problemText(r.check?.problem ?? null, r.check?.httpStatus ?? null) || STATE_LABEL[state]}`);
     },
     onError: (e) => toast.error(errorOf(e)),
+  });
+  const confirm = useMutation({
+    mutationFn: ({ item, confirmed }: { item: TargetCheckDTO; confirmed: boolean }) => call(api.checks.confirmed.$put({ json: { target: item.target, confirmed } })),
+    onSuccess: (_r, { item, confirmed }) => {
+      refresh();
+      const host = hostOf(item.target);
+      if (confirmed) toast.success(`${host} listed as working`, { description: "Confirmed by a person. It's still checked, and a real failure will alert you." });
+      else toast.success(`${host} is back under “${STATE_LABEL.blocked.toLowerCase()}”`);
+    },
+    onError: (e) => {
+      refresh();
+      toast.error(errorOf(e));
+    },
   });
 
   const counts = useMemo(() => {
@@ -743,6 +764,23 @@ export function HealthPage() {
                             {failing && edits ? (
                               <Button size="sm" icon={Wrench} onClick={() => setFixing(item)}>
                                 Fix
+                              </Button>
+                            ) : null}
+                            {item.state === "blocked" ? (
+                              <Button size="sm" icon={Check} onClick={() => confirm.mutate({ item, confirmed: true })} disabled={confirm.isPending} title="I opened it and it loads">
+                                It works
+                              </Button>
+                            ) : item.confirmedAt ? (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="health-act-quiet"
+                                onClick={() => confirm.mutate({ item, confirmed: false })}
+                                disabled={confirm.isPending}
+                                title="Take back the confirmation"
+                              >
+                                <Undo2 aria-hidden />
+                                <span className="health-act-label">Undo</span>
                               </Button>
                             ) : null}
                             {edits && one ? (

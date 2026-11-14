@@ -3,12 +3,14 @@ import { z } from "zod";
 import { periodBounds } from "../../shared/dates";
 import { HOSTNAME_RE, linkLabel } from "../../shared/domains";
 import { clearMissesSchema, ignoreMissesSchema, linkParamSchema, missExportQuerySchema, missPolicySchema, rangeQuerySchema } from "../../shared/schemas";
+import { can } from "../../shared/permissions";
 import { IMPORT_SLUG_RE } from "../../shared/slug";
 import type { RecentHit } from "../../shared/types";
 import { aeAvailable, HIT_DEVICES, HIT_EVENTS, queryLive, queryRecent, queryScanners } from "../ae";
 import { domainsOf } from "../domains";
 import { csv, validate, type AppEnv } from "../hono";
 import { clearMisses, ignoredMisses, ignoreMisses, saveMissPolicy, unignoreAllMisses, unignoreMisses } from "../misses";
+import { FORBIDDEN } from "../permissions";
 import { clickPeakHours, linkStats, missReport, overview } from "../stats-data";
 import { isTimeZone } from "../../shared/sites";
 
@@ -183,13 +185,16 @@ export const statsApi = new Hono<AppEnv>()
   .get("/recent", validate("query", recentQuerySchema), async (c) => {
     const { slug, limit, event, country, device, hours } = c.req.valid("query");
     const domain = c.req.valid("query").domain ?? (slug ? domainsOf(c.env).primary : undefined);
+    // Missed visits belong to Link health, like every /stats/misses route: asked for, they're refused; otherwise left out.
+    const seesMisses = can(c.get("actor"), "health.manage");
+    if (event === "miss" && !seesMisses) return c.json(FORBIDDEN, 403);
     if (!aeAvailable(c.env)) return c.json({ aeAvailable: false, hits: [] as RecentHit[], error: undefined as string | undefined });
     try {
       const nowSec = Date.now() / 1000;
       const since = nowSec - hours * 3600;
       const misses = event === "miss";
       const [rows, scanners] = await Promise.all([
-        queryRecent(c.env, since, { domain, slug, event, country, device }, limit),
+        queryRecent(c.env, since, { domain, slug, event, country, device, noMisses: !seesMisses }, limit),
         misses ? queryScanners(c.env, since, nowSec + 60) : Promise.resolve([]),
       ]);
       const flagged = new Set(scanners);
@@ -203,7 +208,7 @@ export const statsApi = new Hono<AppEnv>()
     } catch (err) {
       // Configured but failing: say so, rather than "not configured".
       console.error(JSON.stringify({ message: "recent hits query failed", error: String(err) }));
-      return c.json({ aeAvailable: true, hits: [] as RecentHit[], error: err instanceof Error ? err.message : String(err) });
+      return c.json({ aeAvailable: true, hits: [] as RecentHit[], error: "Analytics Engine didn't answer. Try again in a moment." as string | undefined });
     }
   })
 

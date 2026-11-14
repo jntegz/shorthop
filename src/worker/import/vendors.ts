@@ -151,11 +151,24 @@ async function rebrandly(key: string, cursor: string | null, budget: number): Pr
 
 // ---- Short.io ---------------------------------------------------------------------------------------
 
+/**
+ * The cursor comes back from the client, and its domain ids go into request
+ * paths: only whole positive numbers are taken, anything else drops the entry.
+ */
+function shortioState(v: unknown): { d: { id: number; host: string }[]; i: number; t: string | null } | null {
+  if (!v || typeof v !== "object") return null;
+  const s = v as Obj;
+  const d = arr(s.d)
+    .map(obj)
+    .map((x) => ({ id: typeof x.id === "number" && Number.isSafeInteger(x.id) && x.id > 0 ? x.id : 0, host: str(x.host).toLowerCase() }))
+    .filter((x) => x.id && x.host);
+  return { d, i: typeof s.i === "number" && Number.isInteger(s.i) && s.i >= 0 ? s.i : 0, t: typeof s.t === "string" && s.t ? s.t : null };
+}
+
 /** Short.io: every domain's links, 150 a page, with click totals from one statistics call per page. */
 async function shortio(key: string, cursor: string | null, budget: number): Promise<PullPage> {
   const auth = { Authorization: key };
-  type State = { d: { id: number; host: string }[]; i: number; t: string | null };
-  const state = decode<State>(cursor) ?? { d: [], i: 0, t: null };
+  const state = shortioState(decode<unknown>(cursor)) ?? { d: [], i: 0, t: null };
   let calls = 0;
   if (!cursor) {
     state.d = arr(await fetchJson("shortio", "https://api.short.io/api/domains", auth))

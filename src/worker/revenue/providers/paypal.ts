@@ -1,5 +1,5 @@
 // PayPal. Webhooks are verified by PayPal itself: the transmission headers
-// and the event go to /v1/notifications/verify-webhook-signature with an
+// and the event (byte for byte as received) go to /v1/notifications/verify-webhook-signature with an
 // OAuth token from the app's client id and secret, and only SUCCESS passes.
 // (Self-verification would mean parsing PayPal's X.509 certificate.)
 //
@@ -94,26 +94,27 @@ export const paypal: ProviderAdapter = {
     const missing = TRANSMISSION_HEADERS.filter((n) => !h(n));
     if (missing.length) return `Missing ${missing.join(", ")} header${missing.length === 1 ? "" : "s"}`;
     if (!isPayPalCertUrl(h("PAYPAL-CERT-URL"))) return "PAYPAL-CERT-URL isn't a PayPal address";
-    let event: unknown;
     try {
-      event = JSON.parse(body);
+      JSON.parse(body);
     } catch {
       return "Body is not JSON";
     }
+    // PayPal checks the signature against the bytes it sent, so the event goes back exactly as it
+    // arrived: parsing and re-serialising it could change the spacing, a number or an escape.
+    const fields = JSON.stringify({
+      auth_algo: h("PAYPAL-AUTH-ALGO"),
+      cert_url: h("PAYPAL-CERT-URL"),
+      transmission_id: h("PAYPAL-TRANSMISSION-ID"),
+      transmission_sig: h("PAYPAL-TRANSMISSION-SIG"),
+      transmission_time: h("PAYPAL-TRANSMISSION-TIME"),
+      webhook_id: webhookId,
+    });
     try {
       const token = await accessToken(clientId, ctx.apiKey, ctx.settings);
       const res = await fetch(`${base(ctx.settings)}/v1/notifications/verify-webhook-signature`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          auth_algo: h("PAYPAL-AUTH-ALGO"),
-          cert_url: h("PAYPAL-CERT-URL"),
-          transmission_id: h("PAYPAL-TRANSMISSION-ID"),
-          transmission_sig: h("PAYPAL-TRANSMISSION-SIG"),
-          transmission_time: h("PAYPAL-TRANSMISSION-TIME"),
-          webhook_id: webhookId,
-          webhook_event: event,
-        }),
+        body: `${fields.slice(0, -1)},"webhook_event":${body}}`,
         redirect: "manual",
         signal: AbortSignal.timeout(8000),
       });

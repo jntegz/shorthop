@@ -17,6 +17,11 @@ export function str(v: unknown): string | null {
   return null;
 }
 
+/** A field that is an id, or the expanded object carrying it. */
+export function idOf(v: unknown): string | null {
+  return typeof v === "string" ? str(v) : str(obj(v).id);
+}
+
 /** A number, also from a numeric string ("65215"). */
 export function num(v: unknown): number | null {
   if (typeof v === "number" && Number.isFinite(v)) return v;

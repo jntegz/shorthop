@@ -111,7 +111,7 @@ describe("importing past payments", () => {
 
     const run = async () => (await call(`${API}/sites/${site.id}/connections/${conn.id}/import`, json({ days: 30 }))).json<{ imported: number; next: string | null }>();
     expect(await run()).toMatchObject({ imported: 1, next: null });
-    expect(asked.map((u) => new URL(u).pathname)).toEqual(["/v1/checkout/sessions", "/v1/invoices", "/v1/charges"]);
+    expect(asked.map((u) => new URL(u).pathname)).toEqual(["/v1/checkout/sessions", "/v1/invoices", "/v1/invoice_payments", "/v1/charges"]);
     expect(await run()).toMatchObject({ imported: 0 });
 
     const rows = await env.DB.prepare("SELECT kind, amount_minor, email FROM payments ORDER BY kind").all();

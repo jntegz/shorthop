@@ -334,6 +334,8 @@ export interface RecentFilter extends LinkFilter {
   /** ISO 3166 code, as Cloudflare reports it ("CZ", "T1" for Tor). */
   country?: string;
   device?: (typeof HIT_DEVICES)[number];
+  /** Leaves missed visits out, for someone who may not see them (health.manage). */
+  noMisses?: boolean;
 }
 
 export const HIT_EVENTS = ["click", "bot", "miss"] as const;
@@ -345,6 +347,7 @@ function recentConditions(f: RecentFilter): string {
     if (!HIT_EVENTS.includes(f.event)) throw new Error("Refusing to query an invalid hit type");
     parts.push(`blob1 = '${f.event}'`);
   }
+  if (f.noMisses) parts.push("blob1 != 'miss'");
   if (f.country !== undefined) {
     if (!/^[A-Z0-9]{2}$/.test(f.country)) throw new Error("Refusing to query an invalid country");
     parts.push(`blob2 = '${f.country}'`);
@@ -357,12 +360,12 @@ function recentConditions(f: RecentFilter): string {
 }
 
 export async function queryRecent(env: Env, sinceSec: number, filter: RecentFilter = {}, limit = 50): Promise<AeRecentRow[]> {
-  const { event, country, device, ...link } = filter;
+  const { event, country, device, noMisses, ...link } = filter;
   const rows = await aeQuery<Raw>(
     env,
     `SELECT toUnixTimestamp(timestamp) AS ts, blob17 AS domain, index1 AS slug, blob1 AS event, blob2 AS country, blob4 AS city,
 blob8 AS device, blob9 AS os, blob10 AS browser, blob11 AS referrer, blob12 AS source, blob14 AS bot, blob15 AS visitor
-FROM ${dataset(env)} WHERE ${where(sinceSec, Date.now() / 1000 + 60, link, recentConditions({ event, country, device }))}
+FROM ${dataset(env)} WHERE ${where(sinceSec, Date.now() / 1000 + 60, link, recentConditions({ event, country, device, noMisses }))}
 ORDER BY ts DESC LIMIT ${Math.min(Math.max(1, Math.floor(limit)), 200)} FORMAT JSON`,
   );
   return rows.map((r) => ({

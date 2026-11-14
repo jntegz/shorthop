@@ -93,8 +93,22 @@ describe("passwords", () => {
     // A new network gets one try: a wrong one holds it back too.
     expect((await submit("another guess", "secret", "192.0.2.100")).status).toBe(401);
     expect((await submit("open sesame", "secret", "192.0.2.100")).status).toBe(429);
-    // Someone who knows the password is never locked out by others.
+    // Someone who knows the password is never locked out by others, and doesn't lift the brake for them.
     expect((await submit("open sesame", "secret", "198.51.100.200")).status).toBe(200);
+    expect((await env.DB.prepare("SELECT locked_until FROM auth_failures WHERE key = 'link:sh.example/secret'").first<{ locked_until: number }>())!.locked_until).toBeGreaterThan(Date.now() / 1000);
+    expect((await submit("open sesame", "secret", "192.0.2.1")).status).toBe(429);
+  });
+
+  it("caps the tries all networks together get while the brake is on", async () => {
+    await create({ password: "open sesame" });
+    for (let i = 0; i < 20; i++) expect((await submit("wrong guess", "secret", `192.0.2.${i + 1}`)).status).toBe(401);
+    // Twenty fresh IPv6 /64s each get a try during the brake, then the link's budget is spent.
+    for (let i = 0; i < 20; i++) expect((await submit("another guess", "secret", `2001:db8:0:${(i + 1).toString(16)}::1`)).status).toBe(401);
+    // Even a fresh network with the right password waits for the brake to run out.
+    expect((await submit("open sesame", "secret", "2001:db8:0:ff::1")).status).toBe(429);
+    await env.DB.prepare("UPDATE auth_failures SET locked_until = 0 WHERE key = 'link:sh.example/secret'").run();
+    expect((await submit("open sesame", "secret", "198.51.100.200")).status).toBe(200);
+    // Once the brake is off, a correct password clears the link's count.
     expect(await env.DB.prepare("SELECT 1 FROM auth_failures WHERE key = 'link:sh.example/secret'").first()).toBeNull();
   });
 

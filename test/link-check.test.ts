@@ -461,6 +461,63 @@ describe("checks API", () => {
     expect(await link()).toEqual(expect.objectContaining({ monitor: false, neverCheck: false }));
   });
 
+  it("lists a refused destination as working once a person confirms it, until a check gets a real answer", async () => {
+    const target = "https://wall.example/";
+    const confirm = (confirmed: boolean, t = target) => call(`${API}/checks/confirmed`, { ...json({ target: t, confirmed }), method: "PUT" });
+    const item = async () => ((await (await call(`${API}/checks`, { headers: bearer })).json()) as LinkChecksDTO).items.find((i) => i.target === target)!;
+    routes[target] = status(403);
+    routes["https://a.example/"] = status(200);
+    await createLink("wall", target);
+    await createLink("fine", "https://a.example/");
+    await runLinkChecks(env);
+    expect(await item()).toMatchObject({ state: "blocked", confirmedAt: null });
+
+    // Only a destination that refuses checks can be confirmed.
+    expect((await confirm(true, "https://a.example/")).status).toBe(409);
+    expect((await confirm(true, "https://nowhere.example/")).status).toBe(409);
+
+    expect((await confirm(true)).status).toBe(200);
+    expect(await item()).toMatchObject({ state: "ok", httpStatus: 403, problem: "refused", confirmedAt: expect.any(Number) });
+    // The links list says the same as Link health.
+    const listed = async () => ((await (await call(`${API}/links`, { headers: bearer })).json()) as { links: LinkListItem[] }).links.find((l) => l.slug === "wall")!.check;
+    expect(await listed()).toMatchObject({ state: "ok" });
+    expect((await confirm(false)).status).toBe(200);
+    expect(await item()).toMatchObject({ state: "blocked", confirmedAt: null });
+    expect(await listed()).toMatchObject({ state: "blocked" });
+
+    // Still refused on the next check: the confirmation stays.
+    await confirm(true);
+    await makeDue();
+    await runLinkChecks(env);
+    expect(await item()).toMatchObject({ state: "ok", confirmedAt: expect.any(Number) });
+
+    // A real failure replaces it and escalates as usual.
+    routes[target] = status(404);
+    await makeDue();
+    await runLinkChecks(env);
+    expect(await item()).toMatchObject({ state: "warning", problem: "not_found", confirmedAt: null });
+    let last = { newlyDown: [] as string[] };
+    for (let i = 1; i < DOWN_AFTER_FAILS; i++) {
+      await makeDue();
+      last = await runLinkChecks(env);
+    }
+    expect(last.newlyDown).toEqual([target]);
+
+    // Refused again later: it needs confirming again.
+    routes[target] = status(403);
+    await makeDue();
+    await runLinkChecks(env);
+    expect(await item()).toMatchObject({ state: "blocked", confirmedAt: null });
+
+    // A check that loads the page ends a confirmation too.
+    await confirm(true);
+    routes[target] = status(200);
+    await makeDue();
+    await runLinkChecks(env);
+    expect(await item()).toMatchObject({ state: "ok", httpStatus: 200, confirmedAt: null });
+    expect((await row(target))!.confirmed_at).toBeNull();
+  });
+
   it("rechecks problems on request", async () => {
     routes["https://b.example/"] = status(404);
     await createLink("three", "https://b.example/");

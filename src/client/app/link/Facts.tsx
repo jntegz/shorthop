@@ -44,7 +44,9 @@ export function CheckFact({ link, onMarkBroken }: { link: LinkDTO; onMarkBroken:
       void qc.invalidateQueries({ queryKey: keys.checks, exact: true });
       void qc.invalidateQueries({ queryKey: keys.allLinks });
       const c = r.check;
-      if (c?.state === "ok") toast.success("The destination loads", { description: c.ms !== null ? `Answered in ${num(c.ms)} ms.` : undefined });
+      // Refused again, but a person confirmed it loads: reported as working, and said as it is.
+      if (c?.confirmedAt) toast.info("The site still refuses automated checks", { description: "It stays listed as working, confirmed by a person." });
+      else if (c?.state === "ok") toast.success("The destination loads", { description: c.ms !== null ? `Answered in ${num(c.ms)} ms.` : undefined });
       else if (c?.state === "blocked") toast.info("The site refuses automated checks", { description: "People can usually still open it." });
       else if (c) toast.error(problemText(c.problem, c.httpStatus) || STATE_LABEL[c.state]);
     },
@@ -90,11 +92,14 @@ export function CheckFact({ link, onMarkBroken }: { link: LinkDTO; onMarkBroken:
     body = (
       <>
         <p>
-          {c.state === "ok"
-            ? `Loads${c.httpStatus ? ` with HTTP ${c.httpStatus}` : ""}${c.ms !== null ? ` in ${num(c.ms)} ms` : ""}`
-            : c.state === "blocked"
-              ? `${problemText(c.problem, c.httpStatus)}. People can usually still open it`
-              : problemText(c.problem, c.httpStatus)}
+          {c.confirmedAt
+            ? // As Link health says it: refused again, but a person confirmed it loads.
+              `Confirmed by a person ${ago(c.confirmedAt)} · ${problemText(c.problem, c.httpStatus)}`
+            : c.state === "ok"
+              ? `Loads${c.httpStatus ? ` with HTTP ${c.httpStatus}` : ""}${c.ms !== null ? ` in ${num(c.ms)} ms` : ""}`
+              : c.state === "blocked"
+                ? `${problemText(c.problem, c.httpStatus)}. People can usually still open it`
+                : problemText(c.problem, c.httpStatus)}
           {c.checkedAt ? <span className="ui-ld-fact-quiet">, checked {ago(c.checkedAt)}</span> : null}.
         </p>
         {failing ? (
@@ -170,12 +175,14 @@ export function CheckFact({ link, onMarkBroken }: { link: LinkDTO; onMarkBroken:
 function CapFact({ link }: { link: LinkDTO }) {
   const q = useCap(link.domain, link.slug, Boolean(link.maxClicks));
   const limit = link.maxClicks!;
-  const full = q.data ? q.data.count >= limit : false;
+  // The count is statistics: without that permission only the limit is shown.
+  const count = q.data?.count ?? null;
+  const full = count !== null && count >= limit;
   return (
     <Fact label="Visit limit">
-      {q.data ? (
+      {count !== null ? (
         <span className={full ? "ui-ld-fact-bad" : undefined}>
-          {num(q.data.count)} of {num(limit)} visits used{full ? ": limit reached" : ""}
+          {num(count)} of {num(limit)} visits used{full ? ": limit reached" : ""}
         </span>
       ) : q.isError ? (
         `${num(limit)} visits (the count couldn’t load)`

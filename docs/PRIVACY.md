@@ -53,7 +53,7 @@ This applies only to sites you add under Websites and put the script (`/_t/scrip
 
 How a visitor is told apart is set per site (Settings & setup → Visitor identification):
 
-- **Cookieless** (the default): the visitor ID is a hash of the IP address, the user agent and the site, made with the same daily salt as [short links](#how-unique-visitors-are-counted). Nothing is stored in the browser, and the ID changes every day.
+- **Cookieless** (the default): the visitor ID is a hash of the IP address, the user agent and the site, made with the same daily salt as [short links](#how-unique-visitors-are-counted). Nothing is stored in the browser, and the ID changes every day at midnight UTC. A visit in progress at midnight is continued for up to 30 minutes (matched with the previous day's ID while its salt still exists); otherwise days aren't linked.
 - **Recognise returning visitors:** one random ID in the browser's localStorage (`sh_vid`, not a cookie), first-party on your domain. It recognises the visitor across days. In the EU this needs consent.
 - **After consent:** cookieless until your consent banner, or the built-in one (`data-consent-banner`), records consent. The choice is kept in localStorage as `sh_consent`.
 

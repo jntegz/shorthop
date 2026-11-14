@@ -35,7 +35,7 @@ Add `?s=li` (LinkedIn), `?s=nl` (newsletter) or any other tag when you post the 
 |---|---|
 | `Missing or invalid API key.` | The `Authorization` header is wrong, or the key was revoked or has expired: create a new one in Settings → API, MCP & webhooks |
 | `Too many failed attempts…` | 10 bad keys in a minute from your network; wait a minute (repeated failures lock it for longer) |
-| `Target must start with https://.` | The shared item isn't an https URL |
+| `Destination must start with https://.` | The shared item isn't a web address |
 | `slug: "x" is already taken on <domain>.` | Pick another slug |
 | A web page or a Cloudflare Access sign-in instead of a link | Access covers `/api`: limit the Access application to the paths `_admin` and `_admin/*` ([setup manual](SETUP.md#access)) |
 
