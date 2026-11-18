@@ -2,7 +2,7 @@
 // connections, and the server-side API (payments, identify) for sites whose
 // billing has no native adapter.
 
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { HOSTNAME_RE } from "../../shared/domains";
 import { can, type Actor } from "../../shared/permissions";
@@ -18,7 +18,9 @@ import {
   eventListQuerySchema,
   minorFactor,
   paymentsQuerySchema,
+  paymentsSearchSchema,
   privacyEraseSchema,
+  privacyReapplySchema,
   privacyPersonSchema,
   goalPropsQuerySchema,
   peakQuerySchema,
@@ -30,6 +32,7 @@ import {
   updateSiteSchema,
   PROVIDER_INFO,
   type Provider,
+  type SiteDTO,
   type SiteListItem,
   type InstallStatusDTO,
   type SiteOverviewDTO,
@@ -39,15 +42,17 @@ import { aeAvailable } from "../ae";
 import { configuredDomains, domainsOf } from "../domains";
 import { csv, validate, type AppEnv } from "../hono";
 import { actorLabel } from "../users";
+import { unverifiedCount } from "../revenue/anomalies";
 import { recreditSite } from "../revenue/attribute";
 import { reconvertSite, refreshFx, unconvertedCount } from "../revenue/fx";
 import { planLimits } from "../plan";
 import { importPage } from "../revenue/backfill";
 import { checkConnection, connectionChanges, connectionSecrets, connectionView, settingsOf } from "../revenue/connections";
 import { applyEvent, storePayment, type ConnectionRow } from "../revenue/ingest";
-import { liveSession, rematchSite } from "../revenue/match";
+import { confirmPaymentVisitor, liveSession, rematchSite } from "../revenue/match";
 import { announcePayments } from "../revenue/notify";
-import { erasePerson, exportPerson, listPrivacyRequests, logExport, personCounts, resolvePerson } from "../web/privacy";
+import { visitorRefused } from "../web/erasure";
+import { erasePerson, exportPerson, listPrivacyRequests, logExport, personCounts, reapplyErasures, resolvePerson } from "../web/privacy";
 import { identifyVisitor } from "../web/sessions";
 import { breakdown, eventList, filtersOf, goalProps, linkRevenue, onlineNow, payments, previousWindow, recentSessions, series, siteSummaries, spikesIn, subscriptionStats, totals, unmatchedCount, visitorProfile, windowOf } from "../web/queries";
 import { funnelDTO, funnelReport, type FunnelRow } from "../web/funnels";
@@ -83,6 +88,42 @@ const linkRevenueQuerySchema = z.object({ days: z.coerce.number().int().min(1).m
  */
 const namesSecret = (input: { webhookSecretRef?: string | null; apiKeyRef?: string | null }) => Boolean(input.webhookSecretRef || input.apiKeyRef);
 const OWNERS_NAME_SECRETS = { error: "Only an owner can choose a Cloudflare secret for a connection. Paste the value instead, or ask an owner.", code: "forbidden" } as const;
+
+/** Every payment of a period (and search) as CSV: up to 50,000 rows, read in pages. */
+async function paymentsCsv(c: Context<AppEnv>, site: SiteDTO, q: Parameters<typeof windowOf>[1] & Omit<Parameters<typeof payments>[3], "limit" | "offset">): Promise<Response> {
+  const w = windowOf(site, q);
+  const list = [];
+  for (let offset = 0; offset < 50_000; offset += 500) {
+    const page = await payments(c.env.DB, site, w, { ...q, limit: 500, offset });
+    list.push(...page.payments);
+    if (page.payments.length < 500) break;
+  }
+  const body = csv([
+    ["date", "provider", "kind", "billing", "amount", "currency", `amount_${site.currency}`, "email", "matched_by", "confidence", "channel", "source", "campaign", "short_link", "landing_page", "unmatched_reason", "test", "flag", "unverified"],
+    ...list.map((p) => [
+      new Date(p.occurredAt * 1000).toISOString(),
+      p.provider,
+      p.kind,
+      p.billing,
+      (p.amountMinor / minorFactor(p.currency)).toFixed(Math.log10(minorFactor(p.currency))),
+      p.currency,
+      p.amountSiteMinor === null ? "" : (p.amountSiteMinor / minorFactor(site.currency)).toFixed(Math.log10(minorFactor(site.currency))),
+      p.email,
+      p.matchedBy,
+      p.confidence,
+      p.credited?.channel,
+      p.credited?.source,
+      p.credited?.campaign,
+      p.credited?.link,
+      p.credited?.entry,
+      p.unmatchedReason,
+      p.testMode ? "yes" : "",
+      p.anomaly,
+      p.unverified ? "yes" : "",
+    ]),
+  ]);
+  return c.body(body, 200, { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="payments-${site.id}-${w.from}-${w.to}.csv"` });
+}
 
 export const sitesApi = new Hono<AppEnv>()
   .get("/", async (c) => {
@@ -147,7 +188,7 @@ export const sitesApi = new Hono<AppEnv>()
     const w = windowOf(site, q);
     const f = filtersOf(q, 4);
     const span = w.end - w.start;
-    const [current, previous, points, previousPoints, spikes, online, unmatched, unconverted] = await Promise.all([
+    const [current, previous, points, previousPoints, spikes, online, unmatched, unconverted, unverified] = await Promise.all([
       totals(c.env.DB, site, w.start, w.end, f),
       // The period before, of the same length; none for all time.
       q.range === "all" ? Promise.resolve(null) : totals(c.env.DB, site, w.start - span, w.start, f),
@@ -157,6 +198,7 @@ export const sitesApi = new Hono<AppEnv>()
       onlineNow(c.env.DB, site.id),
       unmatchedCount(c.env.DB, site.id, w.start, w.end),
       unconvertedCount(c.env.DB, site.id, w.start, w.end),
+      unverifiedCount(c.env.DB, site.id, w.start, w.end),
     ]);
     const money = seesMoney(c.get("actor"));
     const dto: SiteOverviewDTO = {
@@ -172,6 +214,7 @@ export const sitesApi = new Hono<AppEnv>()
       online,
       unmatched: money ? unmatched : 0,
       ...(money && unconverted ? { unconverted } : {}),
+      ...(money && unverified ? { unverified } : {}),
       aeAvailable: aeAvailable(c.env),
     };
     return c.json(dto);
@@ -270,7 +313,10 @@ export const sitesApi = new Hono<AppEnv>()
   .get("/:id/live", validate("param", siteParamSchema), async (c) => {
     const site = await getSite(c.env.DB, c.req.valid("param").id);
     if (!site) return c.json({ error: "Site not found" }, 404);
-    return c.json({ online: await onlineNow(c.env.DB, site.id), sessions: await recentSessions(c.env.DB, site.id, 50) });
+    const sessions = await recentSessions(c.env.DB, site.id, 50);
+    // A visitor's id leads to their journey and payments: for people who may see those (revenue.view).
+    const shown = can(c.get("actor"), "revenue.view") ? sessions : sessions.map((s) => ({ ...s, visitorId: "" }));
+    return c.json({ online: await onlineNow(c.env.DB, site.id), sessions: shown });
   })
 
   .get("/:id/payments", validate("param", siteParamSchema), validate("query", paymentsQuerySchema), async (c) => {
@@ -284,37 +330,22 @@ export const sitesApi = new Hono<AppEnv>()
     const q = c.req.valid("query");
     const site = await getSite(c.env.DB, c.req.valid("param").id);
     if (!site) return c.json({ error: "Site not found" }, 404);
-    const w = windowOf(site, q);
-    // The whole period, not just a page: up to 50,000 rows, read in pages.
-    const list = [];
-    for (let offset = 0; offset < 50_000; offset += 500) {
-      const page = await payments(c.env.DB, site, w, { ...q, limit: 500, offset });
-      list.push(...page.payments);
-      if (page.payments.length < 500) break;
-    }
-    const body = csv([
-      ["date", "provider", "kind", "billing", "amount", "currency", `amount_${site.currency}`, "email", "matched_by", "confidence", "channel", "source", "campaign", "short_link", "landing_page", "unmatched_reason", "test"],
-      ...list.map((p) => [
-        new Date(p.occurredAt * 1000).toISOString(),
-        p.provider,
-        p.kind,
-        p.billing,
-        (p.amountMinor / minorFactor(p.currency)).toFixed(Math.log10(minorFactor(p.currency))),
-        p.currency,
-        p.amountSiteMinor === null ? "" : (p.amountSiteMinor / minorFactor(site.currency)).toFixed(Math.log10(minorFactor(site.currency))),
-        p.email,
-        p.matchedBy,
-        p.confidence,
-        p.credited?.channel,
-        p.credited?.source,
-        p.credited?.campaign,
-        p.credited?.link,
-        p.credited?.entry,
-        p.unmatchedReason,
-        p.testMode ? "yes" : "",
-      ]),
-    ]);
-    return c.body(body, 200, { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="payments-${site.id}-${w.from}-${w.to}.csv"` });
+    return paymentsCsv(c, site, q);
+  })
+
+  // The same two with a search term: it is often a customer's email, so it travels in the body.
+  .post("/:id/payments/search", validate("param", siteParamSchema), validate("json", paymentsSearchSchema), async (c) => {
+    const q = c.req.valid("json");
+    const site = await getSite(c.env.DB, c.req.valid("param").id);
+    if (!site) return c.json({ error: "Site not found" }, 404);
+    return c.json(await payments(c.env.DB, site, windowOf(site, q), q));
+  })
+
+  .post("/:id/payments/search.csv", validate("param", siteParamSchema), validate("json", paymentsSearchSchema), async (c) => {
+    const q = c.req.valid("json");
+    const site = await getSite(c.env.DB, c.req.valid("param").id);
+    if (!site) return c.json({ error: "Site not found" }, 404);
+    return paymentsCsv(c, site, q);
   })
 
   .get("/:id/subscriptions", validate("param", siteParamSchema), validate("query", siteQuerySchema), async (c) => {
@@ -358,9 +389,16 @@ export const sitesApi = new Hono<AppEnv>()
     if (!site) return c.json({ error: "Site not found" }, 404);
     const person = await resolvePerson(c.env.DB, site, c.req.valid("json"));
     const by = actorLabel(c.get("actor"));
-    const result = await erasePerson(c.env.DB, site, person, by);
+    const result = await erasePerson(c.env, site, person, by);
     console.log(JSON.stringify({ message: "person erased", site: site.id, by, counts: result.counts }));
     return c.json(result);
+  })
+
+  // After a restore: one step at a time, repeated with the returned cursor until done.
+  .post("/:id/privacy/reapply", validate("param", siteParamSchema), validate("json", privacyReapplySchema), async (c) => {
+    const site = await getSite(c.env.DB, c.req.valid("param").id);
+    if (!site) return c.json({ error: "Site not found" }, 404);
+    return c.json(await reapplyErasures(c.env, site, c.req.valid("json").cursor, actorLabel(c.get("actor"))));
   })
 
   .get("/:id/privacy/requests", validate("param", siteParamSchema), async (c) => {
@@ -445,8 +483,14 @@ export const sitesApi = new Hono<AppEnv>()
     const { id, conn } = c.req.valid("param");
     const current = await c.env.DB.prepare("SELECT * FROM payment_connections WHERE id = ?1 AND site_id = ?2").bind(conn, id).first<ConnectionRow>();
     if (!current) return c.json({ error: "Connection not found" }, 404);
-    if (namesSecret(c.req.valid("json")) && !c.get("actor").owner) return c.json(OWNERS_NAME_SECRETS, 403);
-    const changes = await connectionChanges(c.env, c.req.valid("json"), current);
+    const input = c.req.valid("json");
+    if (namesSecret(input) && !c.get("actor").owner) return c.json(OWNERS_NAME_SECRETS, 403);
+    if (input.rotateWebhookToken) {
+      if (!PROVIDER_INFO[current.provider as Provider]?.urlToken) return c.json({ error: "This provider's webhooks aren't authenticated by a token in the address." }, 400);
+      input.webhookSecret = newId("", 24);
+      console.log(JSON.stringify({ message: "webhook token rotated", site: id, connection: conn, by: actorLabel(c.get("actor")) }));
+    }
+    const changes = await connectionChanges(c.env, input, current);
     const cols = Object.keys(changes);
     if (cols.length) {
       await c.env.DB.prepare(`UPDATE payment_connections SET ${cols.map((col, i) => `${col} = ?${i + 2}`).join(", ")} WHERE id = ?1`)
@@ -536,6 +580,13 @@ export const sitesApi = new Hono<AppEnv>()
       productIds: [],
       testMode: false,
     });
+    // The server naming the visitor is what says who paid; a bare ref only credits the visit.
+    if (id && body.visitorId) await confirmPaymentVisitor(c.env.DB, site.id, id, body.visitorId);
+    if (!id) {
+      // Payment ids are global: one another site has can't be written from here.
+      const elsewhere = await c.env.DB.prepare("SELECT 1 FROM payments WHERE id = ?1 AND site_id != ?2").bind(`api:${body.kind}:${body.id}`, site.id).first();
+      if (elsewhere) return c.json({ error: "This payment id already belongs to another site.", code: "conflict" }, 409);
+    }
     const row = id ? await c.env.DB.prepare("SELECT id, session_id, matched_by, unmatched_reason FROM payments WHERE id = ?1").bind(id).first() : null;
     if (id) c.executionCtx.waitUntil(announcePayments(c.env, site, [id], c.executionCtx));
     return c.json({ payment: row }, 201);
@@ -551,6 +602,8 @@ export const sitesApi = new Hono<AppEnv>()
       visitorId = s?.visitor_id ?? null;
     }
     if (!visitorId) return c.json({ error: "Unknown visit reference" }, 404);
+    // An erased browser id stays nobody's, also when a server names it.
+    if (await visitorRefused(c.env, site.id, visitorId, Math.floor(Date.now() / 1000))) return c.json({ ok: true, ignored: "erased" });
     await identifyVisitor(c.env.DB, site.id, visitorId, { email: body.email, name: body.name, userId: body.userId }, "server", Math.floor(Date.now() / 1000));
     // A newly known email can match payments that were waiting for it.
     await rematchSite(c.env.DB, site, 50);

@@ -271,13 +271,13 @@ describe("short domains", () => {
     expect((await call(at("https://admin.example/health"), undefined, env)).status).toBe(200);
   });
 
-  it("lets dev hosts pick a domain with X-Shorthop-Domain, and only dev hosts", async () => {
-    const dev = "https://shorthop.someone.workers.dev/x";
-    expect((await call(at(dev), undefined, TWO)).headers.get("Location")).toBe("https://example.com/primary");
-    expect((await call(at(dev, { "X-Shorthop-Domain": "alt.example" }), undefined, TWO)).headers.get("Location")).toBe("https://example.com/alt");
-    expect((await call(at("https://sh.example/x", { "X-Shorthop-Domain": "alt.example" }), undefined, TWO)).headers.get("Location")).toBe(
-      "https://example.com/primary",
-    );
+  it("lets localhost pick a domain with X-Shorthop-Domain, and nothing else", async () => {
+    const local = "http://localhost:5173/x";
+    expect((await call(at(local), undefined, TWO)).headers.get("Location")).toBe("https://example.com/primary");
+    expect((await call(at(local, { "X-Shorthop-Domain": "alt.example" }), undefined, TWO)).headers.get("Location")).toBe("https://example.com/alt");
+    for (const url of ["https://shorthop.someone.workers.dev/x", "https://sh.example/x"]) {
+      expect((await call(at(url, { "X-Shorthop-Domain": "alt.example" }), undefined, TWO)).headers.get("Location"), url).toBe("https://example.com/primary");
+    }
   });
 
   it("records the domain with every hit and miss", async () => {

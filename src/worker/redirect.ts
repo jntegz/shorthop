@@ -6,11 +6,11 @@
 // near-miss slug (KV reads, and D1 only on domains with mixed-case slugs).
 
 import { isProbePath, isRoutableSlug } from "../shared/slug";
-import { buildLocation, renderUtm, splitOwnParams } from "../shared/target";
+import { buildLocation, paramKey, renderUtm, splitOwnParams } from "../shared/target";
 import { isPreviewCrawler } from "../shared/preview";
 import { pickRoute, routeCountry, routeDevice } from "../shared/routing";
-import { detectBot, detectBrowser, detectDevice, detectOs, logHit, PREFETCH, referrerHostOf, resolveSource, siteHostOf } from "./analytics";
-import { checkoutProvider, withCheckoutRef, type CheckoutProvider } from "../shared/checkout";
+import { detectBot, detectBrowser, detectDevice, detectOs, logHit, PREFETCH, referrerHostOf, resolveSource, sendsPrivacySignal, siteHostOf } from "./analytics";
+import { checkoutProvider, isCheckoutRefParam, withCheckoutRef, type CheckoutProvider } from "../shared/checkout";
 import { newSessionId } from "./web/sessions";
 import { deadLinkResponse, isUsableReplacement } from "./dead-link";
 import { isKvLink, KV_TIMEOUT_MS, kvKey, OFF_HOME, splitKey, withTimeout, type KvLink, type KvRule } from "./db";
@@ -21,7 +21,7 @@ import { hasAccess, tryPassword } from "./link-password";
 import { previewResponse } from "./preview";
 import { limitPage, passwordPage, unavailablePage, unlockedPage, unsafePage } from "./protection-pages";
 import { renderBio, type BioPage } from "../shared/bio";
-import { ipBucket } from "./session";
+import { limiterKey } from "./session";
 import { connectedCheckoutProviders, trackedSiteFor } from "./web/sites";
 import { sendClickWebhooks } from "./webhooks";
 import { CLICK_PARAM, signClickToken } from "./web/token";
@@ -48,7 +48,7 @@ export async function publicLimit(request: Request, env: Env): Promise<Response 
   const ip = request.headers.get("CF-Connecting-IP");
   if (!ip || !env.PUBLIC_LIMITER) return null;
   try {
-    const { success } = await env.PUBLIC_LIMITER.limit({ key: `public:${ipBucket(ip)}` });
+    const { success } = await env.PUBLIC_LIMITER.limit({ key: await limiterKey(env, "public", ip) });
     if (success) return null;
   } catch (err) {
     console.error(JSON.stringify({ message: "public rate limiter failed", error: String(err) }));
@@ -281,7 +281,7 @@ export async function handleRedirect(request: Request, env: Env, ctx: ExecutionC
   if (link.mc) {
     const lookOnly = request.method === "HEAD" || isPreviewCrawler(ua) || detectBot(request, ua, 0) === PREFETCH;
     try {
-      const cap = await capAdmit(env, domain, slug, link.mc, !lookOnly, ctx);
+      const cap = await capAdmit(env, domain, slug, link.mc, !lookOnly, ctx, link.cs ?? 0);
       if (!cap.ok) return limitPage(env, domain, slug);
     } catch (err) {
       console.error(JSON.stringify({ message: "click counter failed", domain, slug, error: String(err) }));
@@ -332,7 +332,7 @@ export async function handleRedirect(request: Request, env: Env, ctx: ExecutionC
         : "";
       utm = renderUtm(link.t, { slug, source, domain, variant: routed?.variant });
     }
-    location = buildLocation(target, link.qp === 1 ? own.passthrough : [], utm);
+    location = buildLocation(target, link.qp === 1 ? visitorParams(target, own.passthrough) : [], utm);
   } catch (err) {
     // Fall back to the bare target rather than failing the click.
     console.error(JSON.stringify({ message: "location build failed", domain, slug, error: String(err) }));
@@ -350,9 +350,11 @@ export async function handleRedirect(request: Request, env: Env, ctx: ExecutionC
   }
 
   // A flagged destination: people see a warning with a way through; nothing is sent on automatically.
-  if (link.w === 1 && request.method !== "HEAD") {
+  // HEAD gets the same answer without the page, so it can't read where the link goes.
+  if (link.w === 1) {
     ctx.waitUntil(logHit(request, env, url, { domain, slug, kind: "hit", sourceTag: own.sourceTag, qr: own.qr }));
-    return unsafePage(env, domain, slug, location);
+    const page = await unsafePage(env, domain, slug, location);
+    return request.method === "HEAD" ? new Response(null, { status: page.status, headers: page.headers }) : page;
   }
 
   ctx.waitUntil(logHit(request, env, url, { domain, slug, kind: "hit", sourceTag: own.sourceTag, qr: own.qr, route: link.ro?.length ? (routed?.key ?? "-") : undefined }));
@@ -365,9 +367,24 @@ export async function handleRedirect(request: Request, env: Env, ctx: ExecutionC
 }
 
 /**
- * A link to one of the tracked websites carries a signed click token (?sh_c=),
- * so the visit, and any payment it leads to, is credited to this link
- * (src/worker/web/token.ts). Bots and previews don't get one.
+ * What a visitor's query may add to a pass-through link. On a hosted checkout
+ * never the payment reference: that is the owner's to set, or the redirect's
+ * (tagForCheckout), and a visitor's own would credit the sale to any visit.
+ */
+function visitorParams(target: string, passthrough: string[]): string[] {
+  let provider: CheckoutProvider | null = null;
+  try {
+    provider = checkoutProvider(new URL(target));
+  } catch {
+    // Not a URL: buildLocation appends as usual.
+  }
+  return provider ? passthrough.filter((pair) => !isCheckoutRefParam(paramKey(pair))) : passthrough;
+}
+
+/**
+ * A link to one of the tracked websites carries a signed click token (?sh_c=)
+ * naming that site, so the visit, and any payment it leads to, is credited to
+ * this link (src/worker/web/token.ts). Bots and previews don't get one.
  */
 async function tagForTrackedSite(request: Request, env: Env, url: URL, location: string, domain: string, slug: string, sourceTag: string | null, qr: boolean): Promise<string> {
   if (!env.SESSION_SECRET) return location;
@@ -377,11 +394,12 @@ async function tagForTrackedSite(request: Request, env: Env, url: URL, location:
   } catch {
     return location;
   }
-  if (!(await trackedSiteFor(env.DB, host))) return location;
+  const site = await trackedSiteFor(env.DB, host);
+  if (!site) return location;
   const ua = request.headers.get("User-Agent") ?? "";
   if (detectBot(request, ua, Number((request.cf as { asn?: number } | undefined)?.asn ?? 0))) return location;
   const { source } = resolveSource(sourceTag, qr, ua, referrerHostOf(request.headers.get("Referer"), url.hostname));
-  const token = await signClickToken(env.SESSION_SECRET, { domain, slug, source, at: Math.floor(Date.now() / 1000) });
+  const token = await signClickToken(env.SESSION_SECRET, { domain, slug, source, at: Math.floor(Date.now() / 1000), site });
   return buildLocation(location, [], `${CLICK_PARAM}=${token}`);
 }
 
@@ -411,6 +429,8 @@ async function tagForCheckout(
     return location;
   }
   if (!provider) return location;
+  // Global Privacy Control or Do Not Track: no reference, and no record of the click under one.
+  if (sendsPrivacySignal(request)) return location;
   const ua = request.headers.get("User-Agent") ?? "";
   const cf = request.cf as { asn?: number; country?: string; region?: string; city?: string } | undefined;
   if (detectBot(request, ua, Number(cf?.asn ?? 0))) return location;

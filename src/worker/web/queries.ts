@@ -37,7 +37,9 @@ import { aeFirstDay } from "./rollup";
 /**
  * Visits that happened on the site. A short link's click straight to a checkout
  * becomes a visit only so its sale is credited (via = 'checkout'); it counts in
- * revenue, never in traffic. Needs the sessions table aliased "s".
+ * revenue, never in traffic. So does the anonymous copy an erasure leaves for a
+ * payment (via = 'erased', src/worker/web/privacy.ts). Needs the sessions table
+ * aliased "s".
  */
 export const ON_SITE = "s.via = ''";
 
@@ -404,9 +406,12 @@ interface PaymentJoinRow {
   subscription_id: string | null;
   matched_by: string | null;
   confidence: string | null;
+  proves_identity: number;
   unmatched_reason: string | null;
   test_mode: number;
   visitor_id: string | null;
+  anomaly: string | null;
+  unverified: number;
   [key: string]: unknown;
 }
 
@@ -443,9 +448,12 @@ function paymentDTO(r: PaymentJoinRow): SitePaymentDTO {
     subscriptionId: r.subscription_id,
     matchedBy: r.matched_by,
     confidence: r.confidence,
+    provesIdentity: r.proves_identity === 1,
     unmatchedReason: r.unmatched_reason,
     testMode: r.test_mode === 1,
     visitorId: r.visitor_id,
+    anomaly: r.anomaly,
+    unverified: r.unverified === 1,
     session: brief(r, "ms"),
     credited: brief(r, "cs"),
   };
@@ -573,7 +581,8 @@ export async function subscriptionStats(d1: D1Database, site: SiteDTO, w: Window
          FROM subscriptions sub WHERE sub.site_id = ?1 AND sub.status IN ('active', 'past_due')`,
       )
       .bind(site.id),
-    d1.prepare("SELECT COUNT(*) AS n FROM subscriptions WHERE site_id = ?1 AND started_at >= ?2 AND started_at < ?3").bind(site.id, w.start, w.end),
+    // "unconfirmed": only an unproven end is known of it (src/worker/revenue/ingest.ts).
+    d1.prepare("SELECT COUNT(*) AS n FROM subscriptions WHERE site_id = ?1 AND started_at >= ?2 AND started_at < ?3 AND status != 'unconfirmed'").bind(site.id, w.start, w.end),
     d1.prepare("SELECT COUNT(*) AS n FROM subscriptions WHERE site_id = ?1 AND COALESCE(canceled_at, ended_at) >= ?2 AND COALESCE(canceled_at, ended_at) < ?3 AND status IN ('canceled', 'ended')").bind(site.id, w.start, w.end),
     d1
       .prepare(
@@ -606,7 +615,7 @@ export async function linkRevenue(d1: D1Database, domain: string, slug: string, 
   const { results } = await d1
     .prepare(
       `SELECT st.id AS site_id, st.name, st.currency,
-         (SELECT COUNT(*) FROM web_sessions s WHERE s.site_id = st.id AND s.link_domain = ?1 AND s.link_slug = ?2 AND s.started_at >= ?3) AS sessions,
+         (SELECT COUNT(*) FROM web_sessions s WHERE s.site_id = st.id AND s.link_domain = ?1 AND s.link_slug = ?2 AND s.started_at >= ?3 AND s.via != 'erased') AS sessions,
          (SELECT SUM(${AMOUNT}) FROM payments p JOIN web_sessions s ON s.id = p.credited_session_id
             WHERE p.site_id = st.id AND s.link_domain = ?1 AND s.link_slug = ?2 AND p.test_mode = 0 AND p.occurred_at >= ?3) AS revenue,
          (SELECT COUNT(*) FROM payments p JOIN web_sessions s ON s.id = p.credited_session_id

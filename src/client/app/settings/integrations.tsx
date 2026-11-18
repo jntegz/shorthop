@@ -62,11 +62,12 @@ const ENDPOINTS: { group: string; rows: [method: string, path: string, what: str
 
 /**
  * What the older API_TOKEN secret can't do unless API_TOKEN_SCOPE is "full"
- * (src/worker/app.ts, TOKEN_WRITES): every change but creating and importing
- * links, and the delivery log. Personal keys only need their permission.
+ * (TOKEN_READS in src/worker/permissions.ts, TOKEN_WRITES in src/worker/app.ts):
+ * every change but creating and importing links, and reading anything that isn't
+ * links, statistics or checks. Personal keys only need their permission.
  */
 function needsFullToken(method: string, path: string): boolean {
-  if (method === "GET") return path === "/webhooks/{id}/deliveries";
+  if (method === "GET") return path.startsWith("/webhooks") || path.startsWith("/shares") || path.startsWith("/sites");
   return !(method === "POST" && (path === "/links" || path === "/import"));
 }
 
@@ -95,7 +96,7 @@ export function ApiSection({ origin, tokenSet, tokenScope }: { origin: string; t
         </Fact>
         {tokenSet !== null ? (
           <Fact label="Server token (older)">
-            <p className="settings-a-fact-lead">{tokenSet ? <Badge tone="warn">{tokenScope === "full" ? "Set, full access" : "Set, read, create and import"}</Badge> : "Not set"}</p>
+            <p className="settings-a-fact-lead">{tokenSet ? <Badge tone="warn">{tokenScope === "full" ? "Set, full access" : "Set, read links, create and import"}</Badge> : "Not set"}</p>
             <p className="settings-a-quiet">
               {tokenSet ? (
                 <>
@@ -106,7 +107,7 @@ export function ApiSection({ origin, tokenSet, tokenScope }: { origin: string; t
                     </>
                   ) : (
                     <>
-                      It can read, create links and import new ones; the endpoints marked <em>full</em> below need <code className="settings-a-mono">API_TOKEN_SCOPE = "full"</code>.
+                      It can read links and statistics, create links and import new ones; the endpoints marked <em>full</em> below need <code className="settings-a-mono">API_TOKEN_SCOPE = "full"</code>.
                     </>
                   )}{" "}
                   If your iOS Shortcut or a script still uses it, switch it to a personal key, then delete the secret with <code className="settings-a-mono">wrangler secret delete API_TOKEN</code>.

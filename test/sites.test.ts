@@ -7,7 +7,7 @@ import { bytesToBase64, bytesToHex, sign } from "../src/worker/revenue/crypto";
 import { convert } from "../src/worker/revenue/fx";
 import { signClickToken, verifyClickToken } from "../src/worker/web/token";
 import { attributionOf } from "../src/worker/web/source";
-import { resetCollectBudget } from "../src/worker/web/budget";
+import { FLUSH_ROWS, resetCollectBudget } from "../src/worker/web/budget";
 import { FREE } from "../src/worker/plan";
 import type { SystemHealthDTO } from "../src/shared/types";
 import { API, call, json, ORIGIN, putLink, resetData } from "./helpers";
@@ -500,15 +500,19 @@ describe("the collector's daily budget on Workers Free", () => {
     );
   const sessions = async () => (await env.DB.prepare("SELECT COUNT(*) AS n FROM web_sessions").first<{ n: number }>())!.n;
 
-  it("adds its count to D1 every 20 events", async () => {
+  it("adds the rows events wrote to D1 every so often", async () => {
     const site = await createSite();
-    for (let i = 0; i < 20; i++) expect((await send(site)).status).toBe(200);
-    expect(await env.DB.prepare("SELECT value FROM settings WHERE key = ?").bind(`collect_events:${today()}`).first()).toEqual({ value: "20" });
+    let stored: { value: string } | null = null;
+    for (let i = 0; i < FLUSH_ROWS && !stored; i++) {
+      expect((await send(site)).status).toBe(200);
+      stored = await env.DB.prepare("SELECT value FROM settings WHERE key = ?").bind(`collect_events:${today()}`).first<{ value: string }>();
+    }
+    expect(Number(stored?.value)).toBeGreaterThanOrEqual(FLUSH_ROWS);
   });
 
   it("stops storing events once the day's budget is spent, and System status says so", async () => {
     const site = await createSite();
-    await env.DB.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)").bind(`collect_events:${today()}`, String(FREE.collectEvents)).run();
+    await env.DB.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)").bind(`collect_events:${today()}`, String(FREE.collectRows)).run();
     const before = await sessions();
     expect((await send(site)).status).toBe(202);
     expect(await sessions()).toBe(before);

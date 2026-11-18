@@ -406,6 +406,11 @@ function Dashboard({ d, listed }: { d: Dash; listed: SiteListItem | undefined })
                 {num(o.unconverted)} {o.unconverted === 1 ? "payment" : "payments"} in this period {o.unconverted === 1 ? "has" : "have"} no exchange rate into {site.currency} yet, so {o.unconverted === 1 ? "it counts" : "they count"} as 0 in the totals.
               </p>
             ) : null}
+            {d.revenue && o.unverified ? (
+              <p className="ui-site-note">
+                {num(o.unverified)} {o.unverified === 1 ? "payment" : "payments"} in this period {o.unverified === 1 ? "is" : "are"} unverified: Gumroad didn’t confirm {o.unverified === 1 ? "it" : "them"}, because the connection has no access token or Gumroad couldn’t be asked at the time. Unverified refunds and disputes of confirmed sales don’t count in net revenue. Check the token in the site’s settings; importing past payments confirms {o.unverified === 1 ? "it" : "them"} too.
+              </p>
+            ) : null}
           </Section>
 
           <Columns className="ui-site-columns">

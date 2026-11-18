@@ -20,6 +20,20 @@ jobs:
       - run: npm ci
       # Fails on known high or critical vulnerabilities in what the Worker and the admin ship.
       - run: npm audit --omit=dev --audit-level=high
+      # Build tools (Wrangler, Vite, tsx) run with deploy rights too, but most of their advisories
+      # don't apply here: they are reported on the run, and don't fail it.
+      - name: Report advisories in build tools
+        run: |
+          if ! npm audit --audit-level=high > "$RUNNER_TEMP/audit.txt"; then
+            echo "::warning::npm audit reports high or critical advisories in the dev dependencies (or couldn't run). See the job summary."
+            {
+              echo "### npm audit, dev dependencies included"
+              echo
+              echo '```'
+              tail -n 40 "$RUNNER_TEMP/audit.txt"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
       - run: npm run typecheck
       - run: npm test
       - name: Build with the example config

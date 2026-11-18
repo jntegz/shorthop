@@ -117,9 +117,17 @@ export function splitOwnParams(search: string): OwnParams {
   return result;
 }
 
+/** A raw "k=v" pair's key, decoded the way URLSearchParams reads it. */
+export function paramKey(pair: string): string {
+  const eq = pair.indexOf("=");
+  return new URLSearchParams(`${eq === -1 ? pair : pair.slice(0, eq)}=`).keys().next().value ?? "";
+}
+
 /**
- * Appends params to a target before any fragment. UTM pairs whose key already
- * exists in the target or in the passed-through params are skipped.
+ * Appends params to a target before any fragment. A passed-through param whose
+ * key the target already has is left out: the owner's value stands. UTM pairs
+ * whose key already exists in the target or in the passed-through params are
+ * skipped.
  */
 export function buildLocation(target: string, passthrough: readonly string[], utm: string | null): string {
   if (passthrough.length === 0 && !utm) return target;
@@ -138,9 +146,9 @@ export function buildLocation(target: string, passthrough: readonly string[], ut
     }
   };
   if (queryIndex !== -1) collect(base.slice(queryIndex + 1).split("&"));
-  collect(passthrough);
+  const extra = passthrough.filter((pair) => pair && !existingKeys.has(safeDecode(pair.split("=", 1)[0]!)));
+  collect(extra);
 
-  const extra = [...passthrough];
   if (utm) {
     for (const pair of utm.split("&")) {
       const key = safeDecode(pair.slice(0, pair.indexOf("=")));

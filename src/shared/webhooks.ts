@@ -14,10 +14,18 @@ export const WEBHOOK_EVENTS = [
     description: "Each human click, sent right away. Best effort: never retried and not in the delivery log, so a busy link costs nothing to store. For exact counts, use milestones or the statistics API.",
   },
   { type: "site.payment", label: "Website payment", description: "A payment, renewal, refund or dispute on a tracked website, with the visit it's credited to." },
-  { type: "site.traffic_spike", label: "Website traffic spike", description: "A source sent at least 4x its usual hourly visits to a tracked website (checked hourly)." },
+  { type: "site.traffic_spike", label: "Website traffic spike", description: "A source sent at least 4x its usual hourly visits to a tracked website (checked hourly). At most three per site and run; the first says how many other sources spiked." },
 ] as const;
 export type WebhookEvent = (typeof WEBHOOK_EVENTS)[number]["type"] | "webhook.test";
 export const EVENT_TYPES = WEBHOOK_EVENTS.map((e) => e.type) as readonly string[];
+
+/**
+ * How much an endpoint is sent about people. "full" is everything an event has,
+ * as webhooks always were; "minimal" leaves out the customer's email and the
+ * click's city, device and referrer.
+ */
+export const WEBHOOK_FIELD_SETS = ["full", "minimal"] as const;
+export type WebhookFieldSet = (typeof WEBHOOK_FIELD_SETS)[number];
 
 /** Human clicks a link passes to trigger link.milestone. */
 export const MILESTONES = [100, 500, 1_000, 5_000, 10_000, 50_000, 100_000, 500_000, 1_000_000] as const;

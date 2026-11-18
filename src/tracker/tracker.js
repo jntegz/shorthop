@@ -2,7 +2,8 @@
  *
  * <script defer src="https://<short domain>/_t/script.js" data-site="st_…"></script>
  *
- * Attributes: data-site (required), data-api (collector URL, for a proxy),
+ * Attributes: data-site (required), data-api (collector URL, for a proxy; https,
+ * or the page's own scheme. Without it events go to the script's own origin),
  * data-hash (count #/route changes as pages), data-allow-localhost,
  * data-debug (log to the console why nothing is sent; also ?sh_debug=1),
  * data-consent-banner (consent sites: ask with a small built-in banner;
@@ -11,8 +12,11 @@
  * API: shorthop("goal", name, props) · shorthop("identify", {email, name, id}) ·
  * shorthop("pageview") · shorthop("consent", true|false) · shorthop("consent-settings")
  * (shows the built-in banner again, for a "Cookie settings" link) · shorthop.ref() (the visit
- * reference for checkout metadata) · shorthop.checkout(url) (a checkout URL
- * carrying that reference) · shorthop.visitor().
+ * reference for checkout metadata, or null) · shorthop.ref(cb) (calls cb once it is
+ * known, with null when there won't be one: the browser sends GPC/DNT, tracking is off,
+ * the event wasn't stored, or no answer came within 3 seconds; a checkout should go on
+ * without it) · shorthop.checkout(url) (a checkout URL carrying that reference, or url
+ * unchanged) · shorthop.visitor().
  *
  * Markup: data-sh-goal="name" (+ data-sh-goal-<prop>) on clicks;
  * data-sh-scroll="name" (+ -threshold 0–1, -delay ms) when scrolled into view.
@@ -20,25 +24,46 @@
  * Cookieless sites store nothing on the device. Persistent sites keep one
  * first-party ID in localStorage (sh_vid), unless the browser sends GPC/DNT.
  * Consent sites do that only after shorthop("consent", true).
+ *
+ * Other scripts on the page can read sh_vid, shorthop.visitor() and
+ * shorthop.ref(): they run with the same rights as this one. Attributes are read
+ * only from this script's own element.
  */
 (function () {
   "use strict";
   var w = window, d = document, loc = w.location, nav = w.navigator;
   var script = d.currentScript;
-  var queued = (w.shorthop && w.shorthop.q) || [];
+  // HTML injected into the page can pose as document.currentScript (an <img name=currentScript>): only a real script element counts.
+  if (Object.prototype.toString.call(script) !== "[object HTMLScriptElement]") script = null;
+  var queued = w.shorthop && Array.isArray(w.shorthop.q) ? w.shorthop.q : [];
   var debug = !!(script && script.hasAttribute("data-debug")) || /[?&]sh_debug=1\b/.test(loc.search);
-  function noop() {}
   function off(why) {
     if (debug && w.console) console.info("Shorthop analytics is off: " + why);
     var stub = function () {};
-    stub.ref = stub.visitor = function () { return null; };
+    stub.ref = function (cb) { if (typeof cb === "function") cb(null); return null; };
+    stub.visitor = function () { return null; };
     stub.checkout = function (u) { return u; };
     w.shorthop = stub;
   }
 
+  // A short-link click token rides on the landing URL once; take it off the address bar first thing, tracking or not.
+  var clickToken = null;
+  var landing = new URL(loc.href);
+  if (landing.searchParams.has("sh_c")) {
+    clickToken = landing.searchParams.get("sh_c");
+    landing.searchParams.delete("sh_c");
+    try { history.replaceState(history.state, "", landing.pathname + landing.search + landing.hash); } catch (e) { /* ignore */ }
+  }
+
   if (!script) return off("no script element");
   var siteId = script.getAttribute("data-site");
-  var api = script.getAttribute("data-api") || new URL("/_t/e", script.src).href;
+  var api;
+  try {
+    var ownApi = script.getAttribute("data-api");
+    api = ownApi ? new URL(ownApi, loc.href) : new URL("/_t/e", script.src);
+  } catch (e) { return off("data-api isn't a valid address"); }
+  if (api.protocol !== "https:" && api.protocol !== loc.protocol) return off("data-api must use https");
+  api = api.href;
   var hashMode = script.hasAttribute("data-hash");
   var bannerOn = script.hasAttribute("data-consent-banner");
 
@@ -92,14 +117,16 @@
   var asks = false, reopen = false, banner = null;
   var ref = null;
   var refListeners = [];
-
-  // A short-link click token rides on the landing URL once; take it off the address bar.
-  var clickToken = null;
-  var landing = new URL(loc.href);
-  if (landing.searchParams.has("sh_c")) {
-    clickToken = landing.searchParams.get("sh_c");
-    landing.searchParams.delete("sh_c");
-    try { history.replaceState(history.state, "", landing.pathname + landing.search + landing.hash); } catch (e) { /* ignore */ }
+  // Settled: the first page view was answered (or given up on), so whoever asks for the reference needn't wait.
+  var refSettled = false, refTimer = null, REF_WAIT_MS = 3000;
+  function settleRef() {
+    refSettled = true;
+    if (refTimer) { clearTimeout(refTimer); refTimer = null; }
+    var waiting = refListeners;
+    refListeners = [];
+    for (var i = 0; i < waiting.length; i++) {
+      try { waiting[i](ref); } catch (e) { /* the page's own code */ }
+    }
   }
 
   var PRIVATE = /^(e-?mail|name|first_?name|last_?name|phone|tel|mobile|password|pass|pwd|token|access_token|id_token|auth|code|key|api_?key|secret|license|ssn|address)$/i;
@@ -108,7 +135,8 @@
     var drop = [];
     u.searchParams.forEach(function (_, k) { if (PRIVATE.test(k)) drop.push(k); });
     for (var i = 0; i < drop.length; i++) u.searchParams.delete(drop[i]);
-    if (!hashMode) u.hash = "";
+    // Only a route ("#/orders") is a page; other fragments can hold tokens.
+    u.hash = hashMode && /^#!?\//.test(u.hash) ? u.hash.split("?")[0] : "";
     return u.href;
   }
 
@@ -123,6 +151,9 @@
   }
 
   function send(type, extra, beacon) {
+    // Consent taken back in another tab: this one stops using the old id too, whatever the server could record.
+    if (consent && store("sh_consent") === "0") { consent = false; vid = rid(22); }
+    var view = type === "pageview";
     var body = { s: siteId, t: type, u: cleanUrl(loc.href), r: d.referrer || "", w: w.screen ? w.screen.width : 0, v: vid };
     if (consent) body.cs = 1;
     for (var k in extra) body[k] = extra[k];
@@ -130,26 +161,29 @@
     if (beacon && nav.sendBeacon) {
       try { if (nav.sendBeacon(api, new Blob([json], { type: "text/plain" }))) return; } catch (e) { /* fall through */ }
     }
-    if (!w.fetch) return;
+    if (!w.fetch) { if (view) settleRef(); return; }
+    if (view && !refSettled && !refTimer) refTimer = setTimeout(settleRef, REF_WAIT_MS);
     w.fetch(api, { method: "POST", body: json, headers: { "Content-Type": "text/plain" }, keepalive: true, credentials: "omit" })
       .then(function (r) { return r.status === 200 ? r.json() : null; })
       .then(function (res) {
-        if (!res) return;
-        if (res.m === "p") store("sh_vid", vid);
+        if (!res) { if (view) settleRef(); return; }
+        // A reply still on its way when consent was taken back doesn't store the id again.
+        if (res.m === "p" && (consent || !res.a)) store("sh_vid", vid);
         else if (res.m === "c") store("sh_vid", null);
         if (res.a && !asks) {
           asks = true;
           var answered = store("sh_consent") === "1" || store("sh_consent") === "0";
           if (reopen || (bannerOn && !answered)) showBanner();
         }
-        if (res.s && res.s !== ref) {
+        if (typeof res.s === "string" && /^[\w-]{8,64}$/.test(res.s) && res.s !== ref) {
           ref = res.s;
           decorateAll();
-          for (var i = 0; i < refListeners.length; i++) refListeners[i](ref);
-          refListeners = [];
+          settleRef();
         }
+        // A page view answered without a reference: none is coming (GPC/DNT), so nobody keeps waiting.
+        if (view) settleRef();
       })
-      .catch(noop);
+      .catch(function () { if (view) settleRef(); });
   }
 
   // ---- Reading: engaged time and scroll depth of the current page.
@@ -447,7 +481,7 @@
     banner.style.cssText = "position:fixed;left:16px;right:16px;bottom:16px;margin:0 auto;max-width:560px;z-index:2147483647;display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;background:#111;color:#fff;font:400 14px/1.45 system-ui,sans-serif;padding:14px 16px;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.25)";
     var text = d.createElement("span");
     text.style.cssText = "flex:1 1 260px";
-    text.textContent = script.getAttribute("data-consent-text") || "We use a random ID in your browser to recognise returning visits. No ads, no sharing.";
+    text.textContent = script.getAttribute("data-consent-text") || "We use a random ID in your browser to recognise your return visits to this site.";
     banner.appendChild(text);
     var buttons = d.createElement("span");
     buttons.style.cssText = "display:flex;gap:8px;margin-left:auto";
@@ -475,16 +509,22 @@
     else if (cmd === "identify") { if (a && typeof a === "object") send("identify", { e: { email: a.email, name: a.name, id: a.user_id || a.id } }); }
     else if (cmd === "pageview") pageview(true);
     else if (cmd === "consent") {
+      var had = consent || store("sh_vid");
       consent = a !== false;
       // "0" remembers a no, so the banner doesn't ask again on every page.
       store("sh_consent", consent ? "1" : "0");
-      if (!consent) { store("sh_vid", null); vid = rid(22); }
+      if (!consent) {
+        // The server stops accepting the old id; a later yes starts with a new one.
+        if (had) send("withdraw", {}, true);
+        store("sh_vid", null);
+        vid = rid(22);
+      }
     }
     else if (cmd === "consent-settings") { if (asks) showBanner(); else reopen = true; }
   }
-  // The visit reference: put it in checkout metadata as sh_ref.
+  // The visit reference: put it in checkout metadata as sh_ref. Null means there is none: leave the field out.
   shorthop.ref = function (cb) {
-    if (typeof cb === "function") { if (ref) cb(ref); else refListeners.push(cb); }
+    if (typeof cb === "function") { if (ref || refSettled) cb(ref); else refListeners.push(cb); }
     return ref;
   };
   shorthop.checkout = withRef;

@@ -118,6 +118,8 @@ export const stripe: ProviderAdapter = {
         kind: "charge",
         providerId: pi ?? str(o.id) ?? "",
         occurredAt: at,
+        // A bank debit completes days after its checkout; the buyer's return page belongs to the checkout.
+        startedAt: sec(o.created),
         amountMinor: num(o.amount_total) ?? 0,
         currency: currency(o.currency) ?? "USD",
         billing: "one_time",
@@ -216,6 +218,7 @@ export const stripe: ProviderAdapter = {
       const unit = str(recurring.interval);
       const status = type === "customer.subscription.deleted" ? "canceled" : SUB_STATUS[str(o.status) ?? ""] ?? "active";
       out.subscriptions.push({
+        eventAt: sec(evt.created),
         providerId: str(o.id) ?? "",
         status: o.ended_at ? "ended" : status,
         customerId: str(o.customer),

@@ -15,7 +15,7 @@ import {
 } from "../shared/protection";
 import { readCapped } from "./body";
 import { nowSec } from "./db";
-import { chargeAttempt, clearFailuresStmt, ipBucket, lock } from "./session";
+import { chargeAttempt, clearFailuresStmt, ipBucket, limiterKey, lock } from "./session";
 
 const COOKIE = "sh_access";
 
@@ -99,7 +99,7 @@ export async function checkPasswordForm(
   const ip = request.headers.get("CF-Connecting-IP");
   if (ip) {
     try {
-      const { success } = await env.LINK_PASSWORD_LIMITER.limit({ key: `pw:${ipBucket(ip)}:${limitKey}` });
+      const { success } = await env.LINK_PASSWORD_LIMITER.limit({ key: `${await limiterKey(env, "pw", ip)}:${limitKey}` });
       if (!success) return { ok: false, reason: "limited" };
     } catch (err) {
       console.error(JSON.stringify({ message: "link password limiter failed", error: String(err) }));
@@ -116,26 +116,38 @@ export async function checkPasswordForm(
   }
   if (!password) return { ok: false, reason: "wrong" };
 
-  // The network's attempt is counted before the check (D1 is strongly
-  // consistent), so parallel guesses from one network still hit its lock.
   const netKey = await networkKey(env, lockKey, ip);
+  const brakedKey = `${lockKey}|braked`;
   const now = nowSec();
   let state;
   let braked = false;
   try {
+    // One read first: what would be refused anyway costs no D1 write, so hammering a lock or a brake adds nothing.
+    const { results } = await env.DB.prepare("SELECT key, fails, window_start, locked_until FROM auth_failures WHERE key IN (?1, ?2, ?3)")
+      .bind(netKey, lockKey, brakedKey)
+      .all<{ key: string; fails: number; window_start: number; locked_until: number }>();
+    const row = (key: string) => results.find((r) => r.key === key);
+    const failsNow = (key: string) => {
+      const r = row(key);
+      return r && now - r.window_start <= LINK_PASSWORD_WINDOW_SEC ? r.fails : 0;
+    };
+    if ((row(netKey)?.locked_until ?? 0) > now) return { ok: false, reason: "limited" };
+    // The link's brake: on after many failures from anywhere. Networks that already guessed wrong wait;
+    // the others share one budget, so many networks can't add up to many guesses.
+    braked = (row(lockKey)?.locked_until ?? 0) > now;
+    if (braked && (failsNow(netKey) >= 1 || failsNow(brakedKey) >= LINK_PASSWORD_BRAKE_TOTAL)) return { ok: false, reason: "limited" };
+
+    // The network's attempt is counted before the check (D1 is strongly
+    // consistent), so parallel guesses from one network still hit its lock.
     state = await chargeAttempt(env.DB, netKey, now, LINK_PASSWORD_WINDOW_SEC);
     if (state.lockedUntil > now) return { ok: false, reason: "limited" };
     if (state.fails > LINK_PASSWORD_NETWORK_MAX_FAILS) {
       await lock(env.DB, netKey, now, state.lockouts, LINK_PASSWORD_LOCK_MAX_SEC);
       return { ok: false, reason: "limited" };
     }
-    // The link's brake: on after many failures from anywhere. Networks that already guessed wrong wait;
-    // the others share one budget, so many networks can't add up to many guesses.
-    const brake = await env.DB.prepare("SELECT locked_until FROM auth_failures WHERE key = ?").bind(lockKey).first<{ locked_until: number }>();
-    braked = !!brake && brake.locked_until > now;
     if (braked) {
       if (state.fails > 1) return { ok: false, reason: "limited" };
-      const all = await chargeAttempt(env.DB, `${lockKey}|braked`, now, LINK_PASSWORD_WINDOW_SEC);
+      const all = await chargeAttempt(env.DB, brakedKey, now, LINK_PASSWORD_WINDOW_SEC);
       if (all.fails > LINK_PASSWORD_BRAKE_TOTAL) return { ok: false, reason: "limited" };
     }
   } catch (err) {

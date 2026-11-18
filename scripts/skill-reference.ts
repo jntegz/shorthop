@@ -9,7 +9,7 @@ import { RULES } from "../src/worker/permissions";
 const groups = new Map<string, string[]>();
 for (const [key, route] of Object.entries(CATALOG)) {
   const rule = RULES[key];
-  const need = !rule ? "" : rule.need === "signed-in" ? "any key" : typeof rule.need === "string" ? rule.need : "any" in rule.need ? rule.need.any.join(" or ") : "all" in rule.need ? rule.need.all.join(" and ") : "";
+  const need = !rule ? "" : rule.need === "signed-in" ? "any key" : rule.need === "links.read" ? "any permission" : typeof rule.need === "string" ? rule.need : "any" in rule.need ? rule.need.any.join(" or ") : "all" in rule.need ? rule.need.all.join(" and ") : "";
   const line = `| \`${key.replace(/:([a-z]+)/gi, "{$1}")}\` | ${route.summary.replaceAll("|", "\\|")} | ${need} |`;
   groups.set(route.tag, [...(groups.get(route.tag) ?? []), line]);
 }

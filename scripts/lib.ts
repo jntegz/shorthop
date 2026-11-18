@@ -21,7 +21,7 @@ export interface ExportRow {
 }
 
 /** Flags that never take a value, so `--dry-run domains` can't read "domains" as its value. */
-const BOOLEAN_FLAGS = new Set(["dry-run", "rotate", "salt", "overwrite", "per-domain", "probe", "generate"]);
+const BOOLEAN_FLAGS = new Set(["dry-run", "rotate", "salt", "overwrite", "per-domain", "probe", "generate", "accept-lost-passwords"]);
 
 export function args(argv = process.argv.slice(2)): { flags: Set<string>; opts: Map<string, string> } {
   const flags = new Set<string>();

@@ -1,6 +1,6 @@
 {
   "name": "shorthop",
-  "version": "2.0.2",
+  "version": "2.0.3",
   "description": "Short links, website analytics and revenue attribution on your own domain, in one Cloudflare Worker you own.",
   "license": "MIT",
   "author": "Jan Tegze (https://jantegze.com)",
@@ -71,6 +71,9 @@
       },
       "API_TOKEN_SCOPE": {
         "description": "Leave it as `create`. Only for the older API token; new installs use API keys from the admin."
+      },
+      "WORKERS_DEV_ADMIN": {
+        "description": "Leave it empty. `off` stops this workers.dev address serving the admin once you have your own domain."
       },
       "DIGEST_PROVIDER": {
         "description": "Leave it as `off`. You can turn email on later in the admin: Settings → Statistics & email → Set up email."

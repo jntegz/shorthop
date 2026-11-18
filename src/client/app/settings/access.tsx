@@ -238,7 +238,15 @@ export function SecuritySection({ me, security }: { me: MeDTO; security: Securit
             <Fact label="Locked networks">
               <span className="settings-a-num">{num(s.lockedNetworks)}</span>
             </Fact>
+            {s.sharedSignIns.length ? (
+              <Fact label="Signed in from several networks (30 days)">
+                {s.sharedSignIns.map((u) => `${u.email === "admin" ? "Admin password" : u.email}: ${num(u.networks)}`).join(" · ")}
+              </Fact>
+            ) : null}
           </Facts>
+          {s.mode === "password" && s.sharedSignIns.length ? (
+            <p className="settings-a-quiet">If that isn't just you on different devices, the password is shared: history tells sessions apart, but not people. Turn on Access to give each person their own sign-in.</p>
+          ) : null}
           <div className="settings-a-actions">
             <Button onClick={() => setConfirmRevoke(true)} disabled={!me.passwordConfigured} title={me.passwordConfigured ? undefined : "Needs an admin password (ADMIN_PASSWORD_HASH)"}>
               Log out everyone
@@ -322,7 +330,7 @@ export function BotCheckSection() {
     <Section
       id="bot-check"
       title="Bot check"
-      sub="Optional Cloudflare Turnstile on the login, forgot-password, invite and reset pages. Off unless you turn it on."
+      sub="Optional Cloudflare Turnstile on the login and forgot-password pages. Off unless you turn it on."
       aside={
         <>
           {d ? d.enabled ? <Badge tone="good">On</Badge> : <Badge>Off</Badge> : null}

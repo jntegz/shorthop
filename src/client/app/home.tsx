@@ -188,7 +188,7 @@ export function TopLinks({ h, limit = 8, title = "Top links" }: { h: Home; limit
   const money = earners >= 2 ? m : null;
   const items: RowItem[] = top.map((l) => {
     const r = earnedBy(l);
-    const host = `${l.target ? hostOf(l.target) : "Deleted link"} · ${num(l.uniques)} unique`;
+    const host = `${l.target ? hostOf(l.target) : l.target === "" ? "Password-protected" : "Deleted link"} · ${num(l.uniques)} unique`;
     return {
       key: `${l.domain}/${l.slug}`,
       label: label(l),

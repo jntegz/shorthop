@@ -18,6 +18,16 @@ export const GLOBAL_MIN_NETWORKS = 5;
 export const GLOBAL_WINDOW_SEC = 60 * 60;
 export const GLOBAL_LOCK_SEC = 15 * 60;
 
+/**
+ * A network that signed in to this account within this time isn't held back by
+ * the global pause (its own lockout still applies), so strangers failing from
+ * many networks can't lock out someone who is already known.
+ */
+export const KNOWN_NETWORK_SEC = 30 * 24 * 60 * 60;
+
+/** System status warns about a plain ADMIN_PASSWORD shorter than this on an install without Access. */
+export const SHORT_ADMIN_PASSWORD = 16;
+
 /** Wrong API keys or tokens per network within API_WINDOW_SEC before it is locked (same doubling as logins). */
 export const API_MAX_FAILS = 10;
 export const API_WINDOW_SEC = 60;

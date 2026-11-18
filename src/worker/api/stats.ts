@@ -1,12 +1,13 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { z } from "zod";
 import { periodBounds } from "../../shared/dates";
-import { HOSTNAME_RE, linkLabel } from "../../shared/domains";
+import { HOSTNAME_RE, linkKey, linkLabel } from "../../shared/domains";
 import { clearMissesSchema, ignoreMissesSchema, linkParamSchema, missExportQuerySchema, missPolicySchema, rangeQuerySchema } from "../../shared/schemas";
 import { can } from "../../shared/permissions";
 import { IMPORT_SLUG_RE } from "../../shared/slug";
-import type { RecentHit } from "../../shared/types";
+import type { OverviewDTO, RecentHit } from "../../shared/types";
 import { aeAvailable, HIT_DEVICES, HIT_EVENTS, queryLive, queryRecent, queryScanners } from "../ae";
+import { seesMisses } from "../auth";
 import { domainsOf } from "../domains";
 import { csv, validate, type AppEnv } from "../hono";
 import { clearMisses, ignoredMisses, ignoreMisses, saveMissPolicy, unignoreAllMisses, unignoreMisses } from "../misses";
@@ -42,13 +43,27 @@ const recentQuerySchema = z.object({
   hours: z.coerce.number().int().min(1).max(30 * 24).default(7 * 24),
 });
 
+/** Top links name their destinations: empty for a password-protected link unless this person can edit links. */
+async function hideProtectedTargets<T extends OverviewDTO>(c: Context<AppEnv>, data: T): Promise<T> {
+  if (can(c.get("actor"), "links.edit") || !data.topLinks.length) return data;
+  const { results } = await c.env.DB.prepare(
+    `SELECT l.domain, l.slug FROM json_each(?1) j
+     JOIN links l ON l.domain = json_extract(j.value, '$[0]') AND l.slug = json_extract(j.value, '$[1]')
+     WHERE l.password_hash IS NOT NULL`,
+  )
+    .bind(JSON.stringify(data.topLinks.map((l) => [l.domain, l.slug])))
+    .all<{ domain: string; slug: string }>();
+  const hidden = new Set(results.map((r) => linkKey(r.domain, r.slug)));
+  return { ...data, topLinks: data.topLinks.map((l) => (hidden.has(linkKey(l.domain, l.slug)) ? { ...l, target: "" } : l)) };
+}
+
 export const statsApi = new Hono<AppEnv>()
   .get("/overview", validate("query", rangeQuerySchema), async (c) => {
-    return c.json(await overview(c.env, c.req.valid("query")));
+    return c.json(await hideProtectedTargets(c, await overview(c.env, c.req.valid("query"))));
   })
 
   .get("/account", validate("query", rangeQuerySchema), async (c) => {
-    return c.json(await overview(c.env, c.req.valid("query"), undefined, { dims: true }));
+    return c.json(await hideProtectedTargets(c, await overview(c.env, c.req.valid("query"), undefined, { dims: true })));
   })
 
   .get("/links/:domain/:slug", validate("param", linkParamSchema), validate("query", rangeQuerySchema), async (c) => {
@@ -186,15 +201,15 @@ export const statsApi = new Hono<AppEnv>()
     const { slug, limit, event, country, device, hours } = c.req.valid("query");
     const domain = c.req.valid("query").domain ?? (slug ? domainsOf(c.env).primary : undefined);
     // Missed visits belong to Link health, like every /stats/misses route: asked for, they're refused; otherwise left out.
-    const seesMisses = can(c.get("actor"), "health.manage");
-    if (event === "miss" && !seesMisses) return c.json(FORBIDDEN, 403);
+    const withMisses = seesMisses(c.get("actor"), c.env);
+    if (event === "miss" && !withMisses) return c.json(FORBIDDEN, 403);
     if (!aeAvailable(c.env)) return c.json({ aeAvailable: false, hits: [] as RecentHit[], error: undefined as string | undefined });
     try {
       const nowSec = Date.now() / 1000;
       const since = nowSec - hours * 3600;
       const misses = event === "miss";
       const [rows, scanners] = await Promise.all([
-        queryRecent(c.env, since, { domain, slug, event, country, device, noMisses: !seesMisses }, limit),
+        queryRecent(c.env, since, { domain, slug, event, country, device, noMisses: !withMisses }, limit),
         misses ? queryScanners(c.env, since, nowSec + 60) : Promise.resolve([]),
       ]);
       const flagged = new Set(scanners);

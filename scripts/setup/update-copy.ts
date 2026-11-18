@@ -1,10 +1,13 @@
-// Brings a Deploy to Cloudflare copy of shorthop up to this version. The Update
-// Shorthop workflow (.github/workflows/update-shorthop.yml) runs it from the new
-// version's release, against a checkout of the copy:
+// Brings a Deploy to Cloudflare copy of shorthop up to a release. The Update
+// Shorthop workflow (.github/workflows/update-shorthop.yml) runs the updater your
+// copy already has, with the release as plain files:
 //
-//   npx tsx scripts/setup/update-copy.ts --target <copy> [--previous <old release>] [--summary <file>] [--dry-run]
+//   npx tsx scripts/setup/update-copy.ts --source <release> --target <copy> [--previous <old release>] [--summary <file>] [--dry-run]
 //
-// Every file of this version is copied over the copy, and files the previous
+// Without --source the release is the folder this file is in: how workflows from
+// before 2.0.3 run it, from inside the release.
+//
+// Every file of the release is copied over the copy, and files the previous
 // version had but this one doesn't are deleted. Not touched: .github/workflows
 // (the workflow's token can't write them; the summary lists what changed) and
 // anything listed in the copy's .shorthop-keep, one path or glob per line.
@@ -19,6 +22,7 @@ import { BUTTON_FILE, mergeButtonConfig } from "./template";
 
 const REPO = "https://github.com/jntegz/shorthop";
 const WORKFLOWS = ".github/workflows/";
+const UPDATE_WORKFLOW = `${WORKFLOWS}update-shorthop.yml`;
 const KEEP_FILE = ".shorthop-keep";
 /** Never part of a release, even after `npm ci` in it. `.git` is a file in a worktree. */
 const SKIP = new Set([".git", "node_modules", "dist", ".wrangler"]);
@@ -153,12 +157,23 @@ export function configNotices(wranglerToml: string): string[] {
   return [];
 }
 
-export function summarize(plan: Plan, from: string, to: string, changelog: string, notices: string[] = []): string {
+export function summarize(plan: Plan, from: string, to: string, changelog: string, notices: string[] = [], opts: { ranFromRelease?: boolean } = {}): string {
   const list = (paths: string[]) => paths.map((p) => `- \`${p}\``).join("\n");
   const parts = [`## Shorthop ${from} → ${to}`, ""];
   parts.push(`${plan.write.length} files updated, ${plan.remove.length} removed${plan.wrangler !== null ? ", and `wrangler.toml` brought up to date (your ids, routes and vars kept)" : ""}.`);
   parts.push("", `Before merging, read the Upgrading notes in the [changelog](${REPO}/blob/v${to}/CHANGELOG.md).`);
   if (notices.length) parts.push("", "### Check your configuration", "", ...notices.map((n) => `- ${n}`));
+  if (plan.workflows.includes(UPDATE_WORKFLOW)) {
+    parts.push(
+      "",
+      "### Your update workflow is out of date",
+      "",
+      `\`${UPDATE_WORKFLOW}\` in your copy differs from this release's, and only you can change it. Copy it from ${REPO}/blob/v${to}/${UPDATE_WORKFLOW} before the next update: fixes to how updates run reach you only that way.`,
+      ...(opts.ranFromRelease
+        ? ["", "This run used your copy's older workflow, which installs and runs the new release's code in a job that can write to your repository. From 2.0.3 the workflow doesn't, but only once you have copied it in."]
+        : []),
+    );
+  }
   if (plan.workflows.length) {
     parts.push(
       "",
@@ -195,7 +210,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   if (!flags.has("dry-run")) applyUpdate(source, target, plan);
   const changelog = existsSync(join(source, "CHANGELOG.md")) ? readFileSync(join(source, "CHANGELOG.md"), "utf8") : "";
   const copyConfig = join(target, BUTTON_FILE);
-  const summary = summarize(plan, from, to, changelog, existsSync(copyConfig) ? configNotices(readFileSync(copyConfig, "utf8")) : []);
+  const summary = summarize(plan, from, to, changelog, existsSync(copyConfig) ? configNotices(readFileSync(copyConfig, "utf8")) : [], { ranFromRelease: !opts.has("source") });
   const summaryFile = opts.get("summary");
   if (summaryFile) writeFileSync(summaryFile, summary);
   console.log(summary);

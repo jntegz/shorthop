@@ -147,6 +147,7 @@ export function LinkPicker({
   value,
   onChange,
   exclude = [],
+  withTarget = false,
   className,
 }: {
   id: string;
@@ -156,6 +157,8 @@ export function LinkPicker({
   onChange: (key: string, link: LinkDTO | null) => void;
   /** Links not to offer, as linkKeys. */
   exclude?: string[];
+  /** Only links whose destination this person can see (a password-protected link's is hidden without Edit links). */
+  withTarget?: boolean;
   className?: string;
 }) {
   const linkLabel = useLinkLabel();
@@ -164,7 +167,7 @@ export function LinkPicker({
     queryFn: () => call(api.links.$get({ query: { sort: "slug", period: "7d" } })),
   });
   const options = (candidates.data?.links ?? []).filter(
-    (l) => linkKey(l.domain, l.slug) === value || (linkState(l) === "active" && !exclude.includes(linkKey(l.domain, l.slug))),
+    (l) => linkKey(l.domain, l.slug) === value || (linkState(l) === "active" && !exclude.includes(linkKey(l.domain, l.slug)) && (!withTarget || l.target !== "")),
   );
   return (
     <Select

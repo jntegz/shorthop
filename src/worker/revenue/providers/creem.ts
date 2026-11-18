@@ -195,6 +195,7 @@ export const creem: ProviderAdapter = {
       const period = PERIODS[str(product.billing_period) ?? ""];
       const status = SUB_STATUS[str(o.status) ?? type.slice("subscription.".length)] ?? "active";
       out.subscriptions.push({
+        eventAt: sec(evt.created_at),
         providerId: str(o.id) ?? "",
         status,
         customerId: idOf(o.customer),

@@ -155,6 +155,7 @@ export const lemonsqueezy: ProviderAdapter = {
     if (type.startsWith("subscription_") && !type.startsWith("subscription_payment_")) {
       const status = SUB_STATUS[str(a.status) ?? ""] ?? "active";
       out.subscriptions.push({
+        eventAt: sec(a.updated_at),
         providerId: id,
         status,
         customerId: str(a.customer_id),

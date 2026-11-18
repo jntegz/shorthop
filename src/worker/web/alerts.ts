@@ -23,6 +23,15 @@ export const SPIKE_FACTOR = 4;
 export const SPIKE_MIN_VISITS = 20;
 const SPIKE_QUIET_SEC = 6 * 3600;
 const BASELINE_DAYS = 7;
+/**
+ * Sources are whatever visitors send, so one run's output is capped: webhook
+ * events for the biggest few (the first says how many more there were), lines
+ * in the email and rows kept. The rest would otherwise queue ahead of other
+ * webhooks and fill the email.
+ */
+const SPIKE_EVENTS_PER_RUN = 3;
+const SPIKE_LINES_PER_EMAIL = 10;
+const SPIKES_KEPT_PER_RUN = 20;
 /** Sites one run looks at. A site with a spike and its digest due costs about 15 subrequests (D1, webhooks, two emails). */
 const SITES_PER_RUN = { free: 2, paid: 100 } as const;
 
@@ -67,16 +76,28 @@ const siteUrl = (env: Env, site: SiteDTO) => `${adminOrigin(env)}/_admin/sites/$
 
 async function reportSpikes(env: Env, site: SiteDTO, spikes: Spike[], now: number): Promise<void> {
   await env.DB.batch(
-    spikes.map((s) => env.DB.prepare("INSERT OR IGNORE INTO site_spikes (site_id, source, detected_at, visits, baseline) VALUES (?1, ?2, ?3, ?4, ?5)").bind(site.id, s.source, now, s.visits, s.baseline)),
+    spikes
+      .slice(0, SPIKES_KEPT_PER_RUN)
+      .map((s) => env.DB.prepare("INSERT OR IGNORE INTO site_spikes (site_id, source, detected_at, visits, baseline) VALUES (?1, ?2, ?3, ?4, ?5)").bind(site.id, s.source, now, s.visits, s.baseline)),
   );
+  const others = spikes.slice(SPIKE_EVENTS_PER_RUN);
   await emitAll(
     env,
-    spikes.map((s) => ({
+    spikes.slice(0, SPIKE_EVENTS_PER_RUN).map((s, i) => ({
       type: "site.traffic_spike" as const,
-      data: { site: { id: site.id, name: site.name }, source: s.source, channel: s.channel, visits_last_hour: s.visits, usual_per_hour: s.baseline, detected_at: new Date(now * 1000).toISOString() },
+      data: {
+        site: { id: site.id, name: site.name },
+        source: s.source,
+        channel: s.channel,
+        visits_last_hour: s.visits,
+        usual_per_hour: s.baseline,
+        detected_at: new Date(now * 1000).toISOString(),
+        ...(i === 0 && others.length ? { other_sources: others.length, other_sources_visits: others.reduce((n, o) => n + o.visits, 0) } : {}),
+      },
     })),
   );
-  const lines = spikes.map((s) => `${sourceText(s.source)} (${s.channel}): ${s.visits} visits in the last hour, usually ${s.baseline} an hour.`);
+  const lines = spikes.slice(0, SPIKE_LINES_PER_EMAIL).map((s) => `${sourceText(s.source)} (${s.channel}): ${s.visits} visits in the last hour, usually ${s.baseline} an hour.`);
+  if (spikes.length > SPIKE_LINES_PER_EMAIL) lines.push(`And ${spikes.length - SPIKE_LINES_PER_EMAIL} more sources.`);
   const top = spikes[0]!;
   await mail(
     env,

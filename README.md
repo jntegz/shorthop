@@ -33,7 +33,7 @@ What users of hosted shorteners keep running into, and what Shorthop does instea
 
 - **Revenue per link.** A short link takes someone to your site, and Shorthop follows that visit to the payment it led to. A link straight to a Stripe, Lemon Squeezy, Dodo, Creem or Gumroad checkout is credited too, with no website in between. Revenue is broken down by link, channel, campaign and landing page.
 - **Everything in your account.** Links live on `go.yourdomain.com`, and every number stays in your Cloudflare account. Back it all up as one ZIP whenever you like.
-- **Cookieless.** Nothing is stored in the visitor's browser and no IP addresses are kept. Unique visitors are counted with a daily hash that can't be traced back afterwards.
+- **Cookieless.** Nothing is stored in the visitor's browser, and Shorthop keeps no IP addresses. Unique visitors are counted with a daily hash that can't be traced back afterwards.
 - **Reports you can send.** Send a sponsor or client a live, read-only page for one link, or a campaign report for a tag or a set of links, with revenue if you choose. They never see your login or your destinations.
 - **Free to run.** One Worker on Cloudflare's free tier covers most personal use (100,000 requests a day). Install it with one button.
 
@@ -81,7 +81,7 @@ Earlier releases are in the [changelog](CHANGELOG.md).
 - **Per click:** country, region, city, device, OS, browser, referrer, source tag and language. Humans, bots and misses are counted separately.
 - **Live map:** a globe of the latest human clicks, at city level, with the top countries and links.
 - **When people click:** a weekday × hour heatmap in your own time zone, per link and for the whole account.
-- **Private by design:** no IP addresses or cookies are stored. Unique visitors are counted with a daily hash whose random salt is deleted once the day is over. See [visitor privacy](docs/PRIVACY.md).
+- **Private by design:** Shorthop stores no IP addresses or cookies (Cloudflare, which runs it, sees them to deliver the request). Unique visitors are counted with a daily hash whose random salt is deleted once the day is over. See [visitor privacy](docs/PRIVACY.md).
 - **Any period:** today, 7, 30 or 90 days, 12 months, all time or any dates, compared with the previous period.
 - **Kept for good:** a daily job saves each day into D1, so stats outlive Analytics Engine's 90-day retention.
 
@@ -106,7 +106,7 @@ Earlier releases are in the [changelog](CHANGELOG.md).
 - **Subscriptions and refunds:** MRR, churn, new against renewal revenue; refunds and disputes follow their charge. Amounts are converted to the site's currency at the day's ECB rate. Past payments can be imported (all providers except PayPal).
 - **Revenue per short link:** short links to a tracked site carry a signed click token (`?sh_c=`), so each link shows the visits and revenue it brought.
 - **Alerts:** an email for each payment, hourly traffic-spike alerts, a daily summary, and `site.payment` / `site.traffic_spike` webhooks. Seeing revenue needs its own permission.
-- **Privacy requests:** find one visitor or customer by email, visitor ID or payment ID, export everything stored about them as JSON, or erase them while their payments' amounts stay in revenue reports. Customer details on payments can expire after 1 to 7 years. See [requests from visitors and customers](docs/PRIVACY.md#requests-from-visitors-and-customers).
+- **Privacy requests:** find one visitor or customer by email, visitor ID or payment ID, export what's stored about them as JSON, or erase them while their payments' amounts stay in revenue reports. Links a browser could have faked are shown apart and left out unless you include them. Customer details and visit history can expire after 1 to 7 years. See [requests from visitors and customers](docs/PRIVACY.md#requests-from-visitors-and-customers).
 
 ### Keeping links working
 
@@ -119,7 +119,7 @@ Earlier releases are in the [changelog](CHANGELOG.md).
 ### People, automation and appearance
 
 - **People and roles:** with Cloudflare Access, add people as admins, managers or users, each with their own password and the permissions you tick. Pause someone until a date, sign them out everywhere, and let them reset a forgotten password by email. An optional Cloudflare Turnstile check guards the password pages.
-- **API at `/api`:** personal API keys for scripts, Zapier or Make and an [iOS Shortcut](docs/ios-shortcut.md). A key does only what it was given, can expire, and stops working when it's revoked. The admin has a searchable API reference, and `/api/openapi.json` describes every endpoint.
+- **API at `/api`:** personal API keys for scripts, Zapier or Make and an [iOS Shortcut](docs/ios-shortcut.md). A key does only what it was given, can expire, and stops working when it's revoked or its owner loses access. The admin has a searchable API reference, and `/api/openapi.json` describes every endpoint.
 - **AI assistants:** an MCP server at `/api/mcp` lets Claude Code, Cursor or VS Code create links, read statistics and check revenue with your API key and its permissions. Or install the skill: `npx skills add jntegz/shorthop`.
 - **Webhooks:** signed events for links created, changed or deleted, clicks, destinations down or back, click milestones, payments and traffic spikes, with retries and a delivery log.
 - **Quick capture:** a "Shorten this page" bookmarklet, and Shorthop in your phone's share sheet once you install the admin as an app.
@@ -219,7 +219,7 @@ More in [Troubleshooting](docs/SETUP.md#troubleshooting). Dashboard → **System
 
 Dashboard → System status shows the version you run and says when a new release is out. On GitHub, **Watch → Custom → Releases** emails you about each one.
 
-- **Installed with the button:** in your copy on GitHub, run **Actions → Update Shorthop**. It opens a pull request with the new version, keeping your `wrangler.toml` ids, routes and vars; merging it deploys. ([Details](docs/SETUP.md#update-button), including copies from before 1.2.0.)
+- **Installed with the button:** first copy this release's [`update-shorthop.yml`](.github/workflows/update-shorthop.yml) into your copy, because an update can't change its own workflow. Then, in your copy on GitHub, run **Actions → Update Shorthop**. It opens a pull request with the new version, keeping your `wrangler.toml` ids, routes and vars; merging it deploys. ([Details](docs/SETUP.md#update-button), including copies from before 1.2.0.)
 - **Installed with the setup wizard:** `git pull`, `npm ci`, then `npm run setup -- upgrade`, which updates `wrangler.jsonc`, applies the database migrations and deploys ([updating](docs/SETUP.md#updating)).
 
 Read the [changelog](CHANGELOG.md)'s Upgrading notes for each version first.
@@ -244,8 +244,8 @@ On Free, the daily requests are a hard cap for the whole account: once they're u
 
 - **Admin:** Cloudflare Access (verified in the Worker, not only at the edge) plus a password, by default. Password-only sign-in is possible, but only with the exact setting `ADMIN_AUTH="password"`; any other gap in the configuration keeps the admin closed. See [SECURITY.md](SECURITY.md).
 - **People:** owners (`ADMIN_EMAIL`) use the admin password; everyone else has their own, chosen from a one-time invite link (24 hours) or a reset link (1 hour, rate-limited, emailed only to their Access address). Every API route has a permission rule, checked in the Worker, and a route without one is refused. Without Access there's only the owner.
-- **Password login:** at least 9 characters (the setup generates a 32-character one by default), PBKDF2-SHA256, a signed `__Host-` session cookie bound to the signed-in identity, lockouts per network that double with each lockout, and a global brake. IP addresses are never stored, only a keyed hash.
-- **API:** personal API keys, stored only as a SHA-256 hash and limited to what their owner may do; failed attempts lock the network. The older `API_TOKEN` secret still works, and by default it can read and create links but not change or delete them (`API_TOKEN_SCOPE`).
+- **Password login:** at least 9 characters (the setup generates a 32-character one by default), PBKDF2-SHA256, a signed `__Host-` session cookie bound to the signed-in identity, lockouts per network that double with each lockout, and a global brake. Shorthop's database holds no IP addresses, only a keyed hash of the network.
+- **API:** personal API keys, stored only as a SHA-256 hash and limited to what their owner may do; failed attempts lock the network. The older `API_TOKEN` secret still works: by default it reads links and statistics and creates links, but can't change or delete them or read webhooks, shares and customer data (`API_TOKEN_SCOPE`).
 - **Secrets:** stored as Wrangler secrets. The setup sends them to Cloudflare through stdin and never writes them to disk. The admin never displays them. A Deploy to Cloudflare install keeps its generated session secret and visitor salt in D1 until you set your own.
 - **Redirects:** targets must be `https://` and can't point back at the shortener.
 
@@ -300,7 +300,8 @@ npm run types            # then regenerate worker-configuration.d.ts
 | `AE_DATASET` | var | The Analytics Engine dataset name (letters, digits, `_`) |
 | `AE_WEB_DATASET` | var | The Analytics Engine dataset for website visits (the `WEB` binding; letters, digits, `_`) |
 | `WORKERS_PLAN` | var | `free` or `paid`. Sizes bulk work (republish pages, import batches, destination checks per run) to the plan's 50 or 10,000 calls per invocation, and System status checks the password hash cost against it |
-| `API_TOKEN_SCOPE` | var | `create` (default): the API token reads, creates links and imports new ones. `full`: it can also change and delete links and settings. Anything else means `create` |
+| `API_TOKEN_SCOPE` | var | `create` (default): the API token reads links, statistics and checks, creates links and imports new ones. `full`: it can do everything an owner can, including webhooks, shares and sites. Anything else means `create` |
+| `WORKERS_DEV_ADMIN` | var | `off`: once `SHORT_DOMAINS` is set, the workers.dev address no longer serves the admin or the API. Empty keeps it as a way back in if your domain breaks. With no domain yet it always serves them |
 | `KV_CACHE_TTL` | var | Edge cache for slug lookups in seconds (default 60; values under 30 fall back to 60) |
 | `DIGEST_PROVIDER` | var | Default delivery: `cloudflare`, `resend`, `emailit`, `postmark`, `sendgrid`, `mailgun`, `custom`, `webhook` or `off`. Settings → Statistics & email → Weekly digest → **Set up email** can override it (and `DIGEST_FROM`) without a deploy |
 | `DIGEST_FROM`, `DIGEST_TO` | var | Sender and the only recipient of the digest and alerts |
@@ -315,7 +316,7 @@ npm run types            # then regenerate worker-configuration.d.ts
 | `ADMIN_PASSWORD` | secret | The owners' password in plain text, at least 9 characters: what the Deploy to Cloudflare button sets. Used only without `ADMIN_PASSWORD_HASH` |
 | `SESSION_SECRET` | secret | Signs admin sessions, link-password cookies and webhook secrets; rotating it logs everyone out and makes webhook secrets unreadable. Without it, one is generated and kept in D1 |
 | `CF_ANALYTICS_TOKEN` | secret | Optional: API token with Account Analytics Read, for stats |
-| `TURNSTILE_SECRET` | secret | Optional: the Turnstile widget's secret key, for the bot check on the password pages |
+| `TURNSTILE_SECRET` | secret | Optional: the Turnstile widget's secret key, for the bot check on the login and forgot-password pages |
 | `RESEND_API_KEY`, `EMAILIT_API_KEY`, `POSTMARK_API_KEY`, `SENDGRID_API_KEY`, `MAILGUN_API_KEY` | secret | Each provider's own API key. An older `DIGEST_API_KEY` still works, for the provider named in `DIGEST_PROVIDER` only |
 | `DIGEST_CUSTOM_URL`, `DIGEST_CUSTOM_API_KEY` | secret | Custom email API only: HTTPS endpoint and key |
 | `DIGEST_WEBHOOK_URL`, `DIGEST_WEBHOOK_SECRET` | secret | Webhook endpoint and its HMAC key |
@@ -340,10 +341,10 @@ npm run types            # then regenerate worker-configuration.d.ts
 | `/_admin/bot-check` | Turning on the optional Turnstile check, after a test passes |
 | `/_admin`, `/_admin/**` | Access JWT (unless password-only) and the password session, then the admin app with a strict CSP |
 | `/_admin/assets/*`, `/robots.txt`, `/favicon.ico` | Static assets, served without running the Worker |
-| `/_admin/api/*` | The API for the admin app: CSRF check, identity and session |
+| `/_admin/api/*` | The API for the admin app: CSRF and same-origin checks, identity and session |
 | `/api/mcp` | The MCP server for AI assistants: JSON-RPC over HTTP, each tool calling the API with the caller's key |
 | `/api/openapi.json` | The API described as OpenAPI 3.0 |
-| `/api/*` | The same API with a personal API key, or the `API_TOKEN` secret (read and create only, unless `API_TOKEN_SCOPE` is `full`) |
+| `/api/*` | The same API with a personal API key, or the `API_TOKEN` secret (reads links and statistics and creates links, unless `API_TOKEN_SCOPE` is `full`) |
 | `/health` | `ok` |
 
 Asset routing uses `html_handling: "none"`, `not_found_handling: "none"` and `run_worker_first: ["/_admin/*", "!/_admin/assets/*"]`. Don't turn on SPA mode: browser navigations to slugs would stop reaching the Worker.
@@ -355,7 +356,7 @@ _admin/index.html          admin app entry (builds to dist/client/_admin/)
 migrations/                D1 schema
 public/                    robots.txt, favicon, brand icon
 scripts/setup/             npm run setup: the wizard, config template, deploy guard, button-copy updater
-scripts/                   import, check-slugs, seed-dev, hash-password
+scripts/                   import, check-slugs, seed-dev, hash-password, restore-backup
 src/shared/                slug rules, domains, UTM handling, schemas, API types, brand, cron schedule
 src/worker/index.ts        entry: request dispatch and cron handlers
 src/worker/redirect.ts     the click path
@@ -388,9 +389,9 @@ docs/                      SETUP.md, CLOUDFLARE-FREE-TIER.md, PRIVACY.md, DESIGN
 ## Design notes
 
 - **302, not 301:** browsers cache 301s, which would skip the Worker on repeat clicks, lose the data, and make links impossible to retarget.
-- **A 60-second KV cache:** a cached value, including a cached "not found", lives until its TTL ends. At 60 seconds, edits reach everyone within about a minute.
+- **A 60-second KV cache:** a cached value, including a cached "not found", lives until its TTL ends. At 60 seconds, edits reach everyone within about a minute or two. That includes turning a link off or adding a password: it isn't instant, and the admin says so. `KV_CACHE_TTL` can go down to 30.
 - **Daily uniques:** the visitor hash covers the IP address, user agent and date, with a secret salt and a random salt for that day. The daily job deletes each day's salt once the day is over, so afterwards nobody, the owner included, can work out whose visit a hash was. Hashes can't be followed across days. Stats show the sum of daily uniques.
-- **Imported links** keep `http://` targets and get no UTM tags, so they redirect exactly as before. New links must be `https://`.
+- **Imported links** get no UTM tags, so they redirect exactly as before. Every destination must be `https://`, in an import too; a link imported with `http://` by an earlier version keeps it until you change it.
 - **Bots** still get the redirect but are counted separately, by user agent, HEAD and prefetch requests, and datacenter networks. iCloud Private Relay is deliberately not flagged. A visitor that misses 5 or more different paths in one UTC day counts as a scanner, and that can include you while you test typos. Chrome prerendering an address as you type it counts as a bot too. The Misses page’s **Latest misses, as recorded** shows how each recent miss was counted.
 
 ## FAQ

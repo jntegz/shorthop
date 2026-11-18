@@ -52,6 +52,10 @@ export interface LinkRow {
   password_hash: string | null;
   /** Most human clicks allowed, or null for no limit. */
   max_clicks: number | null;
+  /** Replaced by every saved change: the link's version (null reads as "0"). */
+  rev?: string | null;
+  /** When an imported link's click limit began: a counter from before starts again. */
+  cap_since?: number | null;
   created_at: number;
   updated_at: number;
 }
@@ -84,6 +88,8 @@ export interface KvLink {
   pw?: string;
   /** click limit, counted by the ClickCap Durable Object */
   mc?: number;
+  /** a click count from before this moment (unix seconds) doesn't apply: the link came back through an import */
+  cs?: number;
   /** the destination is flagged as malware or phishing: visitors see a warning first */
   w?: 1;
   /** a link-in-bio page, shown instead of redirecting (u stays as the fallback) */
@@ -120,11 +126,13 @@ export function isKvLink(v: unknown): v is KvLink {
     (r.ro === undefined || Array.isArray(r.ro)) &&
     (r.og === undefined || (typeof r.og === "object" && r.og !== null)) &&
     (r.pw === undefined || typeof r.pw === "string") &&
-    (r.mc === undefined || typeof r.mc === "number")
+    (r.mc === undefined || typeof r.mc === "number") &&
+    (r.cs === undefined || typeof r.cs === "number")
   );
 }
 
-function toKv(row: LinkRow, defaultUtm: string): KvLink {
+/** The record a link publishes to KV. */
+export function toKv(row: LinkRow, defaultUtm: string): KvLink {
   const kv: KvLink = {
     u: row.target,
     a: row.active ? 1 : 0,
@@ -151,6 +159,7 @@ function toKv(row: LinkRow, defaultUtm: string): KvLink {
   }
   if (row.password_hash) kv.pw = row.password_hash;
   if (row.max_clicks) kv.mc = row.max_clicks;
+  if (row.max_clicks && row.cap_since) kv.cs = row.cap_since;
   if (row.unsafe === 1) kv.w = 1;
   const bio = parseBio(row.bio);
   if (bio) kv.bio = bio;
@@ -202,6 +211,7 @@ export function toDTO(row: LinkRow, origin: string): LinkDTO {
     qr: parseQrStyle(row.qr),
     protected: Boolean(row.password_hash),
     maxClicks: row.max_clicks,
+    version: row.rev ?? "0",
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

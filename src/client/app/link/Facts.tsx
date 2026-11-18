@@ -246,10 +246,14 @@ export function Facts({
       <dl className="ui-ld-facts-list">
         <CheckFact link={link} onMarkBroken={onMarkBroken} />
         <Fact label="Destination" wide>
-          <a href={link.target} target="_blank" rel="noreferrer noopener" className="ui-ld-fact-link ui-ld-fact-url">
-            {link.target}
-            <span className="ui-sr"> (opens in a new tab)</span>
-          </a>
+          {link.target ? (
+            <a href={link.target} target="_blank" rel="noreferrer noopener" className="ui-ld-fact-link ui-ld-fact-url">
+              {link.target}
+              <span className="ui-sr"> (opens in a new tab)</span>
+            </a>
+          ) : (
+            "Hidden: this link is password-protected, and only people who can edit links see where it goes."
+          )}
         </Fact>
         {link.title ? <Fact label="Title">{link.title}</Fact> : null}
         <Fact label="Tags">

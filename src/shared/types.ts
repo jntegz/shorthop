@@ -7,6 +7,7 @@ import type { Actor, Permission, Role } from "./permissions";
 import type { LinkPreview } from "./preview";
 import type { QrStyle } from "./qr";
 import type { Routing } from "./routing";
+import type { WebhookFieldSet } from "./webhooks";
 
 /** "import" is every imported link (the name is older than the other sources). */
 export type LinkSource = "native" | "import";
@@ -70,6 +71,8 @@ export interface LinkDTO {
   protected: boolean;
   /** Most human clicks allowed; null for no limit. */
   maxClicks: number | null;
+  /** Changes with every saved edit. Send it back as `version` to refuse a change made on top of an older state. */
+  version: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -155,7 +158,7 @@ export interface VersionDTO {
   /** Unix seconds. */
   at: number;
   action: HistoryAction;
-  /** Access email, "email · API key name", "api-token" or "system". */
+  /** Access email, "email · API key name", "admin · session …", "api-token · network …" or "system". */
   actor: string;
   /** The link after the change (before it, for a delete). */
   snapshot: StoredSnapshot;
@@ -189,7 +192,15 @@ export interface WebhookDTO {
   active: boolean;
   /** link.clicked only for links with one of these tags; empty for every link. */
   clickTags: string[];
+  /** How much it is sent about people. */
+  fields: WebhookFieldSet;
   createdAt: number;
+  /** Who created or last changed it, as history records them; null for webhooks from before this was kept. */
+  changedBy: string | null;
+  /** The API key that last changed it was revoked at this time: review it. Saving it clears this. */
+  keyRevokedAt: number | null;
+  /** Its address was set by someone who can't edit links: it isn't sent where password-protected links go. Saving it with Edit links clears this. */
+  hidesProtected: boolean;
   /** False after its encryption key (ENCRYPTION_KEY or SESSION_SECRET) changed: rotate the secret. */
   secretReadable: boolean;
   /** Deliveries waiting for a retry. */
@@ -467,6 +478,8 @@ export interface SecurityDTO {
   globalLockedUntil: number | null;
   /** Newest first. email is null for logins recorded before it was kept. */
   recent: { at: number; ok: boolean; country: string; email: string | null }[];
+  /** Accounts signed in from more than one network in the last 30 days: a shared password shows up here. */
+  sharedSignIns: { email: string; networks: number }[];
 }
 
 /** GET /me: who is signed in, what they may do, and what every page needs. */

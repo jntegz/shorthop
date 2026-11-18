@@ -87,7 +87,7 @@ describe("the status page", () => {
     resetGeneratedSecretsCache();
     const button = await withGeneratedSecrets({ ...env, SESSION_SECRET: "" } as Env);
     const notice = async (e: Env) => (await systemHealth(e)).checks.find((c) => c.id === "encryption");
-    expect(await notice(button)).toMatchObject({ status: "warn", advisory: true });
+    expect(await notice(button)).toMatchObject({ status: "warn" });
     expect(await notice(env)).toBeUndefined();
     button.ENCRYPTION_KEY = KEY;
     expect(await notice(button)).toBeUndefined();

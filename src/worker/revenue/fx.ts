@@ -7,8 +7,14 @@
 // amount, counts as 0 in the site's totals, and the overview says how many.
 
 import { FX_CURRENCIES, minorFactor } from "../../shared/sites";
+import { noteAnomaly } from "./anomalies";
 
 const FX_API = "https://api.frankfurter.dev/v1";
+/** Units per EUR no currency comes near, either way: a value outside is not a rate and isn't stored. */
+const MIN_RATE = 1e-6;
+const MAX_RATE = 1e7;
+/** A rate this many times away from the last stored one is reported. Real moves can be large, so it is stored all the same. */
+const RATE_JUMP = 3;
 /** Weekends and holidays have no rates: the latest earlier day counts. */
 const LOOKBACK_DAYS = 7;
 
@@ -71,11 +77,28 @@ export async function fetchRates(db: D1Database, day: string | "latest"): Promis
   if (!res.ok) throw new Error(`FX rates ${day}: HTTP ${res.status}`);
   const body = (await res.json()) as { date?: string; rates?: Record<string, number> };
   if (!body.date || !body.rates) return null;
-  const stmts = Object.entries(body.rates)
-    .filter(([c, r]) => /^[A-Z]{3}$/.test(c) && Number.isFinite(r) && r > 0)
-    .map(([c, r]) => db.prepare("INSERT INTO fx_rates (date, currency, rate) VALUES (?1, ?2, ?3) ON CONFLICT (date, currency) DO UPDATE SET rate = excluded.rate").bind(body.date, c, r));
+  const all = Object.entries(body.rates).filter(([c, r]) => /^[A-Z]{3}$/.test(c) && Number.isFinite(r) && r > 0);
+  const rates = all.filter(([, r]) => r >= MIN_RATE && r <= MAX_RATE);
+  if (rates.length < all.length) await noteAnomaly(db, "", "fx_rate", `Not stored for ${body.date}: ${all.filter(([, r]) => r < MIN_RATE || r > MAX_RATE).map(([c]) => c).join(", ")}`);
+  await reportRateJumps(db, body.date, rates);
+  const stmts = rates.map(([c, r]) => db.prepare("INSERT INTO fx_rates (date, currency, rate) VALUES (?1, ?2, ?3) ON CONFLICT (date, currency) DO UPDATE SET rate = excluded.rate").bind(body.date, c, r));
   if (stmts.length) await db.batch(stmts);
   return body.date;
+}
+
+/** Rates far from the latest ones stored before them: logged and counted for System status. */
+async function reportRateJumps(db: D1Database, date: string, rates: [string, number][]): Promise<void> {
+  try {
+    const { results } = await db.prepare("SELECT currency, rate FROM fx_rates WHERE date = (SELECT MAX(date) FROM fx_rates WHERE date < ?1)").bind(date).all<{ currency: string; rate: number }>();
+    const before = new Map(results.map((r) => [r.currency, r.rate]));
+    const jumped = rates.filter(([c, r]) => {
+      const old = before.get(c);
+      return old !== undefined && old > 0 && Math.max(r / old, old / r) >= RATE_JUMP;
+    });
+    if (jumped.length) await noteAnomaly(db, "", "fx_rate", `${date}: ${jumped.map(([c]) => c).join(", ")}`);
+  } catch (err) {
+    console.error(JSON.stringify({ message: "fx rate check failed", date, error: String(err) }));
+  }
 }
 
 /** SQL: the payment (alias `p`, or `a`) of a site (alias `s`) can be converted once rates are in; ?N is FX_CURRENCIES as JSON. */
@@ -195,13 +218,18 @@ async function subscriptionUpdates<T extends SubscriptionPrice>(db: D1Database, 
  */
 export async function reconvertSite(db: D1Database, siteId: string, siteCurrency: string): Promise<void> {
   const { results } = await db
-    .prepare("SELECT id, amount_minor, currency, date(occurred_at, 'unixepoch') AS day FROM payments WHERE site_id = ?1")
+    // An unconfirmed refund or dispute of a confirmed charge, or of none, stays at 0 (src/worker/revenue/ingest.ts).
+    .prepare(
+      `SELECT id, amount_minor, currency, date(occurred_at, 'unixepoch') AS day,
+         kind != 'charge' AND unverified = 1 AND COALESCE((SELECT c.unverified FROM payments c WHERE c.id = payments.parent_id), 0) = 0 AS held
+       FROM payments WHERE site_id = ?1`,
+    )
     .bind(siteId)
-    .all<{ id: string; amount_minor: number; currency: string; day: string }>();
+    .all<{ id: string; amount_minor: number; currency: string; day: string; held: number }>();
   const updates: D1PreparedStatement[] = [];
   const cache: RateCache = new Map();
   for (const p of results) {
-    const amount = await convert(db, p.amount_minor, p.currency, siteCurrency, p.day, cache);
+    const amount = p.held ? 0 : await convert(db, p.amount_minor, p.currency, siteCurrency, p.day, cache);
     updates.push(db.prepare("UPDATE payments SET amount_site_minor = ?1, fx_tried_at = NULL WHERE id = ?2").bind(amount, p.id));
   }
   const { results: subs } = await db

@@ -4,6 +4,7 @@
 import { toBase64Url } from "../../shared/password";
 import { hostBelongs, ID_MODES, type AttributionModel, type CreateSiteInput, type IdMode, type SiteDTO, type UpdateSiteInput } from "../../shared/sites";
 import { nowSec, withTimeout } from "../db";
+import { resetErasureCache } from "./erasure";
 
 export interface SiteRow {
   id: string;
@@ -150,6 +151,7 @@ export async function deleteSite(db: D1Database, id: string): Promise<boolean> {
     db.prepare("DELETE FROM payments WHERE site_id = ?").bind(id),
     db.prepare("DELETE FROM payment_claims WHERE site_id = ?").bind(id),
     db.prepare("DELETE FROM payment_links WHERE site_id = ?").bind(id),
+    db.prepare("DELETE FROM payment_anomalies WHERE site_id = ?").bind(id),
     db.prepare("DELETE FROM subscriptions WHERE site_id = ?").bind(id),
     db.prepare("DELETE FROM payment_events WHERE connection_id IN (SELECT id FROM payment_connections WHERE site_id = ?)").bind(id),
     db.prepare("DELETE FROM payment_connections WHERE site_id = ?").bind(id),
@@ -157,6 +159,7 @@ export async function deleteSite(db: D1Database, id: string): Promise<boolean> {
     db.prepare("DELETE FROM site_spikes WHERE site_id = ?").bind(id),
     db.prepare("DELETE FROM web_daily_events WHERE site_id = ?").bind(id),
     db.prepare("DELETE FROM privacy_requests WHERE site_id = ?").bind(id),
+    db.prepare("DELETE FROM erasure_ledger WHERE site_id = ?").bind(id),
     // site.payment webhooks, queued or logged, carry customers' emails.
     db.prepare("DELETE FROM webhook_deliveries WHERE event_type = 'site.payment' AND json_extract(payload, '$.data.site.id') = ?").bind(id),
   ]);
@@ -204,7 +207,14 @@ export async function trackedSiteFor(db: D1Database, host: string): Promise<stri
       tracked = { list: tracked?.list ?? [], at: Date.now() };
     }
   }
-  return tracked.list.find((t) => hostBelongs(host, t.domains))?.siteId ?? null;
+  // The closest match, so a subdomain tracked as its own site gets its own click tokens.
+  let best: { siteId: string; length: number } | null = null;
+  for (const t of tracked.list) {
+    for (const d of t.domains) {
+      if (hostBelongs(host, [d]) && (!best || d.length > best.length)) best = { siteId: t.siteId, length: d.length };
+    }
+  }
+  return best?.siteId ?? null;
 }
 
 let checkoutProviders: { set: ReadonlySet<string>; at: number } | null = null;
@@ -228,6 +238,7 @@ export async function connectedCheckoutProviders(db: D1Database): Promise<Readon
 }
 
 export function resetSiteCaches(): void {
+  resetErasureCache();
   siteCache.clear();
   checkoutProviders = null;
   tracked = null;

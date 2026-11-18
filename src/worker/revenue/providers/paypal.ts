@@ -181,13 +181,16 @@ export const paypal: ProviderAdapter = {
       });
     } else if (type.startsWith("BILLING.SUBSCRIPTION.")) {
       const id = str(r.id) ?? "";
+      // The resource's create_time is when the subscription began, not when this happened.
+      const changedAt = sec(r.status_update_time) ?? sec(evt.create_time) ?? Math.floor(Date.now() / 1000);
       out.subscriptions.push({
+        eventAt: sec(evt.create_time),
         providerId: id,
         status: SUB_STATUS[str(r.status) ?? ""] ?? "active",
         customerId: str(obj(r.subscriber).payer_id),
         startedAt: sec(r.start_time) ?? sec(r.create_time),
-        canceledAt: str(r.status) === "CANCELLED" ? at : null,
-        endedAt: str(r.status) === "EXPIRED" ? at : null,
+        canceledAt: str(r.status) === "CANCELLED" ? changedAt : null,
+        endedAt: str(r.status) === "EXPIRED" ? changedAt : null,
       });
       // The subscription's custom_id names the visit; its payments (PAYMENT.SALE.*) carry the subscription id.
       const ref = visitRef(r.custom_id);

@@ -201,7 +201,9 @@ const ALLOWED_PORTS = new Set(["", "80", "443", "8080", "8443"]);
 function ipv4Private(host: string): boolean | null {
   const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
   if (!m) return null;
-  const [a, b] = [Number(m[1]), Number(m[2])];
+  const [a, b, c] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  // Private, loopback and link-local, the documentation ranges (192.0.2/24, 198.51.100/24, 203.0.113/24),
+  // benchmarking (198.18/15), the retired 6to4 relay (192.88.99/24), multicast and reserved.
   return (
     a === 0 ||
     a === 10 ||
@@ -210,8 +212,11 @@ function ipv4Private(host: string): boolean | null {
     (a === 169 && b === 254) ||
     (a === 172 && b >= 16 && b <= 31) ||
     (a === 192 && b === 168) ||
-    (a === 192 && b === 0 && Number(m[3]) === 0) ||
+    (a === 192 && b === 0 && (c === 0 || c === 2)) ||
+    (a === 192 && b === 88 && c === 99) ||
     (a === 198 && (b === 18 || b === 19)) ||
+    (a === 198 && b === 51 && c === 100) ||
+    (a === 203 && b === 0 && c === 113) ||
     a >= 224
   );
 }
@@ -250,6 +255,8 @@ function ipv6Private(host: string): boolean | null {
   // 6to4 (2002::/16) carries an IPv4 in the next 32 bits; Teredo (2001::/32) hides one, so refuse it.
   if (g0 === 0x2002) return ipv4Private(v4Of(g1, g2)) ?? true;
   if (g0 === 0x2001 && g1 === 0) return true;
+  // Documentation (2001:db8::/32, 3fff::/20) and benchmarking (2001:2::/48).
+  if ((g0 === 0x2001 && g1 === 0xdb8) || (g0 === 0x3fff && g1 <= 0xfff) || (g0 === 0x2001 && g1 === 2 && g2 === 0)) return true;
   // fc00::/7 unique local, fe80::/10 link-local, fec0::/10 the old site-local, ff00::/8 multicast.
   return (g0 & 0xfe00) === 0xfc00 || (g0 & 0xffc0) === 0xfe80 || (g0 & 0xffc0) === 0xfec0 || (g0 & 0xff00) === 0xff00;
 }

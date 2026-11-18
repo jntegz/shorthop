@@ -31,9 +31,11 @@ describe("personal API keys", () => {
 
   it("can only do what it was given, and what its owner still can", async () => {
     await addUser("ben@example.com", "user", ["api.use", "links.create", "links.delete"]);
-    const viewOnly = await addKey("ben@example.com", []);
-    expect((await call(`${API}/links`, { headers: viewOnly.auth })).status).toBe(200);
-    expect((await newLink(viewOnly.auth, "nope")).status).toBe(403);
+    // A key with nothing ticked still identifies its owner, but reads no links.
+    const bare = await addKey("ben@example.com", []);
+    expect((await call(`${API}/me`, { headers: bare.auth })).status).toBe(200);
+    expect((await call(`${API}/links`, { headers: bare.auth })).status).toBe(403);
+    expect((await newLink(bare.auth, "nope")).status).toBe(403);
 
     // Asking for more than you have is refused.
     expect((await adminCall("ben@example.com", "/keys", { body: { name: "Too much", permissions: ["settings.manage"] } })).status).toBe(403);
@@ -45,7 +47,7 @@ describe("personal API keys", () => {
 
     // Without api.use the keys stop working altogether.
     await adminCall("", "/users/ben%40example.com", { method: "PATCH", body: { permissions: ["links.create"] } });
-    expect((await call(`${API}/links`, { headers: creator.auth })).status).toBe(401);
+    expect((await call(`${API}/me`, { headers: creator.auth })).status).toBe(401);
   });
 
   it("stops working when expired or revoked, and only its owner or an admin can revoke it", async () => {
@@ -69,7 +71,7 @@ describe("personal API keys", () => {
     await addUser("cat@example.com", "admin", ["api.use"]);
     const ownerKey = await addKey("owner@example.com", []);
     expect((await adminCall("cat@example.com", `/keys/${ownerKey.id}`, { method: "DELETE" })).status).toBe(404);
-    expect((await call(`${API}/links`, { headers: ownerKey.auth })).status).toBe(200);
+    expect((await call(`${API}/me`, { headers: ownerKey.auth })).status).toBe(200);
 
     await addUser("ben@example.com", "user", ["api.use"]);
     const userKey = await addKey("ben@example.com", []);

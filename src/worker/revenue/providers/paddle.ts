@@ -82,6 +82,8 @@ export const paddle: ProviderAdapter = {
         kind: "charge",
         providerId: str(d.id) ?? "",
         occurredAt: sec(d.billed_at) ?? sec(d.updated_at) ?? at,
+        // _ptxn is on the page that opens the checkout, which can be long before the payment.
+        startedAt: sec(d.created_at),
         amountMinor: num(totals.grand_total) ?? num(totals.total) ?? 0,
         currency: currency(d.currency_code) ?? currency(totals.currency_code) ?? "USD",
         billing: !sub ? "one_time" : origin === "subscription_recurring" ? "sub_renewal" : origin === "web" || origin === "api" ? "sub_new" : null,
@@ -127,6 +129,7 @@ export const paddle: ProviderAdapter = {
       const unit = str(cycle.interval);
       const status = SUB_STATUS[str(d.status) ?? ""] ?? "active";
       out.subscriptions.push({
+        eventAt: sec(evt.occurred_at),
         providerId: str(d.id) ?? "",
         status,
         customerId: str(d.customer_id),

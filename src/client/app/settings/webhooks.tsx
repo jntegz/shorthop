@@ -5,11 +5,11 @@ import { AlertTriangle, CheckCircle2, ChevronRight, Clock, Pencil, Plus, RotateC
 import { useId, useState } from "react";
 import { toast } from "sonner";
 import type { WebhookDeliveryDTO, WebhookDTO } from "../../../shared/types";
-import { WEBHOOK_EVENTS, webhookUrlProblem } from "../../../shared/webhooks";
+import { WEBHOOK_EVENTS, webhookUrlProblem, type WebhookFieldSet } from "../../../shared/webhooks";
 import { api, call, keys } from "../../api";
 import { ago, hostOf, num, when } from "../../lib/format";
 import { SETTINGS_HELP } from "../../lib/help";
-import { Badge, Button, Checkbox, Dialog, Empty, ErrorState, IconButton, Input, Notice, Section, Switch } from "../ui";
+import { Badge, Button, Checkbox, Dialog, Empty, ErrorState, IconButton, Input, Notice, Section, Segmented, Switch } from "../ui";
 import { CodeBlock, HelpTip, RowsLoading, SecretField, toastError } from "./parts";
 
 const EVENT_LABEL: Record<string, string> = { ...Object.fromEntries(WEBHOOK_EVENTS.map((e) => [e.type, e.label])), "webhook.test": "Test event" };
@@ -66,10 +66,12 @@ function WebhookDialog({ hook, onClose }: { hook: WebhookDTO | "new"; onClose: (
   const [events, setEvents] = useState<string[]>(editing ? hook.events : WEBHOOK_EVENTS.map((e) => e.type).filter((t) => t !== "link.clicked"));
   const [clickTags, setClickTags] = useState(editing ? hook.clickTags.join(", ") : "");
   const [active, setActive] = useState(editing ? hook.active : true);
+  // A new endpoint starts with the short version; one that exists keeps what it gets.
+  const [fields, setFields] = useState<WebhookFieldSet>(editing ? hook.fields : "minimal");
   const [touched, setTouched] = useState(false);
   const [secret, setSecret] = useState<string | null>(null);
   const urlProblem = url ? webhookUrlProblem(url) : "Enter the endpoint's address.";
-  const json = { url: url.trim(), description: description.trim(), events, active, clickTags: clickTags.split(",").map((t) => t.trim()).filter(Boolean) };
+  const json = { url: url.trim(), description: description.trim(), events, active, fields, clickTags: clickTags.split(",").map((t) => t.trim()).filter(Boolean) };
 
   const save = useMutation({
     mutationFn: async () => {
@@ -179,6 +181,22 @@ function WebhookDialog({ hook, onClose }: { hook: WebhookDTO | "new"; onClose: (
             </p>
           ) : null}
         </fieldset>
+        <div>
+          <Segmented<WebhookFieldSet>
+            label="Data about people"
+            value={fields}
+            onChange={setFields}
+            options={[
+              { value: "minimal", label: "Minimal" },
+              { value: "full", label: "Full" },
+            ]}
+          />
+          <p className="ui-field-hint">
+            {fields === "minimal"
+              ? "Payments are sent without the customer's email or where they came from, and clicks with only the link, the time and the country."
+              : "Payments include the customer's email and the visit's source, page, country and device; clicks include the city, device, source and referrer. That data leaves Shorthop, and an erasure here can't reach it."}
+          </p>
+        </div>
         {editing ? (
           <div className="settings-a-group">
             <Switch label="Active" description="While paused, nothing is sent and new events aren't queued for it." checked={active} onCheckedChange={setActive} />
@@ -397,6 +415,17 @@ export function WebhooksSection() {
                     {h.retrying ? ` · ${num(h.retrying)} waiting to retry` : ""}
                     {h.failedRecent ? ` · ${num(h.failedRecent)} given up this week` : ""}
                   </p>
+                  {h.keyRevokedAt ? (
+                    <p className="settings-a-problem" data-tone="bad">
+                      <AlertTriangle aria-hidden />
+                      <span>
+                        Last changed with an API key that was revoked {ago(h.keyRevokedAt)}{h.changedBy ? ` (${h.changedBy})` : ""}. It still sends. Check the address: edit and save it to clear this, or delete it.
+                      </span>
+                    </p>
+                  ) : null}
+                  {h.hidesProtected ? (
+                    <p className="settings-a-item-sub">Its address was set by someone without Edit links, so it isn't sent where password-protected links go. Saving it with Edit links lifts this.</p>
+                  ) : null}
                   {!h.secretReadable ? (
                     <p className="settings-a-problem" data-tone="bad">
                       <AlertTriangle aria-hidden />

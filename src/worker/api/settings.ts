@@ -7,7 +7,7 @@ import { validateUtmTemplate } from "../../shared/target";
 import type { MailSetupDTO, PurgeDomainDTO, SettingsDTO, TurnstileDTO } from "../../shared/types";
 import { aeAvailable } from "../ae";
 import { readCapped } from "../body";
-import { accessConfigured, adminAuthMode } from "../auth";
+import { accessConfigured, adminAuthMode, fullTokenScope } from "../auth";
 import { getDefaultUtm, getSetting, nowSec, setSettingStmt, statsSince } from "../db";
 import { getDeadLinkPage, saveDeadLinkSettings } from "../dead-link";
 import { digestData, renderDigest, runDigest } from "../digest";
@@ -27,8 +27,14 @@ import { appVersion } from "../version";
 const DIGEST_TEST_KEY = "digest_test_at";
 const DIGEST_TEST_INTERVAL_SEC = 60;
 
-/** System status checks whose details describe the admin's own security setup: for signed-in sessions only. */
-const PRIVATE_CHECKS = new Set(["security", "password", "secrets", "digest", "alert", "devbypass"]);
+/**
+ * The System status checks a key or the API token gets the details of: whether
+ * the service is running, nothing about sign-in, secrets, email, payments or
+ * backups. A list, so a new check stays private until it is added here.
+ */
+export const KEY_CHECK_DETAILS: ReadonlySet<string> = new Set(["kv", "d1", "ae", "rollup", "links", "collect", "domains", "fallback"]);
+/** What even an API token with API_TOKEN_SCOPE="full" doesn't get the details of: how sign-in, secrets and email are set up. */
+const SESSION_CHECK_DETAILS: ReadonlySet<string> = new Set(["security", "password", "secrets", "digest", "alert", "devbypass", "workersdev", "webhookkeys"]);
 
 export const settingsApi = new Hono<AppEnv>()
   .get("/", async (c) => {
@@ -63,9 +69,10 @@ export const settingsApi = new Hono<AppEnv>()
       lastDigestWeek,
       digestTo: admin ? c.env.DIGEST_TO : null,
       digestProvider: providerName(digest.provider),
-      digestProblem: digest.problem,
+      // It names the secrets that are missing: not for a key or token (like /settings/mail).
+      digestProblem: actor.via === "session" ? digest.problem : null,
       security: security && {
-        email: c.get("identity"),
+        email: actor.email,
         mode: adminAuthMode(c.env) ?? "access+password",
         accessConfigured: accessConfigured(c.env),
         passwordConfigured: loginConfig(c.env) !== null,
@@ -116,6 +123,7 @@ export const settingsApi = new Hono<AppEnv>()
 
   .delete("/not-found/image", async (c) => {
     await deleteNotFoundImage(c.env);
+    console.log(JSON.stringify({ message: "not-found image deleted", by: c.get("identity") }));
     return c.json({ image: null });
   })
 
@@ -137,10 +145,13 @@ export const settingsApi = new Hono<AppEnv>()
 
   .get("/health", async (c) => {
     const health = await systemHealth(c.env);
-    if (c.get("actor").via === "session") return c.json(health);
-    // A key or token sees each check's status, but not how sign-in, passwords, secrets and email are set up (like /settings/mail).
-    const checks = health.checks.map((ch) => (PRIVATE_CHECKS.has(ch.id) ? { ...ch, detail: "Open System status in the admin for the details.", fix: undefined, docs: undefined } : ch));
-    return c.json({ ...health, checks, alertsTo: null });
+    const { via } = c.get("actor");
+    if (via === "session") return c.json(health);
+    // A key or the default token sees every check's status, but only the listed checks' details, and no error text (it can quote anything).
+    const full = via === "token" && fullTokenScope(c.env);
+    const open = (ch: (typeof health.checks)[number]) => (full ? !SESSION_CHECK_DETAILS.has(ch.id) : KEY_CHECK_DETAILS.has(ch.id) && ch.status !== "error");
+    const checks = health.checks.map((ch) => (open(ch) ? ch : { ...ch, detail: "Open System status in the admin for the details.", fix: undefined, docs: undefined }));
+    return c.json({ ...health, checks, alertsTo: null, lastAlert: full ? health.lastAlert : null });
   })
 
   .get("/version", async (c) => c.json(await appVersion(c.env)))
@@ -164,6 +175,8 @@ export const settingsApi = new Hono<AppEnv>()
     const result = await runDigest(c.env, new Date(), true);
     // A test that went through shows the email works again; the next Monday's run records itself.
     if (result.status === "sent") await recordJob(c.env.DB, "digest", true);
+    // The reason can name a missing secret: for people in the admin only.
+    if (c.get("actor").via !== "session" && "reason" in result) return c.json({ ...result, reason: "Open System status in the admin for the details." });
     return c.json(result);
   })
 
@@ -198,6 +211,7 @@ export const settingsApi = new Hono<AppEnv>()
   .delete("/mail", async (c) => {
     await c.env.DB.prepare("DELETE FROM settings WHERE key = ?").bind(mailSettingsKey).run();
     await forgetJob(c.env.DB, "digest", "alert");
+    console.log(JSON.stringify({ message: "mail settings reset", by: c.get("identity") }));
     return c.json({ reset: true });
   })
 
@@ -215,7 +229,11 @@ export const settingsApi = new Hono<AppEnv>()
     return c.json({ domain, ...result } satisfies PurgeDomainDTO);
   })
 
-  .delete("/demo", async (c) => c.json({ removed: await clearDemo(c.env) }))
+  .delete("/demo", async (c) => {
+    const removed = await clearDemo(c.env);
+    console.log(JSON.stringify({ message: "sample data removed", by: c.get("identity") }));
+    return c.json({ removed });
+  })
 
   .post("/sessions/revoke", async (c) => {
     // Signed-in admins only (the rule says so too): no API key or token may lock everyone out.

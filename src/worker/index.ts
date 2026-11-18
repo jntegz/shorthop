@@ -15,6 +15,7 @@ import { notFoundResponse, serveNotFoundImage } from "./not-found";
 import { serveShare, SHARE_PREFIX } from "./share";
 import { handleRedirect, redirectTo } from "./redirect";
 import { handlePaymentWebhook, PAY_PREFIX } from "./revenue/ingest";
+import { redactSecrets, safePath } from "./redact";
 import { withHsts } from "./hsts";
 import { withGeneratedSecrets } from "./secrets";
 import { COLLECT_PATH, handleCollect } from "./web/collect";
@@ -73,7 +74,8 @@ export default {
       res = await route(request, env, ctx);
     } catch (err) {
       // Logged with its detail, answered without: and still with HSTS, unlike the runtime's own error page.
-      console.error(JSON.stringify({ message: "request failed", path: new URL(request.url).pathname, error: String(err), stack: err instanceof Error ? err.stack : undefined }));
+      // Addresses can be secrets (shares, invite and reset links, payment webhooks): never logged as they came.
+      console.error(JSON.stringify({ message: "request failed", path: safePath(new URL(request.url).pathname), error: redactSecrets(String(err)), stack: err instanceof Error && err.stack ? redactSecrets(err.stack) : undefined }));
       res = new Response("Something went wrong. Try again in a moment.", { status: 500, headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" } });
     }
     return withHsts(res, env);
@@ -82,8 +84,8 @@ export default {
   // One job per invocation, so each stays inside the plan's subrequest limit
   // (src/worker/plan.ts). The half-hourly cron's 02:00 UTC slot does the
   // daily cleanup, its 02:30 slot the website rollup and its 03:00 slot the
-  // revenue work, instead of that run's destination checks; on Sunday mornings
-  // its slots copy the weekly backup until that is complete. The hourly cron
+  // revenue work, instead of that run's destination checks; from 04:00 to 07:30
+  // its slots copy the weekly backup, started on Sunday, until that is complete. The hourly cron
   // does the daily run at 01:15 UTC and website alerts (spikes, daily
   // digests) the other hours.
   async scheduled(controller, env, ctx) {
@@ -96,7 +98,7 @@ export default {
       if (isCleanupRun(now)) run("cleanup run", scheduledCleanup(env, now));
       else if (isWebRollupRun(now)) run("website rollup run", scheduledWebRollup(env, now));
       else if (isRevenueRun(now)) run("revenue run", scheduledRevenue(env));
-      // Sunday mornings copy the weekly backup to R2, when a bucket is bound (BACKUPS).
+      // Early mornings copy the weekly backup to R2, when a bucket is bound (BACKUPS) and one is due or unfinished.
       // Once it is complete, the remaining slots check destinations as on any other day.
       else if (isBackupRun(now) && (env as { BACKUPS?: unknown }).BACKUPS && (await backupPending(env, now))) run("backup run", scheduledBackup(env, now, planLimits(env).backupCalls));
       else run("link checks run", scheduledLinkChecks(env));

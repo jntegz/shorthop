@@ -39,7 +39,7 @@ async function getJson(url: string, headers: Record<string, string>): Promise<Ob
 }
 
 const parse = (provider: Provider, body: unknown, c: ImportContext, headers: Record<string, string> = {}) =>
-  ADAPTERS[provider].parse(typeof body === "string" ? body : JSON.stringify(body), new Headers(headers), c);
+  ADAPTERS[provider].parse(typeof body === "string" ? body : JSON.stringify(body), new Headers(headers), { ...c, fromApi: true });
 
 const isoDay = (sec: number) => new Date(sec * 1000).toISOString().slice(0, 10);
 

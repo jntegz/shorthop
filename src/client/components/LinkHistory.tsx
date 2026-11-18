@@ -52,6 +52,7 @@ export function snapshotOfLink(l: LinkDTO): Snapshot {
 
 export function actorName(actor: string): string {
   if (actor === "api-token") return "API token";
+  if (actor.startsWith("api-token · ")) return `API token · ${actor.slice("api-token · ".length)}`;
   if (actor === "system") return "Shorthop";
   return actor;
 }
@@ -135,10 +136,19 @@ export function ChangeList({ changes }: { changes: FieldChange[] }) {
 
 function RestoreDialog({ link, current, version, onClose }: { link: LinkDTO; current: Snapshot; version: VersionDTO; onClose: () => void }) {
   const qc = useQueryClient();
-  const changes = diffSnapshots(current, version.snapshot);
+  const all = diffSnapshots(current, version.snapshot);
+  // The password isn't part of a restore unless asked for: it could bring back an old one, or remove the protection.
+  const passwordDiffers = all.some((c) => c.field === "password_hash");
+  const [withPassword, setWithPassword] = useState(false);
+  const changes = withPassword ? all : all.filter((c) => c.field !== "password_hash");
   const restore = useMutation({
     mutationFn: () =>
-      call(api.links[":domain"][":slug"].history[":id"].restore.$post({ param: { domain: link.domain, slug: link.slug, id: String(version.id) } })),
+      call(
+        api.links[":domain"][":slug"].history[":id"].restore.$post({
+          param: { domain: link.domain, slug: link.slug, id: String(version.id) },
+          query: { password: withPassword ? "version" : "keep" },
+        }),
+      ),
     onSuccess: (data) => {
       qc.setQueryData(keys.link(link.domain, link.slug), data);
       void qc.invalidateQueries({ queryKey: keys.allLinks });
@@ -157,8 +167,21 @@ function RestoreDialog({ link, current, version, onClose }: { link: LinkDTO; cur
           <ChangeList changes={changes} />
         </div>
       ) : (
-        <Notice tone="accent">The link already matches this version.</Notice>
+        <Notice tone="accent">{passwordDiffers ? "Apart from its password, the link already matches this version." : "The link already matches this version."}</Notice>
       )}
+      {passwordDiffers ? (
+        <label className="mt-3 flex items-start gap-2 rounded-md border border-line bg-bg px-4 py-3 text-xs text-fg">
+          <input type="checkbox" className="mt-0.5" checked={withPassword} onChange={(e) => setWithPassword(e.target.checked)} />
+          <span>
+            {!version.snapshot.password_hash
+              ? "Also remove the password: this version had none, so anyone with the link could open it again."
+              : link.protected
+                ? "Also go back to this version's password. The current one stops working."
+                : "Also put back this version's password."}{" "}
+            <span className="text-muted">Left unticked, the password stays as it is now.</span>
+          </span>
+        </label>
+      ) : null}
       <div className="mt-5 flex justify-end gap-2">
         <Button variant="outline" onClick={onClose}>
           Cancel

@@ -6,6 +6,7 @@
 // apart by their source: an app's in-app browser, a return from checkout, a
 // deep link opened with no referrer, or a typed address / bookmark.
 
+import { scrubText } from "../../shared/scrub";
 import type { Channel } from "../../shared/sites";
 import type { ClickToken } from "./token";
 
@@ -137,7 +138,7 @@ export interface Attribution {
   link: { domain: string; slug: string } | null;
 }
 
-const cap = (s: string | null, n = 200) => (s ?? "").trim().slice(0, n);
+const cap = (s: string | null, n = 200) => scrubText((s ?? "").trim()).slice(0, n);
 
 export function attributionOf(landing: URL | null, referrerHost: string, click: ClickToken | null, hints: DirectHints = {}): Attribution {
   const q = landing?.searchParams;

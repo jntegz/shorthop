@@ -623,7 +623,7 @@ function IgnoreDialog({ miss, onClose }: { miss: Pick<MissRow, "domain" | "slug"
             </label>
             {mode === "send" ? (
               <div className="health-choice-more">
-                <LinkPicker id="ignore-send" label="Link to send visitors to" value={pick?.key ?? ""} onChange={(key, l) => setPick(l ? { key, target: l.target } : null)} />
+                <LinkPicker id="ignore-send" label="Link to send visitors to" withTarget value={pick?.key ?? ""} onChange={(key, l) => setPick(l ? { key, target: l.target } : null)} />
               </div>
             ) : null}
           </div>

@@ -106,6 +106,19 @@ const roleLabel = (r: Role) => (r === "admin" ? "an admin" : r === "manager" ? "
 
 const CHANGED = "Someone else changed this person. Reload and try again.";
 
+/**
+ * Takes away someone's API keys, and flags the webhooks those keys set up, in
+ * the same batch as `first` (ending a person's access) when there is one. Run
+ * the flagging before the delete: it reads the keys the delete removes.
+ */
+function revokeKeysStmts(db: D1Database, email: string, now: number, onlyIfGone: boolean): D1PreparedStatement[] {
+  const gone = onlyIfGone ? " AND NOT EXISTS (SELECT 1 FROM users WHERE email = ?1)" : "";
+  return [
+    db.prepare(`UPDATE webhooks SET key_revoked_at = ?2 WHERE key_revoked_at IS NULL AND key_id IN (SELECT id FROM api_keys WHERE owner = ?1)${gone}`).bind(email, now),
+    db.prepare(`DELETE FROM api_keys WHERE owner = ?1${gone}`).bind(email),
+  ];
+}
+
 /** The person `verb` would act on, or why the caller can't. */
 async function managedTarget(c: Context<AppEnv>, email: string, verb: string): Promise<UserRow | { error: string; status: 403 | 404 }> {
   const actor = c.get("actor");
@@ -216,17 +229,29 @@ export const usersApi = new Hono<AppEnv>()
     if (!canManage(actor, target)) return c.json({ error: target.email === actor.email ? "You can't remove yourself. Ask an admin." : "You can't remove this person." }, 403);
 
     // Their keys go in the same batch, only if the row really went.
-    const [removed, keys] = await c.env.DB.batch([
+    const [removed, , keys] = await c.env.DB.batch([
       c.env.DB.prepare(`DELETE FROM users WHERE email = ?1${actor.role === "admin" ? "" : " AND role = 'user'"}`).bind(email),
-      c.env.DB.prepare("DELETE FROM api_keys WHERE owner = ?1 AND NOT EXISTS (SELECT 1 FROM users WHERE email = ?1)").bind(email),
+      ...revokeKeysStmts(c.env.DB, email, nowSec(), true),
     ]);
     if (!removed?.meta.changes) return c.json({ error: CHANGED }, 409);
     console.log(JSON.stringify({ message: "person removed", email, by: actor.email }));
     return c.json({ removed: true, keysRevoked: keys?.meta.changes ?? 0 });
   })
 
+  // Every API key they have stops working now; webhooks those keys set up are flagged for review.
+  .post("/:email/revoke-keys", validate("param", personParamSchema), async (c) => {
+    const { email } = c.req.valid("param");
+    const target = await managedTarget(c, email, "revoke the keys of");
+    if ("error" in target) return c.json({ error: target.error }, target.status);
+    const [, keys] = await c.env.DB.batch(revokeKeysStmts(c.env.DB, email, nowSec(), false));
+    const revoked = keys?.meta.changes ?? 0;
+    console.log(JSON.stringify({ message: "api keys revoked", email, revoked, by: c.get("actor").email }));
+    return c.json({ revoked });
+  })
+
   // A new invite link: clears their password and ends their sessions, so it
-  // doubles as "reset password". Older links stop working, reset links too.
+  // doubles as "reset password". Their API keys stop working until they choose
+  // a new one. Older links stop working, reset links too.
   .post("/:email/invite", validate("param", personParamSchema), validate("json", reinviteSchema), async (c) => {
     const actor = c.get("actor");
     const { email } = c.req.valid("param");

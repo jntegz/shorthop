@@ -27,7 +27,7 @@ import { generateSlug } from "../../src/shared/slug";
 import { args, fail } from "../lib";
 import * as cf from "./cf";
 import { ask, bad, choose, color, confirm, heading, info, ok, requireTty, secret, warn, type Choice } from "./prompt";
-import { CONFIG_FILE, configFromText, deployProblems, EXAMPLE_CONFIG, isPlaceholderHost, renderConfig, routeHosts, type Provider, type SetupConfig } from "./template";
+import { CONFIG_FILE, configFromText, deployProblems, EXAMPLE_CONFIG, isPlaceholderHost, keepOwnSettings, renderConfig, routeHosts, type Provider, type SetupConfig } from "./template";
 import {
   datasetProblem,
   defaultSender,
@@ -475,8 +475,8 @@ function resourcesStep(s: State): void {
 /** Shows what changes in wrangler.jsonc and writes it after a yes. Returns whether it changed. */
 async function writeConfigStep(s: State): Promise<boolean> {
   heading(CONFIG_FILE);
-  const next = renderConfig(s.cfg);
   const current = existsSync(CONFIG_FILE) ? readFileSync(CONFIG_FILE, "utf8") : null;
+  const next = current ? keepOwnSettings(renderConfig(s.cfg), current) : renderConfig(s.cfg);
   if (current === next) {
     ok("No changes.");
     return false;

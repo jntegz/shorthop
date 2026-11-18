@@ -51,6 +51,7 @@ export function connectionDTO(row: ConnectionRow, origin: string, urlToken: stri
     enabled: row.enabled !== 0,
     hasSecret: Boolean(row.webhook_secret || row.webhook_secret_ref),
     hasApiKey: Boolean(row.api_key || row.api_key_ref),
+    unverified: Boolean(PROVIDER_INFO[row.provider as Provider]?.urlToken) && !row.api_key && !row.api_key_ref,
     webhookSecretMode: mode(row.webhook_secret, row.webhook_secret_ref),
     webhookSecretRef: row.webhook_secret_ref,
     apiKeyMode: mode(row.api_key, row.api_key_ref),
@@ -84,12 +85,19 @@ export async function connectionView(env: Env, row: ConnectionRow, origin: strin
 
 type ConnectionInput = Partial<z.infer<typeof connectionSchema>>;
 
+/** The shortest pasted token accepted for a webhook address; generated ones are longer. */
+const MIN_URL_TOKEN = 24;
+
 /** The column changes an input asks for. A pasted value replaces a secret name and the other way round. */
 export async function connectionChanges(env: Env, input: ConnectionInput, current: ConnectionRow | null): Promise<Record<string, unknown>> {
   const provider = (input.provider ?? current?.provider) as Provider;
   // The URL token is shown in the webhook address, so it's always one this app generated.
   if (PROVIDER_INFO[provider]?.urlToken && input.webhookSecretRef) {
     throw new HTTPException(400, { message: "This provider's token is part of the webhook address, so it can't come from a Cloudflare secret." });
+  }
+  // The token is all that stands between the webhook and anyone guessing it.
+  if (PROVIDER_INFO[provider]?.urlToken && input.webhookSecret && input.webhookSecret.length < MIN_URL_TOKEN) {
+    throw new HTTPException(400, { message: `A webhook token needs at least ${MIN_URL_TOKEN} characters. Leave it out to have a random one made.` });
   }
   const out: Record<string, unknown> = {};
   if (input.label !== undefined) out.label = input.label;
@@ -135,6 +143,9 @@ export async function checkConnection(env: Env, row: ConnectionRow): Promise<Con
   const where = (s: ResolvedSecret, ref: string | null) => (s.source === "cloudflare" ? `Cloudflare secret ${ref}` : "saved, encrypted");
 
   if (row.enabled === 0) checks.push({ id: "enabled", label: "Turned on", status: "warn", detail: "This connection is off: webhooks are answered but nothing is recorded." });
+  if (info.urlToken && webhook.value && webhook.value.length < MIN_URL_TOKEN) {
+    checks.push({ id: "token", label: "Webhook address", status: "warn", detail: "Its token is short enough to guess. Make a new address here, then paste it into the provider." });
+  }
 
   if (info.webhookSecret) {
     if (webhook.problem) checks.push({ id: "secret", label: info.webhookSecret.label, status: "error", detail: webhook.problem });

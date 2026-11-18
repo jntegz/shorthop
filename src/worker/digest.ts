@@ -7,6 +7,7 @@ import { linkKey, linkLabel } from "../shared/domains";
 import { escapeHtml } from "../shared/html";
 import { formatMoney } from "../shared/sites";
 import { isCheckProblem, problemText } from "../shared/link-check";
+import { shortText } from "../shared/scrub";
 import { isProbePath } from "../shared/slug";
 import { getSetting, setSettingStmt } from "./db";
 import { domainsOf } from "./domains";
@@ -72,7 +73,8 @@ async function websitesOfWeek(db: D1Database, from: string, to: string): Promise
     revenue: r.revenue ?? 0,
     previousRevenue: r.previous ?? 0,
     payments: r.payments,
-    topSource: r.top_source,
+    // A visit's source can be anything its link said.
+    topSource: r.top_source ? shortText(r.top_source) : null,
   }));
 }
 

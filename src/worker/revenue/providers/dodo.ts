@@ -124,6 +124,7 @@ export const dodo: ProviderAdapter = {
       const status = SUB_STATUS[str(d.status) ?? type.slice("subscription.".length)] ?? "active";
       const unit = UNITS[(str(d.payment_frequency_interval) ?? "").toLowerCase()] ?? null;
       out.subscriptions.push({
+        eventAt: sec(evt.timestamp),
         providerId: str(d.subscription_id) ?? "",
         status,
         customerId: str(customer.customer_id),

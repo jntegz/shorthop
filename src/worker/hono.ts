@@ -20,13 +20,4 @@ export function validate<T extends ZodType, Target extends keyof ValidationTarge
   });
 }
 
-/** CSV cell escaping, including spreadsheet formula injection. */
-export function csvCell(v: unknown): string {
-  let s = v === null || v === undefined ? "" : String(v);
-  if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
-  return /[",\n\r]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s;
-}
-
-export function csv(rows: unknown[][]): string {
-  return rows.map((r) => r.map(csvCell).join(",")).join("\r\n") + "\r\n";
-}
+export { csv, csvCell } from "../shared/csv";

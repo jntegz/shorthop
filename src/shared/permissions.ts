@@ -2,7 +2,7 @@
 // The Worker enforces them (src/worker/permissions.ts); the admin uses the
 // same definitions to show only what someone can do.
 
-/** Everything someone can be allowed to do beyond viewing and copying links. */
+/** Everything someone can be allowed to do. Holding any of them also lets a person view and copy links (readsLinks). */
 export const PERMISSIONS = ["links.create", "links.edit", "links.delete", "stats.view", "revenue.view", "sites.manage", "health.manage", "settings.manage", "api.use"] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 
@@ -24,12 +24,12 @@ export const PERMISSION_INFO: Record<Permission, { label: string; description: s
 export const ROLE_INFO: Record<Role, { label: string; description: string }> = {
   admin: { label: "Admin", description: "Everything, including people, admin rights and security." },
   manager: { label: "Manager", description: "Adds, changes and removes users, and gives them only permissions the manager has." },
-  user: { label: "User", description: "Views and copies links, plus the permissions ticked below." },
+  user: { label: "User", description: "Has the permissions ticked below. With none ticked, they can sign in but see no links." },
 };
 
 /** Quick starting points in the Add person dialog. */
 export const PERMISSION_PRESETS: { id: string; label: string; permissions: Permission[] }[] = [
-  { id: "view", label: "View only", permissions: [] },
+  { id: "view", label: "View links and statistics", permissions: ["stats.view"] },
   { id: "creator", label: "Creator", permissions: ["links.create"] },
   { id: "editor", label: "Editor", permissions: ["links.create", "links.edit"] },
   { id: "links", label: "Link manager", permissions: ["links.create", "links.edit", "links.delete", "stats.view"] },
@@ -72,6 +72,16 @@ export interface Actor {
 
 export function can(actor: Pick<Actor, "permissions">, permission: Permission): boolean {
   return actor.permissions.includes(permission);
+}
+
+/**
+ * Who may read links: a signed-in manager or admin, or anyone holding a
+ * permission. A key counts only what it was given: api.use means nothing on a
+ * key, so a key without other permissions reads no links.
+ */
+export function readsLinks(actor: Pick<Actor, "role" | "permissions" | "via">): boolean {
+  if (actor.via !== "session") return actor.permissions.some((p) => p !== "api.use");
+  return actor.role !== "user" || actor.permissions.length > 0;
 }
 
 /** Admins manage everyone except owners; managers manage users only; nobody manages themselves. */

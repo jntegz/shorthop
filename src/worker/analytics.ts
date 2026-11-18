@@ -2,6 +2,7 @@
 // Everything here runs inside ctx.waitUntil, after the redirect has been sent.
 
 import { HOSTNAME_RE } from "../shared/domains";
+import { scrubText } from "../shared/scrub";
 import { getMissPolicy, hasLinkIgnoringCase } from "./misses";
 
 export type HitEvent = "click" | "bot" | "miss";
@@ -231,6 +232,11 @@ export function classify(request: Request, url: URL, sourceTag: string | null, q
   };
 }
 
+/** The browser asks not to be tracked: Global Privacy Control or Do Not Track. */
+export function sendsPrivacySignal(request: Request): boolean {
+  return request.headers.get("Sec-GPC") === "1" || request.headers.get("DNT") === "1";
+}
+
 /** SHA-256 of IP, UA, UTC date and a secret salt; first 16 hex chars. */
 export async function visitorHash(ip: string, ua: string, date: string, salt: string): Promise<string> {
   const data = new TextEncoder().encode(`${ip}|${ua}|${date}|${salt}`);
@@ -288,6 +294,11 @@ export async function daySaltFor(db: D1Database, date: string): Promise<string> 
 /** Deletes the salts of the days before `today` (YYYY-MM-DD, UTC). The daily cron runs it. */
 export async function pruneDaySalts(db: D1Database, today: string): Promise<void> {
   await daySaltPruneStmt(db, today).run();
+}
+
+/** The range of settings keys holding day salts from before `day`, for a query of ?from < key < ?to. */
+export function daySaltRange(day: string): [from: string, to: string] {
+  return [DAY_SALT_PREFIX, `${DAY_SALT_PREFIX}${day}`];
 }
 
 /** The day-salt prune as one statement, for a batch with other cleanup. */
@@ -407,7 +418,8 @@ export async function logHit(request: Request, env: Env, url: URL, input: HitInp
       date,
       `${env.VISITOR_SALT ?? ""}|${await daySaltFor(env.DB, date)}`,
     );
-    env.CLICKS.writeDataPoint(buildDataPoint(request, c, input, hash));
+    // A missed address can be anything a visitor typed or was sent: no emails or tokens in the report.
+    env.CLICKS.writeDataPoint(buildDataPoint(request, c, input.kind === "miss" ? { ...input, slug: scrubText(input.slug) } : input, hash));
   } catch (err) {
     console.error(JSON.stringify({ message: "analytics write failed", domain: input.domain, slug: input.slug, error: String(err) }));
   }

@@ -100,6 +100,7 @@ AE_WEB_DATASET = "shorthop_web"
 # "free" or "paid": sizes republish pages, import batches and checks per run to the plan's limit, and how strongly link passwords are hashed. Say "free" unless you pay for Workers.
 WORKERS_PLAN = "free"
 API_TOKEN_SCOPE = "create"
+WORKERS_DEV_ADMIN = ""
 # "host": browsers use HTTPS for your domains. "subdomains": for their subdomains too; only when all of them serve HTTPS (browsers keep it for a year).
 HSTS = "host"
 # Email is off. Turn it on in the admin: Settings → Statistics & email → Set up email.
@@ -115,7 +116,7 @@ enabled = true
 [observability.logs]
 enabled = true
 head_sampling_rate = 1
+invocation_logs = false
 
 [observability.traces]
-enabled = true
-head_sampling_rate = 0.05
+enabled = false

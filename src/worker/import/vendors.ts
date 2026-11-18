@@ -47,6 +47,9 @@ const seconds = (v: unknown): number | null => {
 
 const LABEL: Record<ImportVendor, string> = { bitly: "Bitly", rebrandly: "Rebrandly", shortio: "Short.io", dub: "Dub" };
 
+/** More than any page of links these services send: a bigger answer isn't read. */
+const MAX_VENDOR_BYTES = 5_000_000;
+
 async function fetchJson(vendor: ImportVendor, url: string, headers: Record<string, string>): Promise<unknown> {
   let res: Response;
   try {
@@ -57,14 +60,56 @@ async function fetchJson(vendor: ImportVendor, url: string, headers: Record<stri
   if (res.status === 401 || res.status === 403) throw new VendorError(`${LABEL[vendor]} refused the API key. Check it and its permissions.`, 401);
   if (res.status === 429) throw new VendorError(`${LABEL[vendor]} asks to slow down (rate limit). Wait a minute, then continue: the import picks up where it stopped.`, 429);
   if (!res.ok) throw new VendorError(`${LABEL[vendor]} answered ${res.status}. Try again later.`, 502);
-  return res.json();
+  const text = await readLimited(res, MAX_VENDOR_BYTES);
+  if (text === null) throw new VendorError(`${LABEL[vendor]} sent more data than a page of links should be, so it wasn't read. Try again later.`, 502);
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new VendorError(`${LABEL[vendor]} sent something that isn't readable. Try again later.`, 502);
+  }
+}
+
+/** The body as text, or null past `max` bytes (it stops reading there). */
+async function readLimited(res: Response, max: number): Promise<string | null> {
+  if (Number(res.headers.get("Content-Length") ?? 0) > max) {
+    await res.body?.cancel().catch(() => undefined);
+    return null;
+  }
+  if (!res.body) return "";
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > max) {
+      await reader.cancel().catch(() => undefined);
+      return null;
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(size);
+  let at = 0;
+  for (const c of chunks) {
+    bytes.set(c, at);
+    at += c.byteLength;
+  }
+  return new TextDecoder().decode(bytes);
 }
 
 /** "https://brand.co/abc" or "brand.co/abc" → its host and path. */
 function splitShort(url: string): { domain: string; slug: string } | null {
   const m = /^(?:https?:\/\/)?([^/?#]+)\/([^?#]*)/.exec(url.trim());
   if (!m || !m[2]) return null;
-  return { domain: m[1]!.toLowerCase(), slug: decodeURIComponent(m[2]!) };
+  // A malformed %-sequence stays as it is: that row's slug is then judged at import, not the whole page lost here.
+  let slug = m[2]!;
+  try {
+    slug = decodeURIComponent(slug);
+  } catch {
+    // Keep it undecoded.
+  }
+  return { domain: m[1]!.toLowerCase(), slug };
 }
 
 const encode = (v: unknown) => btoa(JSON.stringify(v)).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");

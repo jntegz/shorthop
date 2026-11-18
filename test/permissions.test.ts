@@ -55,9 +55,15 @@ describe("route rules", () => {
 
   it("applies the same rules to signed-in people", async () => {
     await addUser("viewer@example.com");
-    expect((await adminCall("viewer@example.com", "/links")).status).toBe(200);
+    await addUser("reader@example.com", "user", ["stats.view"]);
+    await addUser("lead@example.com", "manager");
+    expect((await adminCall("reader@example.com", "/links")).status).toBe(200);
+    expect((await adminCall("lead@example.com", "/links")).status).toBe(200);
     expect((await adminCall("viewer@example.com", "/me")).status).toBe(200);
     for (const [path, init] of [
+      ["/links", {}],
+      ["/links/sh.example/x/history", {}],
+      ["/export/links.json", {}],
       ["/links", { body: { url: "https://example.com" } }],
       ["/links/sh.example/x", { method: "PATCH", body: {} }],
       ["/links/sh.example/x", { method: "DELETE" }],

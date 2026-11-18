@@ -66,7 +66,7 @@ export function DeletedLinks({ open, onOpenChange }: { open: boolean; onOpenChan
                     {l.title ? <span className="links-deleted-title">{l.title}</span> : null}
                   </p>
                   <p className="links-deleted-meta" title={l.target}>
-                    {hostOf(l.target)} · deleted <span title={whenFull(l.deletedAt)}>{ago(l.deletedAt)}</span> by {actorName(l.actor)}
+                    {l.target ? hostOf(l.target) : "Destination hidden"} · deleted <span title={whenFull(l.deletedAt)}>{ago(l.deletedAt)}</span> by {actorName(l.actor)}
                   </p>
                 </div>
                 {canRestore ? (

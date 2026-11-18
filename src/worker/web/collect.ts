@@ -8,24 +8,33 @@
 // No IP address is stored; cookieless sites get a visitor hash that changes
 // every day at midnight UTC. A visit in progress at midnight UTC is continued
 // for up to 30 minutes (by matching yesterday's hash); otherwise days are not linked.
+//
+// A browser sending Global Privacy Control or Do Not Track is never tied to a
+// person or a payment from here: its identify is ignored, no checkout reference is
+// handed out or stored, and its checkout clicks aren't kept for timing matches.
+// A browser id that was erased, or whose consent was taken back, isn't used again
+// (./erasure.ts): the event counts under the daily hash and the browser is told to
+// drop the id, so its next page starts with a new, unconnected one.
 
+import { hashRoute, scrubText } from "../../shared/scrub";
 import { hostBelongs, pathMatches, type SiteDTO } from "../../shared/sites";
-import { daySaltFor, detectBot, detectBrowser, detectDevice, detectOs, primaryLanguage, truncateUtf8, visitorHash } from "../analytics";
+import { daySaltFor, detectBot, detectBrowser, detectDevice, detectOs, primaryLanguage, sendsPrivacySignal, truncateUtf8, visitorHash } from "../analytics";
 import { readTextCapped } from "../body";
 import { claimRefs } from "../revenue/match";
-import { ipBucket } from "../session";
-import { collectBudgetAllows } from "./budget";
+import { limiterKey } from "../session";
+import { chargeCollectBudget, collectBudgetAllows } from "./budget";
+import { visitorRefused, withdrawVisitor } from "./erasure";
 import { attributionOf, inAppBrowser } from "./source";
 import { identifyVisitor, SESSION_GAP_SEC, touchSession, type TouchKind } from "./sessions";
 import { cachedSite } from "./sites";
-import { verifyClickToken } from "./token";
+import { clickTokenUsable, verifyClickToken, type ClickToken, type VerifiedClickToken } from "./token";
 
 export const COLLECT_PATH = "/_t/e";
 const MAX_BODY = 8 * 1024;
-/** How old a payment a page's checkout refs can still claim. */
-const CLAIM_WINDOW_SEC = 86_400;
+/** How much of a path the excluded-path rules look at. */
+const MAX_MATCHED_PATH = 2000;
 
-const TYPES: Record<string, TouchKind | "identify"> = {
+const TYPES: Record<string, TouchKind | "identify" | "withdraw"> = {
   pageview: "pageview",
   goal: "goal",
   outbound: "outbound",
@@ -33,7 +42,11 @@ const TYPES: Record<string, TouchKind | "identify"> = {
   engage: "engage",
   vitals: "vitals",
   identify: "identify",
+  withdraw: "withdraw",
 };
+
+/** A first-party visitor id as the tracker makes them. */
+const OWN_ID_RE = /^[A-Za-z0-9_-]{16,40}$/;
 
 interface Payload {
   /** Site id. */
@@ -89,8 +102,8 @@ function reply(status: number, origin: string | null, body?: unknown): Response 
     : new Response(JSON.stringify(body), { status, headers: { ...cors(origin), "Content-Type": "application/json" } });
 }
 
-/** "/Pricing/?x" → "/Pricing": decoded, no trailing slash, capped. */
-export function normalizePath(pathname: string): string {
+/** "/Pricing/?x" → "/Pricing": decoded, no trailing slash. What a site's excluded paths are written against. */
+function cleanPath(pathname: string): string {
   let p = pathname;
   try {
     p = decodeURI(p);
@@ -98,8 +111,11 @@ export function normalizePath(pathname: string): string {
     // Keep it encoded.
   }
   if (p.length > 1 && p.endsWith("/")) p = p.replace(/\/+$/, "") || "/";
-  return truncateUtf8(p || "/", 300);
+  return p;
 }
+
+/** A clean path as it is stored: without emails or tokens, capped. */
+const storedPath = (clean: string) => truncateUtf8(scrubText(clean) || "/", 300);
 
 function referrerHost(raw: string, site: SiteDTO): string {
   if (!raw) return "";
@@ -111,11 +127,6 @@ function referrerHost(raw: string, site: SiteDTO): string {
   } catch {
     return "";
   }
-}
-
-/** Visitors that asked not to be tracked across visits (Global Privacy Control, Do Not Track). */
-function optedOut(request: Request): boolean {
-  return request.headers.get("Sec-GPC") === "1" || request.headers.get("DNT") === "1";
 }
 
 export async function handleCollect(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -148,7 +159,7 @@ export async function handleCollect(request: Request, env: Env, ctx: ExecutionCo
   const ip = request.headers.get("CF-Connecting-IP") ?? "";
   if (ip && env.COLLECT_LIMITER) {
     try {
-      const { success } = await env.COLLECT_LIMITER.limit({ key: `collect:${ipBucket(ip)}` });
+      const { success } = await env.COLLECT_LIMITER.limit({ key: await limiterKey(env, "collect", ip) });
       if (!success) return reply(429, origin);
     } catch (err) {
       console.error(JSON.stringify({ message: "collect rate limiter failed", error: String(err) }));
@@ -172,26 +183,44 @@ export async function handleCollect(request: Request, env: Env, ctx: ExecutionCo
   const cf = request.cf as IncomingRequestCfProperties | undefined;
   if (detectBot(request, ua, Number(cf?.asn ?? 0))) return reply(202, origin);
 
+  // Consent taken back: this id isn't accepted again. What was collected under it stays until retention or an erasure.
+  // The browser has already dropped the id, and that is what ends the tracking. With the day's budget spent (or the site's
+  // withdrawals for the day used up) the server just doesn't record it: no write, the same answer.
+  if (kind === "withdraw") {
+    if (site.idMode !== "cookieless" && typeof p.v === "string" && OWN_ID_RE.test(p.v)) {
+      const at = Math.floor(Date.now() / 1000);
+      if (await collectBudgetAllows(env, at)) {
+        const rows = await withdrawVisitor(env, site.id, p.v, at);
+        if (rows) ctx.waitUntil(chargeCollectBudget(env, at, rows));
+      }
+    }
+    return reply(200, origin, { m: "c" });
+  }
 
-  // The tracker sends the hash only for sites with data-hash, where "#/route" is the page.
-  const path = normalizePath(page.hash.length > 1 ? `${page.pathname}${page.hash}` : page.pathname);
-  if (site.excludePaths.some((g) => pathMatches(path, g))) return reply(202, origin);
+  // The tracker sends the hash only for sites with data-hash, where "#/route" is the page; anything else in a fragment isn't one.
+  const clean = cleanPath(`${page.pathname}${hashRoute(page.hash)}`);
+  const path = storedPath(clean);
+  // A rule may name the real address, or what the reports show for it.
+  if (site.excludePaths.some((g) => pathMatches(clean.slice(0, MAX_MATCHED_PATH), g) || pathMatches(path, g))) return reply(202, origin);
 
   const now = Math.floor(Date.now() / 1000);
-  // Workers Free: past the day's budget, events are accepted and dropped, so the D1 allowance lasts the day.
+  // Workers Free: past the day's budget of rows written, events are accepted and dropped, so the D1 allowance lasts the day.
   if (!(await collectBudgetAllows(env, now))) return reply(202, origin);
   const date = new Date(now * 1000).toISOString().slice(0, 10);
 
   // The visitor: the site's own first-party id, or a hash that changes daily.
   // Consent sites: only once the visitor said yes. GPC/DNT still wins when the site respects it.
   const wantsId = site.idMode === "persistent" || (site.idMode === "consent" && p.cs === 1);
-  const gpcOff = site.respectGpc && optedOut(request);
+  const privacySignal = sendsPrivacySignal(request);
+  const gpcOff = site.respectGpc && privacySignal;
   const persistent = wantsId && !gpcOff;
+  const sentId = persistent && typeof p.v === "string" && OWN_ID_RE.test(p.v) ? p.v : null;
+  const refusedId = sentId !== null && (await visitorRefused(env, site.id, sentId, now));
   // a: 1 lets a built-in consent banner know there's a question to ask (never when GPC/DNT already answered it).
-  const mode = { m: persistent ? "p" : "c", ...(site.idMode === "consent" && !gpcOff ? { a: 1 } : {}) };
+  const mode = { m: persistent && !refusedId ? "p" : "c", ...(site.idMode === "consent" && !gpcOff ? { a: 1 } : {}) };
   const hashOf = async (day: string) => visitorHash(ip, `${ua}|${site.id}`, day, `${env.VISITOR_SALT ?? ""}|${await daySaltFor(env.DB, day)}`);
   let visitorId: string;
-  const ownId = persistent && typeof p.v === "string" && /^[A-Za-z0-9_-]{16,40}$/.test(p.v) ? p.v : null;
+  const ownId = refusedId ? null : sentId;
   if (ownId) {
     visitorId = ownId;
   } else {
@@ -222,13 +251,16 @@ export async function handleCollect(request: Request, env: Env, ctx: ExecutionCo
     : undefined;
 
   if (kind === "identify") {
+    // A browser that asked not to be tracked, or whose id was erased, isn't tied to a name.
+    if (privacySignal || refusedId) return reply(200, origin, mode);
     const e = p.e ?? {};
     const email = str(e.email, 254);
-    await identifyVisitor(env.DB, site.id, visitorId, { email: /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : undefined, name: str(e.name, 200), userId: str(e.id, 200) }, "client", now);
+    const rows = await identifyVisitor(env.DB, site.id, visitorId, { email: /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : undefined, name: str(e.name, 200), userId: str(e.id, 200) }, "client", now);
+    if (rows) ctx.waitUntil(chargeCollectBudget(env, now, rows));
     return reply(200, origin, mode);
   }
 
-  const click = kind === "pageview" && typeof p.c === "string" && env.SESSION_SECRET ? await verifyClickToken(env.SESSION_SECRET, p.c, now) : null;
+  const click = kind === "pageview" && typeof p.c === "string" && env.SESSION_SECRET ? usableClick(await verifyClickToken(env.SESSION_SECRET, p.c, now), site, visitorId, now) : null;
   const refHost = referrerHost(str(p.r, 2000), site);
   const returnRefs = kind === "pageview" && Array.isArray(p.k) && p.k.length > 0;
   const attribution = attributionOf(page, refHost, click, { inApp: inAppBrowser(ua), checkoutReturn: returnRefs });
@@ -259,7 +291,8 @@ export async function handleCollect(request: Request, env: Env, ctx: ExecutionCo
     siteId: site.id,
     visitorId,
     now,
-    kind,
+    // With GPC or DNT a checkout click counts as an outbound one: nothing for a timing match to find.
+    kind: privacySignal && kind === "checkout" ? "outbound" : kind,
     path,
     hostname: page.hostname.toLowerCase(),
     engagedMs,
@@ -272,8 +305,9 @@ export async function handleCollect(request: Request, env: Env, ctx: ExecutionCo
     adoptIdentity: !ownId,
   });
   if (!session) return reply(202, origin);
+  ctx.waitUntil(chargeCollectBudget(env, now, session.rowsWritten));
 
-  const name = kind === "goal" ? str(p.n, 64).trim() : kind === "outbound" || kind === "checkout" ? outboundName(str(p.n, 2000)) : "";
+  const name = kind === "goal" ? scrubText(str(p.n, 64).trim()) : kind === "outbound" || kind === "checkout" ? outboundName(str(p.n, 2000)) : "";
   try {
     env.WEB?.writeDataPoint({
       indexes: [site.id],
@@ -308,13 +342,26 @@ export async function handleCollect(request: Request, env: Env, ctx: ExecutionCo
   }
 
   // A return page after checkout names the provider's ids: tie them to this visit.
-  if (kind === "pageview" && Array.isArray(p.k) && p.k.length) {
+  if (kind === "pageview" && !privacySignal && Array.isArray(p.k) && p.k.length) {
     const refs = p.k.filter((r): r is string => typeof r === "string" && /^[A-Za-z0-9_:.-]{4,200}$/.test(r)).slice(0, 5);
-    // Anyone can send refs, so only a payment from the last day can be claimed (a return page follows its checkout within minutes).
-    if (refs.length) ctx.waitUntil(claimRefs(env, site, session.id, visitorId, refs, now, now - CLAIM_WINDOW_SEC).catch((err: unknown) => console.error(JSON.stringify({ message: "payment claim failed", error: String(err) }))));
+    // Anyone can send refs: claimRefs keeps them to payments close in time, and they never say who the buyer is.
+    if (refs.length) {
+      ctx.waitUntil(
+        claimRefs(env, site, session.id, refs, now, "browser")
+          .then((rows) => (rows ? chargeCollectBudget(env, now, rows) : undefined))
+          .catch((err: unknown) => console.error(JSON.stringify({ message: "payment claim failed", error: String(err) }))),
+      );
+    }
   }
 
-  return reply(200, origin, { s: session.id, ...mode });
+  // The reply's s is the checkout reference (sh_ref): none for a browser that asked not to be tracked.
+  return reply(200, origin, { ...(privacySignal ? {} : { s: session.id }), ...mode });
+}
+
+/** A valid click token counts on the site it was made for, for a few visitors. Otherwise the visit is an ordinary one. */
+function usableClick(click: VerifiedClickToken | null, site: SiteDTO, visitorId: string, now: number): ClickToken | null {
+  if (!click || (click.site && click.site !== site.id)) return null;
+  return clickTokenUsable(click.id, visitorId, now) ? click : null;
 }
 
 const metric = (v: unknown, max: number) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? Math.min(max, v) : 0);
@@ -342,7 +389,7 @@ export function screenClass(width: number): string {
 function outboundName(raw: string): string {
   try {
     const u = new URL(raw);
-    return truncateUtf8(`${u.hostname}${u.pathname === "/" ? "" : u.pathname}`, 200);
+    return truncateUtf8(scrubText(`${u.hostname}${u.pathname === "/" ? "" : u.pathname}`), 200);
   } catch {
     return "";
   }
@@ -353,7 +400,7 @@ function goalProps(props: unknown): string {
   if (!props || typeof props !== "object") return "";
   const parts: string[] = [];
   for (const [k, v] of Object.entries(props as Record<string, unknown>).slice(0, 10)) {
-    if (/^[\w-]{1,32}$/.test(k) && (typeof v === "string" || typeof v === "number" || typeof v === "boolean")) parts.push(`${k}=${String(v).slice(0, 60)}`);
+    if (/^[\w-]{1,32}$/.test(k) && (typeof v === "string" || typeof v === "number" || typeof v === "boolean")) parts.push(`${k}=${scrubText(String(v).slice(0, 200)).slice(0, 60)}`);
   }
   return truncateUtf8(parts.join("; "), 300);
 }

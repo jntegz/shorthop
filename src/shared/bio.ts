@@ -9,6 +9,7 @@ import { SHARE_ICON, SOCIAL_NETWORKS, type SocialNetwork } from "./bio-icons";
 import { escapeHtml } from "./html";
 import { HEX_COLOR_RE } from "./not-found";
 import { PREVIEW_IMAGE_PATH } from "./preview";
+import { normalizeTarget } from "./target";
 
 export { SOCIAL_NETWORK_IDS, SOCIAL_NETWORKS, type SocialNetwork } from "./bio-icons";
 
@@ -88,8 +89,24 @@ function tidySocialUrl(network: SocialNetwork, raw: string): string {
   return `mailto:${address}`;
 }
 
-/** Checks a bio page from the editor or the API; returns it tidied. */
-export function validateBio(input: BioPage): { ok: true; bio: BioPage } | { ok: false; problems: BioProblem[] } {
+/**
+ * Whether a button or social address follows the rules for a link's destination
+ * (src/shared/target.ts): https, a real host, no username or password in it.
+ */
+function httpsProblem(url: string, selfHosts?: readonly string[]): string | null {
+  if (!HTTPS_RE.test(url)) return "use a full https:// address";
+  const target = normalizeTarget(url, { selfHosts });
+  if (target.ok) return null;
+  if (/point back/.test(target.error)) return "pick it from your links instead of pasting its address";
+  return /username or password/.test(target.error) ? "the address can't contain a username or password" : "that address isn't valid";
+}
+
+/**
+ * Checks a bio page from the editor or the API; returns it tidied. `selfHosts`
+ * are the short domains: a button to one is picked as a link, so its clicks count.
+ * A saved page that no longer passes keeps working (renderBio) until it's next saved.
+ */
+export function validateBio(input: BioPage, opts: { selfHosts?: readonly string[] } = {}): { ok: true; bio: BioPage } | { ok: false; problems: BioProblem[] } {
   const problems: BioProblem[] = [];
   const name = String(input.name ?? "").trim();
   const text = String(input.text ?? "").trim();
@@ -148,6 +165,10 @@ export function validateBio(input: BioPage): { ok: true; bio: BioPage } | { ok: 
     }
     const url = "url" in b ? String(b.url ?? "").trim() : "";
     if (!HTTPS_RE.test(url)) problems.push({ field: `blocks.${i}`, message: `Button ${buttonNo}: pick one of your links, or a full https:// address.` });
+    else {
+      const problem = httpsProblem(url, opts.selfHosts);
+      if (problem) problems.push({ field: `blocks.${i}`, message: `Button ${buttonNo}: ${problem}.` });
+    }
     return { label, url };
   });
 
@@ -159,7 +180,7 @@ export function validateBio(input: BioPage): { ok: true; bio: BioPage } | { ok: 
     }
     const label = SOCIAL_NETWORKS[network].label;
     const url = tidySocialUrl(network, String(s.url ?? ""));
-    if (network === "email" ? !EMAIL_RE.test(url.slice("mailto:".length)) : !HTTPS_RE.test(url)) {
+    if (network === "email" ? !EMAIL_RE.test(url.slice("mailto:".length)) : httpsProblem(url)) {
       problems.push({ field: `socials.${i}`, message: network === "email" ? `${label}: use an address such as you@example.com.` : `${label}: use a full https:// address.` });
     }
     if (url.length > 2048) problems.push({ field: `socials.${i}`, message: `${label}: that address is too long.` });
@@ -181,6 +202,11 @@ export function parseBio(json: string | null | undefined): BioPage | null {
   } catch {
     return null;
   }
+}
+
+/** The addresses a page's own buttons go to (a button that is one of your links is checked as that link). */
+export function bioButtonUrls(bio: BioPage | null): string[] {
+  return (bio?.blocks ?? []).flatMap((b) => (isBioButton(b) && "url" in b && typeof b.url === "string" ? [b.url] : []));
 }
 
 /** How many of a page's blocks are buttons (texts and section titles aren't). */
@@ -214,7 +240,7 @@ const colourOr = (v: string | null | undefined): string | null => (v && HEX_COLO
 
 /** A social link as validateBio allows it: mailto: for email, https:// for the rest. */
 const socialUrlOk = (s: BioSocial): boolean =>
-  s.network === "email" ? s.url.startsWith("mailto:") && EMAIL_RE.test(s.url.slice("mailto:".length)) : HTTPS_RE.test(s.url);
+  s.network === "email" ? s.url.startsWith("mailto:") && EMAIL_RE.test(s.url.slice("mailto:".length)) : httpsProblem(s.url) === null;
 
 function iconSvg(network: SocialNetwork): string {
   const n = SOCIAL_NETWORKS[network];
@@ -272,7 +298,8 @@ export function renderBio(
       if (!isBioButton(b)) {
         return b.type === "heading" ? `<h2>${escapeHtml(b.label)}</h2>` : `<p class="note">${escapeHtml(b.text)}</p>`;
       }
-      if (!("link" in b) && !HTTPS_RE.test(String(b.url))) return "";
+      // Checked here too: a page saved before these rules still renders, without a button that breaks them.
+      if (!("link" in b) && httpsProblem(String(b.url)) !== null) return "";
       const href = "link" in b ? opts.linkHref(b.link) : b.url;
       const cls = first ? "btn first" : "btn";
       first = false;

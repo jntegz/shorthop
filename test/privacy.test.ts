@@ -139,10 +139,13 @@ describe("erasing", () => {
     expect(await row("SELECT 1 FROM web_visitors WHERE site_id = ?1 AND id = ?2", site.id, ALICE)).toBeNull();
     expect(await row("SELECT 1 FROM web_sessions WHERE visitor_id = ?1", ALICE)).toBeNull();
     expect(await row("SELECT 1 FROM web_sessions WHERE id = ?1", first)).toBeNull();
-    expect(await row("SELECT visitor_id, city, timezone FROM web_sessions WHERE id = ?1", second)).toMatchObject({ visitor_id: expect.stringMatching(/^erased_/), city: "", timezone: "" });
+    // The credited visit stays under a new id, which nothing outside D1 knows.
+    expect(await row("SELECT 1 FROM web_sessions WHERE id = ?1", second)).toBeNull();
+    const kept = (await row<{ credited_session_id: string }>("SELECT credited_session_id FROM payments WHERE id = 'api:charge:a1'"))!.credited_session_id;
+    expect(await row("SELECT visitor_id, city, timezone FROM web_sessions WHERE id = ?1", kept)).toMatchObject({ visitor_id: expect.stringMatching(/^erased_/), city: "", timezone: "" });
     const { results: pays } = await env.DB.prepare("SELECT * FROM payments WHERE id IN ('api:charge:a1', 'api:charge:a2', 'api:refund:a1-refund')").all<Record<string, unknown>>();
     for (const p of pays) expect(p).toMatchObject({ email: null, customer_id: null, visitor_id: null, ref: null, personal_cleared_at: expect.any(Number) });
-    expect(pays.find((p) => p.id === "api:charge:a1")).toMatchObject({ credited_session_id: second, amount_minor: 5000 });
+    expect(pays.find((p) => p.id === "api:charge:a1")).toMatchObject({ credited_session_id: kept, amount_minor: 5000 });
     expect(await revenue(site)).toBe(before);
     expect(await row("SELECT 1 FROM payment_claims WHERE session_id = ?1", first)).toBeNull();
     expect((await env.DB.prepare("SELECT id FROM webhook_deliveries").all<{ id: string }>()).results.map((r) => r.id)).toEqual(["dlv_1"]);
@@ -169,18 +172,21 @@ describe("erasing", () => {
       personal_cleared_at: expect.any(Number),
     });
 
-    // She can come back as a new visitor and be identified as usual.
-    await visit(site, ALICE);
-    expect((await call(`${API}/sites/${site.id}/identify`, json({ visitorId: ALICE, email: "alice@example.com" }))).status).toBe(200);
-    expect(await row("SELECT email FROM web_visitors WHERE site_id = ?1 AND id = ?2", site.id, ALICE)).toEqual({ email: "alice@example.com" });
+    // Her old browser id stays unused. With a new one she is a new visitor and can be identified as usual.
+    const fresh = "alice-new-browser1";
+    await visit(site, fresh);
+    expect((await call(`${API}/sites/${site.id}/identify`, json({ visitorId: fresh, email: "alice@example.com" }))).status).toBe(200);
+    expect(await row("SELECT email FROM web_visitors WHERE site_id = ?1 AND id = ?2", site.id, fresh)).toEqual({ email: "alice@example.com" });
   });
 
   it("keeps erased payments' credit when the attribution model changes", async () => {
     const site = await createSite();
-    const { second } = await people(site);
+    await people(site);
     await privacy(site, "erase", { visitorId: ALICE, confirm: true });
+    const credited = await row("SELECT credited_session_id FROM payments WHERE id = 'api:charge:a1'");
+    expect(credited).toEqual({ credited_session_id: expect.any(String) });
     expect((await call(`${API}/sites/${site.id}`, { ...json({ attributionModel: "first_touch" }), method: "PATCH" })).status).toBe(200);
-    expect(await row("SELECT credited_session_id FROM payments WHERE id = 'api:charge:a1'")).toEqual({ credited_session_id: second });
+    expect(await row("SELECT credited_session_id FROM payments WHERE id = 'api:charge:a1'")).toEqual(credited);
   });
 
   it("warns about active subscriptions", async () => {
@@ -332,9 +338,11 @@ describe("erasure and matching, after the security review", () => {
     expect(exported.payments).toEqual([]);
     await privacy(site, "erase", { visitorId: mallory, confirm: true });
     expect(await row("SELECT email FROM payments WHERE id = 'api:charge:v1'")).toEqual({ email: "victim@example.com" });
-    // The victim's own request does reach an identity planted with their email.
-    await event(site, mallory, { t: "identify", e: { email: "victim@example.com" } });
-    expect(await counts(site, { email: "victim@example.com" })).toMatchObject({ identities: 2, payments: 1 });
+    // The victim's own request shows an identity planted with their email, apart from what is theirs. (Mallory's erased id can't plant one any more.)
+    const other = "mallory-second-001";
+    await visit(site, other);
+    await event(site, other, { t: "identify", e: { email: "victim@example.com" } });
+    expect(await counts(site, { email: "victim@example.com" })).toMatchObject({ identities: 0, payments: 1, unproven: expect.arrayContaining([expect.objectContaining({ kind: "claimed_email", identities: 1, included: false })]) });
   });
 
   it("keeps anonymized visits anonymous: later payments and identify can't name them", async () => {
@@ -361,10 +369,11 @@ describe("erasure and matching, after the security review", () => {
   it("follows a sure match to the person's second visitor and its payments", async () => {
     const site = await createSite();
     const other = "alice-other-device1";
-    const visitB = await visit(site, other);
-    await pay(site, { id: "x1", ref: visitB, email: "alice@example.com" });
-    const visitB2 = await visit(site, other, `${SITE_ORIGIN}/?utm_source=ads&utm_medium=cpc`);
-    await pay(site, { id: "x2", ref: visitB2 });
+    await visit(site, other);
+    // The site's server names the visitor: that says who paid, as a bare reference wouldn't.
+    await pay(site, { id: "x1", visitorId: other, email: "alice@example.com" });
+    await visit(site, other, `${SITE_ORIGIN}/?utm_source=ads&utm_medium=cpc`);
+    await pay(site, { id: "x2", visitorId: other });
     expect(await counts(site, { email: "alice@example.com" })).toMatchObject({ visits: 2, payments: 2 });
     await privacy(site, "erase", { email: "alice@example.com", confirm: true });
     expect(await row("SELECT visitor_id, ref, personal_cleared_at FROM payments WHERE id = 'api:charge:x2'")).toMatchObject({ visitor_id: null, ref: null, personal_cleared_at: expect.any(Number) });

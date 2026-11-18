@@ -9,6 +9,7 @@ import {
   GLOBAL_MAX_FAILS,
   GLOBAL_MIN_NETWORKS,
   GLOBAL_WINDOW_SEC,
+  KNOWN_NETWORK_SEC,
   LOCK_BASE_SEC,
   LOCK_MAX_SEC,
   LOGIN_EVENT_RETENTION_SEC,
@@ -206,6 +207,20 @@ export function ipBucket(ip: string): string {
     .join(":")}::/64`;
 }
 
+/**
+ * A rate limiter's key for one client network: the scope and a keyed hash, so
+ * the limiter never holds the address. The same network always gets the same
+ * key. Without a secret to key it (D1 unreadable on a button install) it is a
+ * plain hash, which still keeps the limit working.
+ */
+export async function limiterKey(env: Pick<Env, "SESSION_SECRET">, scope: string, ip: string): Promise<string> {
+  const data = `limiter|${scope}|${ipBucket(ip)}`;
+  const mac = env.SESSION_SECRET ? await sign(env.SESSION_SECRET, data) : new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(data)));
+  let hex = "";
+  for (const b of mac.slice(0, 16)) hex += b.toString(16).padStart(2, "0");
+  return `${scope}:${hex}`;
+}
+
 /** Keyed hash of the client network: never reversible to the IP without the secret. */
 export async function ipHash(cfg: LoginConfig, ip: string): Promise<string> {
   const mac = await sign(cfg.secret, `login-ip|${ipBucket(ip)}`);
@@ -225,22 +240,25 @@ export interface AttemptState {
 }
 
 // Counts an attempt atomically before the password is checked, so parallel
-// guesses can't all slip in under the limit. Attempts made while a key is
-// locked aren't counted; lockouts reset after a quiet day.
+// guesses can't all slip in under the limit. A locked key isn't written at all
+// (the WHERE), so hammering a lock costs no D1 writes; lockouts reset after a
+// day that was quiet since the lock ended.
 const CHARGE = `INSERT INTO auth_failures (key, fails, window_start, locked_until, lockouts, updated_at)
-VALUES (?1, 1, ?2, 0, 0, ?2)
+VALUES (?1, ?4, ?2, 0, 0, ?2)
 ON CONFLICT (key) DO UPDATE SET
-  lockouts     = CASE WHEN ?2 - updated_at > 86400 THEN 0 ELSE lockouts END,
-  fails        = CASE WHEN locked_until > ?2 THEN fails WHEN ?2 - window_start > ?3 THEN 1 ELSE fails + 1 END,
-  window_start = CASE WHEN locked_until > ?2 THEN window_start WHEN ?2 - window_start > ?3 THEN ?2 ELSE window_start END,
+  lockouts     = CASE WHEN ?2 - MAX(updated_at, locked_until) > 86400 THEN 0 ELSE lockouts END,
+  fails        = CASE WHEN ?2 - window_start > ?3 THEN ?4 ELSE fails + ?4 END,
+  window_start = CASE WHEN ?2 - window_start > ?3 THEN ?2 ELSE window_start END,
   updated_at   = ?2
+WHERE locked_until <= ?2
 RETURNING fails, locked_until, lockouts, window_start`;
 
-export async function chargeAttempt(db: D1Database, key: string, now: number, windowSec = WINDOW_SEC): Promise<AttemptState> {
-  const row = await db
-    .prepare(CHARGE)
-    .bind(key, now, windowSec)
-    .first<{ fails: number; locked_until: number; lockouts: number; window_start: number }>();
+export async function chargeAttempt(db: D1Database, key: string, now: number, windowSec = WINDOW_SEC, count = 1): Promise<AttemptState> {
+  type Row = { fails: number; locked_until: number; lockouts: number; window_start: number };
+  // No row back means the key is locked and was left alone: read how it stands.
+  const row =
+    (await db.prepare(CHARGE).bind(key, now, windowSec, count).first<Row>()) ??
+    (await db.prepare("SELECT fails, locked_until, lockouts, window_start FROM auth_failures WHERE key = ?").bind(key).first<Row>());
   return { fails: row?.fails ?? 1, lockedUntil: row?.locked_until ?? 0, lockouts: row?.lockouts ?? 0, windowStart: row?.window_start ?? now };
 }
 
@@ -270,6 +288,16 @@ export async function globalLockedUntil(db: D1Database, now: number, owner: bool
     .all<{ locked_until: number }>();
   const until = Math.max(0, ...results.map((r) => r.locked_until));
   return until > now ? until : 0;
+}
+
+/**
+ * Whether this network (its keyed hash, from login_events) signed in to this
+ * account recently. Such a network skips the global brake and keeps its own
+ * per-network lockout, so the owner gets back in during an attack.
+ */
+export async function knownNetwork(db: D1Database, ipHashHex: string, email: string, now: number): Promise<boolean> {
+  const row = await db.prepare("SELECT 1 AS ok FROM login_events WHERE ok = 1 AND ip_hash = ?1 AND email = ?2 AND ts > ?3 LIMIT 1").bind(ipHashHex, email, now - KNOWN_NETWORK_SEC).first();
+  return row !== null;
 }
 
 /**
@@ -314,14 +342,18 @@ export interface SecuritySummary {
   lockedNetworks: number;
   globalLockedUntil: number | null;
   recent: { at: number; ok: boolean; country: string; email: string | null }[];
+  sharedSignIns: { email: string; networks: number }[];
 }
 
 export async function securitySummary(db: D1Database, now: number): Promise<SecuritySummary> {
-  const [failed, locked, global, recent] = await db.batch<Record<string, number | string>>([
+  const [failed, locked, global, recent, shared] = await db.batch<Record<string, number | string>>([
     db.prepare("SELECT COUNT(*) AS n FROM login_events WHERE ok = 0 AND ts >= ?").bind(now - 86400),
     db.prepare("SELECT COUNT(*) AS n FROM auth_failures WHERE key NOT LIKE '*%' AND key NOT LIKE 'api:%' AND key NOT LIKE 'pw:%' AND key NOT LIKE 'link:%' AND key NOT LIKE 'share:%' AND locked_until > ?1").bind(now),
     db.prepare("SELECT locked_until FROM auth_failures WHERE key = ?1 AND locked_until > ?2").bind(GLOBAL_KEY, now),
     db.prepare("SELECT ts, ok, country, email FROM login_events ORDER BY ts DESC LIMIT 10"),
+    db
+      .prepare("SELECT email, COUNT(DISTINCT ip_hash) AS n FROM login_events WHERE ok = 1 AND email IS NOT NULL AND ts >= ?1 GROUP BY email HAVING n > 1 ORDER BY n DESC LIMIT 5")
+      .bind(now - KNOWN_NETWORK_SEC),
   ]);
   const until = Number(global?.results[0]?.locked_until ?? 0);
   return {
@@ -329,5 +361,6 @@ export async function securitySummary(db: D1Database, now: number): Promise<Secu
     lockedNetworks: Number(locked?.results[0]?.n ?? 0),
     globalLockedUntil: until > 0 ? until : null,
     recent: (recent?.results ?? []).map((r) => ({ at: Number(r.ts), ok: Number(r.ok) === 1, country: String(r.country ?? ""), email: r.email ? String(r.email) : null })),
+    sharedSignIns: (shared?.results ?? []).map((r) => ({ email: String(r.email), networks: Number(r.n) })),
   };
 }

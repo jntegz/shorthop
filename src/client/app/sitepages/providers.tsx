@@ -35,6 +35,7 @@ function StatusBadge({ conn }: { conn: ConnectionDTO | undefined }) {
   const refused = conn.lastError && (!conn.lastEventAt || (conn.lastErrorAt ?? 0) > conn.lastEventAt);
   if (refused) return <Badge tone="danger">Last webhook refused</Badge>;
   if (conn.lastCheck && !conn.lastCheck.ok) return <Badge tone="danger">Check failed</Badge>;
+  if (conn.unverified) return <Badge tone="warn">Unverified: no access token</Badge>;
   if (conn.lastEventAt) return <Badge tone="good">Receiving · {ago(conn.lastEventAt)}</Badge>;
   return <Badge tone="warn">Waiting for the first webhook</Badge>;
 }
@@ -175,6 +176,16 @@ function ProviderSetup({ site, conn, onRemoved }: { site: SiteDTO; conn: Connect
           {info.where}. Paste this address{info.urlToken ? " (the token in it is the secret, so keep it private)" : ""}:
         </p>
         <CopyField id={`wh-${conn.id}`} value={conn.webhookUrl} label="Webhook address" />
+        {info.urlToken ? (
+          <p>
+            {conn.unverified ? `Without an access token, ${info.label} payments can't be confirmed and are labelled unverified. ` : null}
+            {conn.provider === "gumroad" ? "The Ping setting sends only sales: refunds, disputes and cancellations need the resource subscriptions in the setup guide. " : null}
+            If this address got out, make a new one and paste it into {info.label}; the old one stops working.{" "}
+            <Button size="sm" variant="ghost" loading={save.isPending} onClick={() => save.mutate({ rotateWebhookToken: true })}>
+              New address
+            </Button>
+          </p>
+        ) : null}
         <div>
           <p className="sitepage-label">Send these events</p>
           <ul className="sitepage-chips" aria-label="Events">
@@ -265,7 +276,7 @@ function ProviderSetup({ site, conn, onRemoved }: { site: SiteDTO; conn: Connect
             <Input
               id={`pf-${conn.id}`}
               label="Only these products (optional)"
-              hint="Product IDs, comma-separated. Use it when one provider account sells for several sites. Empty counts every payment."
+              hint="Product IDs, comma-separated. Use it when one provider account sells for several sites. A payment that names no product counts here if it carries a visit of this site, or if no other site takes every payment. Empty counts every payment."
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
               placeholder="prod_123, pdt_456"

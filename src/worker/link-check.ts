@@ -543,17 +543,24 @@ export async function listChecks(env: Env): Promise<Omit<LinkChecksDTO, "lastRun
   return { settings, items, excluded: excluded?.n ?? 0, overdue, capacityPerDay: RUNS_PER_DAY * planLimits(env).checkLimit, intervalHours: okInterval / 3600, perHostPerRun: MAX_PER_HOST_PER_RUN };
 }
 
-/** One link's checks (its target, and any smart-routing destinations), or why it isn't checked. */
+/**
+ * One link's checks (its target, and any smart-routing destinations), or why it
+ * isn't checked. With `hideProtected` (someone who can't edit links), a
+ * password-protected link's results are left out, since they name where it goes,
+ * and so are protected links among those using the same address: listing one
+ * would confirm a guessed destination.
+ */
 export async function linkCheck(
   env: Env,
   domain: string,
   slug: string,
+  { hideProtected = false }: { hideProtected?: boolean } = {},
 ): Promise<{ check: TargetCheckDTO | null; routed: TargetCheckDTO[]; monitored: boolean; reason: string | null; automatic: boolean; scope: CheckScope } | null> {
   const now = nowSec();
   const { enabled: automatic, scope } = await getCheckSettings(env.DB);
-  const link = await env.DB.prepare("SELECT target, active, broken, monitor, expires_at FROM links WHERE domain = ? AND slug = ?")
+  const link = await env.DB.prepare("SELECT target, active, broken, monitor, expires_at, password_hash FROM links WHERE domain = ? AND slug = ?")
     .bind(domain, slug)
-    .first<{ target: string; active: number; broken: number; monitor: number; expires_at: number | null }>();
+    .first<{ target: string; active: number; broken: number; monitor: number; expires_at: number | null; password_hash: string | null }>();
   if (!link) return null;
   const reason =
     link.monitor === MONITOR_NEVER
@@ -571,18 +578,20 @@ export async function linkCheck(
     .bind(domain, slug)
     .all<{ url: string }>();
   const all = [link.target, ...urls.map((u) => u.url)];
+  const notProtected = hideProtected ? "AND NOT EXISTS (SELECT 1 FROM links p WHERE p.domain = d.domain AND p.slug = d.slug AND p.password_hash IS NOT NULL)" : "";
   const [rows, users] = await Promise.all([
     env.DB.prepare("SELECT * FROM target_checks WHERE target IN (SELECT value FROM json_each(?1))").bind(JSON.stringify(all)).all<CheckRow>(),
-    env.DB.prepare(`SELECT DISTINCT domain, slug, title, url AS target FROM link_destinations WHERE url IN (SELECT value FROM json_each(?1)) AND ${MONITORED("?2", scope)} ORDER BY domain, slug`)
+    env.DB.prepare(`SELECT DISTINCT d.domain, d.slug, d.title, d.url AS target FROM link_destinations d WHERE d.url IN (SELECT value FROM json_each(?1)) AND ${MONITORED("?2", scope)} ${notProtected} ORDER BY d.domain, d.slug`)
       .bind(JSON.stringify(all), now)
       .all<LinkRef>(),
   ]);
   const rowOf = new Map(rows.results.map((r) => [r.target, r]));
   const dto = (url: string) => toDTO(url, rowOf.get(url), users.results.filter((u) => u.target === url).map(({ domain, slug, title }) => ({ domain, slug, title })));
   const row = rowOf.get(link.target);
+  const hidden = hideProtected && link.password_hash !== null;
   return {
-    check: row || !reason ? dto(link.target) : null,
-    routed: reason ? [] : urls.map((u) => dto(u.url)),
+    check: !hidden && (row || !reason) ? dto(link.target) : null,
+    routed: hidden || reason ? [] : urls.map((u) => dto(u.url)),
     monitored: reason === null,
     reason,
     automatic,

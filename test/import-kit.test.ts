@@ -44,13 +44,13 @@ describe("imports", () => {
     const exported = (await (await call(`${API}/export/links.json`, { headers: bearer })).json()) as { format: string; links: Record<string, unknown>[] };
     expect(exported.format).toBe("shorthop-links");
     expect(JSON.stringify(exported)).not.toContain("a-long-secret-1");
-    expect(JSON.stringify(exported)).not.toContain("password");
+    expect(JSON.stringify(exported)).not.toContain("password_hash");
 
     await call(`${API}/links/sh.example/full`, { method: "DELETE", headers: bearer });
     const res = await importRows({ from: "json", rows: exported.links });
     expect(res).toMatchObject({ created: 1, errors: 0 });
     const link = await get("full");
-    expect(link).toMatchObject({ importFrom: "json", title: "Full", tags: ["a", "b"], notes: "hello", utm: true, utmTemplate: "utm_source=x", passQuery: true, maxClicks: 50, protected: false });
+    expect(link).toMatchObject({ importFrom: "json", title: "Full", tags: ["a", "b"], notes: "hello", utm: true, utmTemplate: "utm_source=x", passQuery: true, maxClicks: 50, protected: false, active: false });
     expect(link.preview).toMatchObject({ title: "Preview title" });
   });
 

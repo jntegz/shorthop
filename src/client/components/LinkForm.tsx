@@ -15,7 +15,7 @@ import { lacksScheme, normalizeTarget, validateUtmTemplate } from "../../shared/
 import type { LinkDTO } from "../../shared/types";
 import { api, call, keys, linkFromError } from "../api";
 import { fromLocalInput, toLocalInput } from "../lib/format";
-import { LINK_HELP } from "../lib/help";
+import { LINK_HELP, STOP_DELAY_NOTE } from "../lib/help";
 import { linkKey, linkPath, linkState, useDomains, useLinkLabel } from "../lib/links";
 import { useCan, useMe } from "../lib/me";
 import { cn, copy } from "../lib/utils";
@@ -23,7 +23,7 @@ import { LinkProtection, type PasswordMode } from "./LinkProtection";
 import { LinkUtm } from "./LinkUtm";
 import { PreviewEditor } from "./PreviewEditor";
 import { RoutingEditor } from "./RoutingEditor";
-import { Button, Combobox, Dialog, Field, InfoTip, Input, Segmented, Select, Switch, Textarea } from "./ui";
+import { Button, Combobox, Dialog, Field, InfoTip, Input, Notice, Segmented, Select, Switch, Textarea } from "./ui";
 
 interface Props {
   open: boolean;
@@ -37,6 +37,8 @@ interface Props {
   /** Prefill the destination and title when creating (the bookmarklet, sharing to the admin). */
   initialTarget?: string;
   initialTitle?: string;
+  /** The destination and title came from the address that opened this page (someone else may have written it). */
+  prefilledFromLink?: boolean;
   /** Creating only: open as a link-in-bio page instead of a redirect. */
   asBio?: boolean;
   onSaved?: (link: LinkDTO) => void;
@@ -111,7 +113,40 @@ function initial(link?: LinkDTO, slug = "", domain = "", target = "", title = ""
   };
 }
 
-export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain, initialTarget, initialTitle, asBio, onSaved, markBroken }: Props) {
+/** The saved fields as a form state gives them. */
+function fieldsOf(f: FormState) {
+  return {
+    bio: f.bio,
+    target: f.target.trim(),
+    title: f.title.trim() || null,
+    tags: f.tags,
+    notes: f.notes,
+    expiresAt: fromLocalInput(f.expires),
+    active: f.active,
+    utm: f.utm,
+    utmTemplate: f.utm && f.utmCustom && f.utmTemplate.trim() ? f.utmTemplate.trim() : null,
+    passQuery: f.passQuery,
+    monitor: f.monitor,
+    neverCheck: f.neverCheck,
+    routing: f.rules.length ? { rules: f.rules } : null,
+    preview: f.preview,
+    maxClicks: f.capOn ? Number(f.maxClicks) : null,
+  };
+}
+
+/** What only an existing link has. */
+function editFieldsOf(f: FormState) {
+  const cut = f.replacement.indexOf("/");
+  const replacement = f.broken && f.deadEnd === "link" && cut > 0 ? { domain: f.replacement.slice(0, cut), slug: f.replacement.slice(cut + 1) } : null;
+  return { ...fieldsOf(f), broken: f.broken, replacement };
+}
+
+/** The fields that differ from the link as this form loaded it: what someone else changed meanwhile isn't sent back. */
+function changedFields<T extends object>(now: T, before: T): Partial<T> {
+  return Object.fromEntries(Object.entries(now).filter(([k, v]) => JSON.stringify(v) !== JSON.stringify(before[k as keyof T]))) as Partial<T>;
+}
+
+export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain, initialTarget, initialTitle, prefilledFromLink, asBio, onSaved, markBroken }: Props) {
   const qc = useQueryClient();
   const editing = Boolean(link);
   const { domains, primary, multiple } = useDomains();
@@ -161,7 +196,8 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
 
   const set = <K extends keyof FormState>(k: K, v: FormState[K]) => setF((s) => ({ ...s, [k]: v }));
 
-  const targetCheck = f.target ? normalizeTarget(f.target, { allowHttp: link?.source === "import", selfHosts: domains }) : null;
+  // An http:// destination from an older import may stay as it is; no new one can be typed.
+  const targetCheck = f.target ? normalizeTarget(f.target, { allowHttp: Boolean(link) && f.target.trim() === link?.target, selfHosts: domains }) : null;
   const errors = {
     target: !f.target ? "Enter the destination URL." : targetCheck && !targetCheck.ok ? targetCheck.error : null,
     slug: !editing && f.slug ? validateSlug(f.slug, "native") : null,
@@ -200,7 +236,7 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
   const passwordError = f.passwordMode === "set" ? linkPasswordProblem(f.password) : null;
   const capNumber = Number(f.maxClicks);
   const capError = f.capOn && (!Number.isInteger(capNumber) || capNumber < 1 || capNumber > MAX_CLICK_LIMIT) ? `Enter a whole number from 1 to ${MAX_CLICK_LIMIT.toLocaleString("en")}.` : null;
-  const bioCheck = f.bio ? validateBio(f.bio) : null;
+  const bioCheck = f.bio ? validateBio(f.bio, { selfHosts: domains }) : null;
   const bioProblems = bioCheck && !bioCheck.ok ? bioCheck.problems.map((p) => p.message) : [];
   const valid =
     bioProblems.length === 0 &&
@@ -208,40 +244,27 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
 
   const save = useMutation({
     mutationFn: async () => {
-      const body = {
-        ...(link?.unsafe && f.target.trim() === link.target ? { trustDestination: trust } : {}),
-        // On create a redirect sends nothing; on edit, null turns a bio page back into a redirect.
-        ...(f.bio || editing ? { bio: f.bio } : {}),
-        target: f.target.trim(),
-        title: f.title.trim() || null,
-        tags: f.tags,
-        notes: f.notes,
-        expiresAt: fromLocalInput(f.expires),
-        active: f.active,
-        utm: f.utm,
-        utmTemplate: f.utm && f.utmCustom && f.utmTemplate.trim() ? f.utmTemplate.trim() : null,
-        passQuery: f.passQuery,
-        monitor: f.monitor,
-        neverCheck: f.neverCheck,
-        routing: f.rules.length ? { rules: f.rules } : null,
-        preview: f.preview,
-        maxClicks: f.capOn ? capNumber : null,
-        ...(f.passwordMode === "set" ? { password: f.password } : f.passwordMode === "remove" ? { password: null } : {}),
-      };
+      const password = f.passwordMode === "set" ? { password: f.password } : f.passwordMode === "remove" ? { password: null } : {};
       if (link) {
-        const cut = f.replacement.indexOf("/");
-        const replacement = f.broken && f.deadEnd === "link" && cut > 0 ? { domain: f.replacement.slice(0, cut), slug: f.replacement.slice(cut + 1) } : null;
-        const json = { ...body, broken: f.broken, replacement };
+        // Only what was changed here: someone else may be editing the other fields.
+        const json = {
+          ...changedFields(editFieldsOf(f), editFieldsOf(initial(link))),
+          ...password,
+          ...(link.unsafe && f.target.trim() === link.target ? { trustDestination: trust } : {}),
+        };
         return (await call(api.links[":domain"][":slug"].$patch({ param: { domain: link.domain, slug: link.slug }, json }))).link;
       }
-      return (await call(api.links.$post({ json: { ...body, domain: domain || undefined, slug: f.slug.trim() || undefined } }))).link;
+      // On create a redirect sends no bio.
+      const { bio, ...fields } = fieldsOf(f);
+      return (await call(api.links.$post({ json: { ...fields, ...(bio ? { bio } : {}), ...password, domain: domain || undefined, slug: f.slug.trim() || undefined } }))).link;
     },
     onSuccess: (saved) => {
       void qc.invalidateQueries({ queryKey: keys.allLinks });
       void qc.invalidateQueries({ queryKey: keys.cap(saved.domain, saved.slug) });
       qc.setQueryData(keys.link(saved.domain, saved.slug), { link: saved });
+      const stopped = link && ((link.active && !saved.active) || (!link.protected && saved.protected));
       toast.success(editing ? "Link updated" : "Link created", {
-        description: "Live worldwide within about a minute.",
+        description: stopped ? STOP_DELAY_NOTE : "Live worldwide within about a minute.",
         action: editing ? undefined : { label: "Copy", onClick: () => void copy(saved.shortUrl) },
       });
       onSaved?.(saved);
@@ -279,6 +302,7 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
       wide={(routingOpen && f.rules.length) || (previewOpen && f.preview) || f.bio ? "xl" : true}
     >
       <form onSubmit={submit} className="space-y-4" noValidate>
+        {prefilledFromLink && !editing ? <Notice>This form was filled in by the link that opened it. Check the destination and title before you create it.</Notice> : null}
         <Segmented<"redirect" | "bio">
           label="Link type"
           value={f.bio ? "bio" : "redirect"}
@@ -420,7 +444,7 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
             </div>
             {suggest.data?.slugs.length ? (
               <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                <span className="text-xs text-muted">Ideas:</span>
+                <span className="text-xs text-muted">Ideas from the destination page:</span>
                 {suggest.data.slugs.map((s) => (
                   <button key={s} type="button" className="rounded-full border border-line px-2 py-0.5 font-mono text-xs hover:border-accent hover:text-accent" onClick={() => set("slug", s)}>
                     {s}

@@ -27,16 +27,16 @@ describe("recording", () => {
     await patch("guide", { active: false, tags: ["a", "b"] });
     const v = await history("guide");
     expect(v.map((x) => x.action)).toEqual(["update", "update", "create"]);
-    expect(v.every((x) => x.actor === "api-token")).toBe(true);
+    expect(v.every((x) => /^api-token · network [0-9a-f]{8}$/.test(x.actor))).toBe(true);
     expect(v[0]!.snapshot).toMatchObject({ target: "https://example.com/two", active: 0, tags: "a,b", source: "native" });
     expect(diffSnapshots(v[1]!.snapshot, v[0]!.snapshot).map((c) => c.field)).toEqual(["active", "tags"]);
   });
 
   it("records imports with what was saved", async () => {
-    await call(`${API}/import`, json({ rows: [{ slug: "old", target: "http://example.com/x", title: "Old" }] }));
+    await call(`${API}/import`, json({ rows: [{ slug: "old", target: "https://example.com/x", title: "Old" }] }));
     const v = await history("old");
     expect(v).toHaveLength(1);
-    expect(v[0]).toMatchObject({ action: "import", snapshot: { target: "http://example.com/x", source: "import" } });
+    expect(v[0]).toMatchObject({ action: "import", snapshot: { target: "https://example.com/x", source: "import" } });
   });
 });
 
@@ -74,7 +74,7 @@ describe("deleted links", () => {
     await call(`${API}/links/sh.example/guide`, { method: "DELETE", headers: bearer });
     expect(await kv("guide")).toBeNull();
     const list = await deleted();
-    expect(list).toMatchObject([{ domain: "sh.example", slug: "guide", target: "https://example.com/one", title: "First", actor: "api-token" }]);
+    expect(list).toMatchObject([{ domain: "sh.example", slug: "guide", target: "https://example.com/one", title: "First", actor: expect.stringMatching(/^api-token/) }]);
 
     const res = await call(`${API}/deleted/sh.example/guide/restore`, { method: "POST", headers: bearer });
     expect(res.status).toBe(201);

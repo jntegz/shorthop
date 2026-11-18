@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import type { BulkAction, BulkResult, LinkListItem } from "../../../shared/types";
 import { api, call, downloadFile, keys } from "../../api";
 import { num } from "../../lib/format";
+import { STOP_DELAY_NOTE } from "../../lib/help";
 import { useCan, useMe } from "../../lib/me";
 import { Button, Dialog, errorText, IconButton, Input, Menu, type MenuItem } from "../ui";
 
@@ -54,7 +55,7 @@ export function BulkBar({ selected, tags, onClear, onQr, onShare }: { selected: 
       const failed = r.failed.length ? ` ${r.failed.length} failed: ${r.failed.slice(0, 3).map((f) => `${f.slug} (${f.error})`).join(", ")}${r.failed.length > 3 ? "…" : ""}` : "";
       const msg = `${plural(r.changed)} ${DONE[action]}${r.unchanged ? ` · ${num(r.unchanged)} already were` : ""}.`;
       if (r.failed.length) toast.warning(msg, { description: failed, duration: 15_000 });
-      else toast.success(msg, action === "delete" ? { description: "You can bring them back from Recently deleted for 90 days." } : undefined);
+      else toast.success(msg, action === "delete" ? { description: "You can bring them back from Recently deleted for 90 days." } : action === "disable" ? { description: STOP_DELAY_NOTE } : undefined);
       setConfirm(null);
       setTagging(null);
       setTag("");

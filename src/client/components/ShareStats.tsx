@@ -125,7 +125,7 @@ export function ShareStats({ link, label, open, onOpenChange }: { link: LinkDTO;
             <input type="checkbox" className="mt-1" checked={showRecent} onChange={(e) => setShowRecent(e.target.checked)} />
             <span>
               Show recent clicks
-              <span className="block text-xs text-muted">The last 20 clicks with time, city, device and source. No visitor ids.</span>
+              <span className="block text-xs text-muted">The last 20 clicks with time, city, device and source, for anyone with this link. On a link made for one person, this shows when and where they opened it.</span>
             </span>
           </label>
           <div className="flex justify-end">

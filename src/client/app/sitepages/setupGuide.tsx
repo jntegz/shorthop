@@ -11,11 +11,13 @@ import { suggestedSecretName } from "./providers";
 /** Client and server examples: how the visit reference reaches each provider. */
 function checkoutExamples(p: Provider, domain: string): { label: string; code: string }[] {
   const success = `https://${domain}/thanks`;
-  const serverFetch = `// In the browser: send the visit reference with the checkout request
+  const serverFetch = `// In the browser: send the visit reference with the checkout request.
+// It is null with Global Privacy Control or Do Not Track: the checkout goes on without it.
+const ref = await new Promise((done) => (window.shorthop ? window.shorthop.ref(done) : done(null)));
 const res = await fetch("/api/checkout", {
   method: "POST",
   headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ plan: "pro", ref: window.shorthop?.ref() }),
+  body: JSON.stringify({ plan: "pro", ...(ref ? { ref } : {}) }),
 });
 location.href = (await res.json()).url;`;
   switch (p) {
@@ -95,7 +97,7 @@ res.json({ url: session.url });` },
         { label: "Product link (no code)", code: `<!-- The script adds ?sh_ref=<ref>; Gumroad sends it back as url_params[sh_ref] -->
 <a href="https://you.gumroad.com/l/product">Buy on Gumroad</a>
 <script src="https://gumroad.com/js/gumroad.js"></script>  <!-- the overlay works too -->` },
-        { label: "Add every event (optional, API)", code: `# The Ping setting sends sales and refunds. For disputes and cancellations too:
+        { label: "Add every event (needed for refunds, API)", code: `# The Ping setting sends only sales. Refunds, disputes and cancellations come through these:
 for r in sale refund dispute dispute_won cancellation subscription_ended; do
   curl -X PUT https://api.gumroad.com/v2/resource_subscriptions \\
     -d access_token=$GUMROAD_ACCESS_TOKEN -d resource_name=$r \\
@@ -166,7 +168,8 @@ export function SetupGuide({ site, origin }: { site: SiteDTO; origin: string }) 
           <li>In {info.label}: <strong>{info.where}</strong>. Paste the address.</li>
           <li>Choose these events: <C>{info.events.join(", ")}</C>.</li>
           {p === "paypal" ? <li>Copy the <strong>Webhook ID</strong> PayPal shows, and your app’s <strong>Client ID</strong>, into the PayPal settings here.</li> : null}
-          {p === "gumroad" ? <li>Gumroad doesn’t sign its pings: the random token in the address is the proof. Add an access token too, so each sale is confirmed with Gumroad before it’s counted.</li> : null}
+          {p === "gumroad" ? <li>Gumroad doesn’t sign its pings: the random token in the address is the proof. Add an access token too, so each sale is confirmed with Gumroad. If Gumroad can’t be asked at that moment, the sale is kept and labelled unverified.</li> : null}
+          {p === "gumroad" ? <li>The Ping setting sends only sales. Refunds, disputes and cancellations need the resource subscriptions in step 4, or net revenue stays too high.</li> : null}
         </ol>
 
         <h3 className="sitepage-h3">3. Add the secrets (safely)</h3>

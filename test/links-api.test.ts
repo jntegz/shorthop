@@ -205,7 +205,7 @@ describe("list and search", () => {
 describe("import", () => {
   const rows = [
     { slug: "Guide", target: "https://example.com/guide", clicks: 120 },
-    { slug: "old-http", target: "http://example.com/x" },
+    { slug: "secure", target: "https://example.com/x" },
     { slug: "api", target: "https://example.com/" },
     { slug: "bad target", target: "https://example.com/" },
     { slug: "Guide", target: "https://example.com/dupe" },
@@ -223,11 +223,11 @@ describe("import", () => {
     expect((await env.DB.prepare("SELECT monitor FROM links WHERE slug = 'chk'").first<{ monitor: number }>())?.monitor).toBe(0);
   });
 
-  it("imports links verbatim (http allowed, no UTM) and skips existing ones", async () => {
+  it("imports links verbatim (no UTM) and skips existing ones", async () => {
     let result = (await (await call(`${API}/import`, json({ rows }))).json()) as ImportResult;
     expect(result.created).toBe(2);
     expect(await kv("Guide")).toEqual({ u: "https://example.com/guide", a: 1, e: null, utm: 0, qp: 0 });
-    expect((await call(`${ORIGIN}/old-http`)).headers.get("Location")).toBe("http://example.com/x");
+    expect((await call(`${ORIGIN}/secure`)).headers.get("Location")).toBe("https://example.com/x");
     const link = ((await (await call(`${API}/links/sh.example/Guide`, { headers: bearer })).json()) as { link: LinkDTO }).link;
     expect(link).toMatchObject({ source: "import", importedClicks: 120, utm: false });
 

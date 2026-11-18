@@ -47,6 +47,8 @@ export interface SessionInfo {
   utmMedium: string;
   utmCampaign: string;
   linkSlug: string;
+  /** D1 rows this event wrote, indexes included, as D1 reports them (0 when it doesn't). */
+  rowsWritten: number;
 }
 
 interface OpenRow {
@@ -89,7 +91,7 @@ const openId = (cutoff: number) => `COALESCE((SELECT id FROM web_sessions WHERE 
  * when c.adoptIdentity allows it. Null when there's none, or another request
  * moved it first.
  */
-async function adoptSession(db: D1Database, c: SessionContext, earlier: string[]): Promise<OpenRow | null> {
+async function adoptSession(db: D1Database, c: SessionContext, earlier: string[], wrote: (rows: number | undefined) => void): Promise<OpenRow | null> {
   if (!earlier.length) return null;
   const marks = earlier.map((_, i) => `?${i + 4}`).join(", ");
   const found = await db
@@ -103,7 +105,7 @@ async function adoptSession(db: D1Database, c: SessionContext, earlier: string[]
     .bind(c.siteId, c.now - SESSION_GAP_SEC, c.visitorId, ...earlier)
     .first<OpenRow & { visitor_id: string }>();
   if (!found) return null;
-  const [moved] = await db.batch([
+  const results = await db.batch([
     db.prepare("UPDATE web_sessions SET visitor_id = ?2 WHERE id = ?1 AND visitor_id = ?3").bind(found.id, c.visitorId, found.visitor_id),
     ...(c.adoptIdentity
       ? [
@@ -117,7 +119,8 @@ async function adoptSession(db: D1Database, c: SessionContext, earlier: string[]
         ]
       : []),
   ]);
-  return moved?.meta.changes ? found : null;
+  for (const r of results) wrote(r.meta.rows_written);
+  return results[0]?.meta.changes ? found : null;
 }
 
 /** Tries before a session is started regardless: each one lost a race to another event of the same visitor. */
@@ -138,6 +141,10 @@ export async function touchSession(db: D1Database, c: SessionContext): Promise<S
   const pv = c.kind === "pageview" ? 1 : 0;
   const cutoff = c.now - SESSION_GAP_SEC;
   let earlier: string[] | null = null;
+  let rowsWritten = 0;
+  const wrote = (rows: number | undefined) => {
+    rowsWritten += rows ?? 0;
+  };
   for (let attempt = 1; ; attempt++) {
     let open = await db
       .prepare(`SELECT ${OPEN_COLS} FROM web_sessions WHERE site_id = ?1 AND visitor_id = ?2 AND last_seen_at > ?3 ${OPEN_ORDER}`)
@@ -145,11 +152,11 @@ export async function touchSession(db: D1Database, c: SessionContext): Promise<S
       .first<OpenRow>();
     if (!open && c.earlierVisitors) {
       earlier ??= await c.earlierVisitors();
-      open = await adoptSession(db, c, earlier);
+      open = await adoptSession(db, c, earlier, wrote);
     }
 
     if (open && !(pv && isNewCampaign(open, c.attribution))) {
-      await db
+      const touched = await db
         .prepare(
           `UPDATE web_sessions SET
              last_seen_at = MAX(last_seen_at, ?2),
@@ -164,6 +171,7 @@ export async function touchSession(db: D1Database, c: SessionContext): Promise<S
         )
         .bind(open.id, c.now, pv, c.kind === "goal" ? 1 : 0, Math.min(c.engagedMs, MAX_ENGAGED_MS), c.path, c.hostname, c.kind === "checkout" ? 1 : 0)
         .run();
+      wrote(touched.meta.rows_written);
       return {
         id: open.id,
         isNew: false,
@@ -173,6 +181,7 @@ export async function touchSession(db: D1Database, c: SessionContext): Promise<S
         utmMedium: open.utm_medium,
         utmCampaign: open.utm_campaign,
         linkSlug: open.link_slug,
+        rowsWritten,
       };
     }
     // Reading time and page speed belong to a visit already open.
@@ -227,6 +236,7 @@ export async function touchSession(db: D1Database, c: SessionContext): Promise<S
       .run();
     // Nothing inserted: another event of this visitor started (or moved) a session meanwhile. Read again.
     if (!started.meta.changes) continue;
+    wrote(started.meta.rows_written);
     return {
       id,
       isNew: true,
@@ -236,6 +246,7 @@ export async function touchSession(db: D1Database, c: SessionContext): Promise<S
       utmMedium: a.utm.medium,
       utmCampaign: a.utm.campaign,
       linkSlug: a.link?.slug ?? "",
+      rowsWritten,
     };
   }
 }
@@ -252,16 +263,16 @@ export async function identifyVisitor(
   who: { email?: string; name?: string; userId?: string },
   trust: "client" | "server",
   now: number,
-): Promise<void> {
+): Promise<number> {
   const email = who.email?.trim().toLowerCase().slice(0, 254) || null;
   const name = who.name?.trim().slice(0, 200) || null;
   const userId = who.userId?.trim().slice(0, 200) || null;
-  if (!email && !name && !userId) return;
+  if (!email && !name && !userId) return 0;
   const pick = (col: string) =>
     trust === "server"
       ? `${col} = COALESCE(excluded.${col}, ${col})`
       : `${col} = CASE WHEN web_visitors.trust = 'server' THEN ${col} ELSE COALESCE(${col}, excluded.${col}) END`;
-  await db
+  const res = await db
     .prepare(
       `INSERT INTO web_visitors (site_id, id, first_seen, email, name, user_id, trust) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
        ON CONFLICT (site_id, id) DO UPDATE SET ${pick("email")}, ${pick("name")}, ${pick("user_id")},
@@ -269,4 +280,5 @@ export async function identifyVisitor(
     )
     .bind(siteId, visitorId, now, email, name, userId, trust)
     .run();
+  return res.meta.rows_written ?? 0;
 }

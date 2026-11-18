@@ -53,6 +53,8 @@ export function StatusBadges({ l }: { l: LinkListItem }) {
 // ---- Destination: host first, the rest quieter ----
 
 export function Destination({ url }: { url: string }) {
+  // Empty: a password-protected link, for someone who can't edit links.
+  if (!url) return <span className="links-dest">Hidden (password-protected)</span>;
   const host = hostOf(url);
   const at = url.indexOf(host);
   const rest = at >= 0 ? url.slice(at + host.length) : url;
@@ -106,7 +108,7 @@ export function LinkRow({ l, first, bios, canSelect, checked, onCheck, seesClick
   const items: (MenuItem | "separator")[] = [
     { label: "Copy short link", icon: Copy, onSelect: onCopy },
     { label: "QR code", icon: QrCode, onSelect: onQr },
-    { label: "Open destination", icon: ExternalLink, onSelect: () => window.open(l.target, "_blank", "noopener,noreferrer") },
+    ...(l.target ? [{ label: "Open destination", icon: ExternalLink, onSelect: () => window.open(l.target, "_blank", "noopener,noreferrer") }] : []),
     ...(seesClicks ? [{ label: "Statistics", icon: BarChart3, onSelect: () => navigate(`${to}#stats`) }] : []),
     ...(canEdit ? ["separator" as const, { label: l.active ? "Disable" : "Enable", icon: Power, disabled: toggling, onSelect: onToggle }] : []),
   ];

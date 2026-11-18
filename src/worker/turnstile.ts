@@ -1,5 +1,5 @@
-// Optional Cloudflare Turnstile on the password pages (log in, forgot password,
-// invite and reset links). Off by default: Cloudflare Access already keeps bots
+// Optional Cloudflare Turnstile on the login and forgot-password pages (never
+// on invite and reset links, whose address is a secret). Off by default: Cloudflare Access already keeps bots
 // away from them. The site key and the switch live in D1; the secret only in
 // the TURNSTILE_SECRET Wrangler secret. It turns on only through a check that
 // passed (/_admin/bot-check), so a wrong key or secret can't lock everyone out.

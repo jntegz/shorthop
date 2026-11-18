@@ -2,7 +2,7 @@
 // /_admin/reset/<token>: the password step (behind Cloudflare Access unless
 // ADMIN_AUTH is "password"). Server-rendered forms without JavaScript, so they
 // work under the strictest CSP (the optional Turnstile bot check adds only its
-// own script). Owners (ADMIN_EMAIL, or everyone without Access) use the admin
+// own script, on the login and forgot-password pages). Owners (ADMIN_EMAIL, or everyone without Access) use the admin
 // password; everyone else chooses their own password from an invite link, and
 // can get a reset link by email.
 
@@ -33,6 +33,7 @@ import {
   getEpoch,
   globalLockedUntil,
   ipHash,
+  knownNetwork,
   issueSessionCookie,
   lock,
   loginConfig,
@@ -286,8 +287,14 @@ loginApp.post("/_admin/login", async (c) => {
   turnstile = bot.widget;
   if (bot.error) return render(400, bot.error);
 
+  // A network this account signed in from recently goes on to its own limit below: a pause
+  // caused by strangers shouldn't lock out the owner.
   const globalUntil = await globalLockedUntil(env.DB, now, access.owner);
-  if (globalUntil) return render(429, `Logins are paused after many failed attempts. Try again in ${waitText(globalUntil - now)}.`, globalUntil - now);
+  if (globalUntil && !(await knownNetwork(env.DB, key, access.email, now))) {
+    // Nothing a stranger can't also send proves this is the owner, so the way past it is outside this page.
+    const owners = access.owner ? " The owner can lift the pause from the Cloudflare account: see SECURITY.md." : "";
+    return render(429, `Logins are paused after many failed attempts. Try again in ${waitText(globalUntil - now)}.${owners}`, globalUntil - now);
+  }
 
   const state = await chargeAttempt(env.DB, key, now);
   if (state.lockedUntil > now) {
@@ -441,7 +448,8 @@ for (const kind of ["invite", "reset"] as const) {
       return LINK_TEXT[kind].invalid();
     }
     if (isPaused(user, now)) return pausedNotice(user);
-    return choosePasswordPage({ kind, action: new URL(c.req.url).pathname, email: access.email, minLength: MIN_USER_PASSWORD, status: 200, turnstile: await activeTurnstile(env) });
+    // No bot check here: the link's token already can't be guessed, and it shouldn't sit in a page that loads a third party's script.
+    return choosePasswordPage({ kind, action: new URL(c.req.url).pathname, email: access.email, minLength: MIN_USER_PASSWORD, status: 200 });
   });
 
   loginApp.post(path, async (c) => {
@@ -469,9 +477,7 @@ for (const kind of ["invite", "reset"] as const) {
     }
     if (isPaused(user, now)) return pausedNotice(user);
     const action = new URL(c.req.url).pathname;
-    const bot = await botCheck(c, form);
-    const retry = (error: string) => choosePasswordPage({ kind, action, email: access.email, minLength: MIN_USER_PASSWORD, error, status: 400, turnstile: bot.widget });
-    if (bot.error) return retry(bot.error);
+    const retry = (error: string) => choosePasswordPage({ kind, action, email: access.email, minLength: MIN_USER_PASSWORD, error, status: 400 });
     const password = form.get("password") ?? "";
     if (password.length < MIN_USER_PASSWORD) return retry(`Use at least ${MIN_USER_PASSWORD} characters.`);
     if (password.length > MAX_PASSWORD_LENGTH) return retry("That password is too long.");

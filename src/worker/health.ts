@@ -12,12 +12,14 @@ import { escapeHtml } from "../shared/html";
 import type { HealthCheck, HealthStatus, JobRun, SystemHealthDTO } from "../shared/types";
 import { MIN_ADMIN_PASSWORD_LENGTH, parsePasswordHash, PLAN_ITERATIONS } from "../shared/password";
 import { aeAvailable } from "./ae";
-import { daySaltPruneStmt } from "./analytics";
+import { daySaltPruneStmt, daySaltRange, pruneDaySalts } from "./analytics";
+import { BACKUP_JOB_KEY, BACKUP_LAST_KEY, BACKUP_TABLE_NAMES, type BackupJob } from "./backup";
+import { SHORT_ADMIN_PASSWORD } from "../shared/login-policy";
 import { accessConfigured, adminAuthMode, legacyApiToken } from "./auth";
 import { getDefaultUtm, getSetting, nowSec, publish, setSettingStmt, type LinkRow } from "./db";
 import { autoClearDemo } from "./demo";
 import { destinationsOf, hostsOf, safetyOfEach, UNSAFE_FLAGGED, UNSAFE_NONE, UNSAFE_TRUSTED } from "./safety";
-import { domainsOf } from "./domains";
+import { configuredDomains, domainsOf, workersDevAdmin } from "./domains";
 import { runDigest } from "./digest";
 import { pruneHistory } from "./history";
 import { MailerError, mailerStatus, providerName, sendMail, withMailSettings } from "./mailer";
@@ -30,6 +32,7 @@ import { getCheckSettings, runLinkChecks } from "./link-check";
 import { pruneApiKeys } from "./users";
 import { checkMilestones, deliver, pruneDeliveries } from "./webhooks";
 import { loginConfig, plainAdminPassword, pruneLoginState } from "./session";
+import { anomalyCounts } from "./revenue/anomalies";
 import { refreshFx } from "./revenue/fx";
 import { rematchAll } from "./revenue/match";
 import { pruneCustomerData } from "./web/privacy";
@@ -46,6 +49,19 @@ const ROLLUP_DUE_HOUR = 2;
 const MIN_API_TOKEN = 32;
 const MIN_SALT = 16;
 const MIN_ENCRYPTION_KEY = 32;
+/** A row name no setting can have: the count that shares the settings query. */
+const FLAGGED_HOOKS = "*webhooks_flagged";
+/** Likewise: day salts that should have been deleted by now. */
+const OVERDUE_SALTS = "*salts_overdue";
+/** The daily cleanup and its retry have both run by this hour (UTC). */
+const SALT_PRUNE_DONE_HOUR = 3;
+/** Attempts at the day-salt prune in the cleanup run, and the wait between them. */
+const SALT_PRUNE_TRIES = 3;
+const SALT_PRUNE_WAIT_MS = 1_000;
+/** A weekly backup that finished longer ago than this has missed a run. */
+const BACKUP_LATE_SEC = 8 * 86400;
+/** How long backups that stopped with their bucket's binding keep the status page yellow. */
+const BACKUP_GONE_ADVISORY_SEC = 60 * 86400;
 
 /** The checks cron runs every 30 minutes; this much silence means it stopped. */
 const LINK_CHECKS_LATE_SEC = 3 * 3600;
@@ -77,6 +93,25 @@ export async function recordJob(db: D1Database, job: Job, ok: boolean, error?: s
 
 export async function lastJobRun(db: D1Database, job: Job): Promise<JobRun | null> {
   return (await jobRuns(db))[job] ?? null;
+}
+
+/**
+ * Deletes finished days' visitor salts with the website budget rows, trying
+ * again if D1 fails: while a salt exists, that day's hashes can be recomputed
+ * by someone holding it. System status reports any that stay (systemHealth).
+ */
+export async function pruneSaltsAndBudget(env: Env, now: Date): Promise<void> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      // One batch: one of the run's 50 calls on Workers Free.
+      await env.DB.batch([daySaltPruneStmt(env.DB, utcDate(now)), collectBudgetPruneStmt(env.DB, utcDate(now))]);
+      return;
+    } catch (err) {
+      if (attempt >= SALT_PRUNE_TRIES) throw err;
+      console.error(JSON.stringify({ message: "day salt prune failed, trying again", attempt, error: String(err) }));
+      await new Promise((r) => setTimeout(r, SALT_PRUNE_WAIT_MS));
+    }
+  }
 }
 
 /** The half-hourly cron: due destination checks, with the outcome recorded. */
@@ -204,14 +239,13 @@ export async function scheduledCleanup(env: Env, now = new Date()): Promise<void
     ["webhook milestones", () => checkMilestones(env)],
     ["webhook delivery prune", () => pruneDeliveries(env)],
     ["login state prune", () => pruneLoginState(env.DB, nowSec())],
-    // One batch: one of the run's 50 calls on Workers Free.
-    ["day salt and website budget prune", () => env.DB.batch([daySaltPruneStmt(env.DB, utcDate(now)), collectBudgetPruneStmt(env.DB, utcDate(now))])],
+    ["day salt and website budget prune", () => pruneSaltsAndBudget(env, now)],
     ["api key prune", () => pruneApiKeys(env.DB, nowSec())],
     ["history prune", () => pruneHistory(env.DB)],
     ["upload prune", () => prunePreviewImages(env)],
     ["health alert", () => checkAndAlert(env, now)],
     ["payment events prune", () => prunePaymentEvents(env.DB, nowSec())],
-    ["customer data retention", () => pruneCustomerData(env.DB)],
+    ["customer data retention", () => pruneCustomerData(env.DB, nowSec(), planLimits(env).prunedVisits)],
     ["secret re-encryption", () => reencryptSecrets(env)],
   ];
   for (const [name, run] of jobs) {
@@ -300,16 +334,30 @@ export async function systemHealth(env: Env, now = new Date()): Promise<SystemHe
   let lastDigestWeek: string | null = null;
   let alert: JobRun | null = null;
   let collected = 0;
+  let flaggedHooks = 0;
+  let overdueSalts = 0;
+  let backupLast: string | null = null;
+  let backupJob: string | null = null;
   try {
     // One query for every setting the checks read (a call each would count against Free's 50 per run).
-    const { results } = await env.DB.prepare("SELECT key, value FROM settings WHERE key IN (?1, ?2, ?3, ?4)")
-      .bind(JOBS_KEY, "last_rolled", "last_digest_week", budgetKey(utcDate(now)))
+    // Today's and yesterday's salts are in use; after the cleanup, so far only today's should be left.
+    const [saltsFrom, saltsTo] = daySaltRange(now.getUTCHours() >= SALT_PRUNE_DONE_HOUR ? utcDate(now) : addDays(utcDate(now), -1));
+    const { results } = await env.DB.prepare(
+      `SELECT key, value FROM settings WHERE key IN (?1, ?2, ?3, ?4, ?5, ?6)
+       UNION ALL SELECT '${FLAGGED_HOOKS}', COUNT(*) FROM webhooks WHERE key_revoked_at IS NOT NULL
+       UNION ALL SELECT '${OVERDUE_SALTS}', COUNT(*) FROM settings WHERE key > ?7 AND key < ?8`,
+    )
+      .bind(JOBS_KEY, "last_rolled", "last_digest_week", budgetKey(utcDate(now)), BACKUP_LAST_KEY, BACKUP_JOB_KEY, saltsFrom, saltsTo)
       .all<{ key: string; value: string }>();
     const setting = (key: string) => results.find((r) => r.key === key)?.value ?? null;
     runs = parseRuns(setting(JOBS_KEY));
     lastRolled = setting("last_rolled");
     lastDigestWeek = setting("last_digest_week");
     collected = Number(setting(budgetKey(utcDate(now))) ?? 0);
+    flaggedHooks = Number(setting(FLAGGED_HOOKS) ?? 0);
+    overdueSalts = Number(setting(OVERDUE_SALTS) ?? 0);
+    backupLast = setting(BACKUP_LAST_KEY);
+    backupJob = setting(BACKUP_JOB_KEY);
     alert = runs.alert ?? null;
     add("d1", "Database (D1)", "ok", "Links, stats and settings are readable.");
   } catch (err) {
@@ -372,23 +420,116 @@ export async function systemHealth(env: Env, now = new Date()): Promise<SystemHe
     add("links", "Destination checks", "ok", linksRun ? `Last run ${when(linksRun.at)}.` : "The first run starts within 30 minutes.");
   }
 
-  // Website events: Workers Free stores a daily budget of them (src/worker/web/budget.ts).
-  const budget = planLimits(env).collectEvents;
+  // Website events: on Workers Free they may write a daily budget of D1 rows (src/worker/web/budget.ts).
+  const budget = planLimits(env).collectRows;
   if (Number.isFinite(budget)) {
-    const events = collected;
+    const rows = collected;
     const planFix: Extra = { docs: "docs/CLOUDFLARE-FREE-TIER.md" };
-    if (events >= budget) {
-      add("collect", "Website events", "warn", `Today's ${budget.toLocaleString("en")} website events (the Workers Free budget) are used up, so visits aren't recorded again until 00:00 UTC. The budget keeps D1's daily write allowance for logins, links and payments. Workers Paid has none.`, planFix);
-    } else if (events >= budget * 0.8) {
-      add("collect", "Website events", "warn", `${events.toLocaleString("en")} of today's ${budget.toLocaleString("en")} website events (the Workers Free budget) are used. Past it, visits aren't recorded until 00:00 UTC.`, planFix);
+    if (rows >= budget) {
+      add("collect", "Website events", "warn", `Today's budget of ${budget.toLocaleString("en")} database rows for website events (Workers Free) is used up, so visits aren't recorded again until 00:00 UTC. The budget keeps D1's daily write allowance for logins, links and payments. Workers Paid has none.`, planFix);
+    } else if (rows >= budget * 0.8) {
+      add("collect", "Website events", "warn", `Website events have written ${rows.toLocaleString("en")} of today's ${budget.toLocaleString("en")} database rows (the Workers Free budget). Past it, visits aren't recorded until 00:00 UTC.`, planFix);
     }
   }
+
+  await paymentChecks(env.DB, add);
+
+  if (flaggedHooks > 0) {
+    add(
+      "webhookkeys",
+      "Webhooks from revoked keys",
+      "warn",
+      `${flaggedHooks} ${flaggedHooks === 1 ? "webhook was" : "webhooks were"} last changed with an API key that has since been revoked, and still ${flaggedHooks === 1 ? "sends" : "send"} data. Check where each one points: open it in Settings → API, MCP & webhooks and save it, or delete it.`,
+    );
+  }
+
+  if (overdueSalts > 0) {
+    add(
+      "salts",
+      "Visitor salts",
+      "warn",
+      `${overdueSalts} daily visitor ${overdueSalts === 1 ? "salt is" : "salts are"} still stored after ${overdueSalts === 1 ? "its day" : "their days"} ended, so those days' visitor hashes can still be recomputed. The daily cleanup deletes them and tries again; if this stays, check that the cron triggers are deployed and that D1 accepts writes.`,
+    );
+  }
+
+  backupCheck(env, backupLast, backupJob, add);
 
   setupChecks(env, add);
 
   // Advisory warnings are deliberate choices: they don't turn the overall status (and the banner) yellow.
   const status = checks.reduce<HealthStatus>((w, c) => (!c.advisory && RANK[c.status] > RANK[w] ? c.status : w), "ok");
   return { checks, status, checkedAt: nowSec(), alertsTo: mail.problem ? null : env.DIGEST_TO, lastAlert: alert };
+}
+
+/**
+ * The weekly copy to R2: a backup that is failing, unfinished or missing is said so
+ * here. So is a bucket gone from the config after backups ran, which stops them
+ * without any error; after a while that counts as a choice and stops being a problem.
+ */
+function backupCheck(env: Env, lastRaw: string | null, jobRaw: string | null, add: (id: string, label: string, status: HealthStatus, detail: string, extra?: Extra) => void): void {
+  const docs: Extra = { docs: "docs/SETUP.md#backup" };
+  const parsed = <T>(raw: string | null): T | null => {
+    try {
+      return raw ? (JSON.parse(raw) as T) : null;
+    } catch {
+      return null;
+    }
+  };
+  const last = parsed<{ at: number; rows: number }>(lastRaw);
+  const job = parsed<BackupJob>(jobRaw);
+  const now = nowSec();
+  if (!(env as { BACKUPS?: unknown }).BACKUPS) {
+    const ranAt = last?.at ?? job?.startedAt;
+    if (ranAt === undefined) return;
+    add(
+      "backup",
+      "Weekly backup",
+      "warn",
+      `Weekly backups have stopped: they last ran ${when(ranAt)}, and this Worker no longer has a BACKUPS bucket. Add r2_buckets back to your Wrangler config and deploy. If you removed it on purpose, nothing more is needed.`,
+      { ...docs, advisory: now - ranAt > BACKUP_GONE_ADVISORY_SEC },
+    );
+    return;
+  }
+  const place = job ? `It has copied ${Math.min(job.table, BACKUP_TABLE_NAMES.length)} of ${BACKUP_TABLE_NAMES.length} tables and carries on by itself.` : "";
+  if (job?.error) add("backup", "Weekly backup", "warn", `The last backup run stopped: ${job.error.slice(0, 200)}. ${place}`, docs);
+  else if (job && now - job.startedAt > BACKUP_LATE_SEC) add("backup", "Weekly backup", "warn", `The backup started ${when(job.startedAt)} hasn't finished. ${place} Older backups stay in the bucket.`, docs);
+  else if (!job && last && now - last.at > BACKUP_LATE_SEC) add("backup", "Weekly backup", "warn", `The last complete backup is from ${when(last.at)}; one should run every Sunday. Check that the cron triggers are deployed.`, docs);
+  else add("backup", "Weekly backup", "ok", last ? `Last complete backup ${when(last.at)}, ${last.rows.toLocaleString("en")} rows.` : "The first backup runs on Sunday from 04:00 UTC.");
+}
+
+/** How long a payment anomaly stays on the status page after the last one. */
+const ANOMALY_SHOWN_SEC = 30 * 86400;
+
+/** What the payment checks found lately (src/worker/revenue/anomalies.ts), and connections nothing can confirm. */
+async function paymentChecks(db: D1Database, add: (id: string, label: string, status: HealthStatus, detail: string, extra?: Extra) => void): Promise<void> {
+  try {
+    const [counts, unchecked] = await Promise.all([
+      anomalyCounts(db, nowSec() - ANOMALY_SHOWN_SEC),
+      // One query: the daily run has a fixed number of calls to spend.
+      db
+        .prepare(
+          `SELECT (SELECT COUNT(*) FROM payment_connections WHERE provider = 'gumroad' AND enabled != 0 AND api_key IS NULL AND api_key_ref IS NULL) AS n,
+             (SELECT COUNT(*) FROM subscriptions WHERE unconfirmed_end IS NOT NULL AND unconfirmed_at >= ?1) AS ends`,
+        )
+        .bind(nowSec() - ANOMALY_SHOWN_SEC)
+        .first<{ n: number; ends: number }>(),
+    ]);
+    const say = (n: number | undefined, one: string, many: string) => (n ? `${n.toLocaleString("en")} ${n === 1 ? one : many}` : "");
+    const problems = [
+      say(counts.id_conflict, "payment or subscription was refused because its id belongs to another site.", "payments or subscriptions were refused because their ids belong to another site."),
+      say(counts.refund_capped, "refund was larger than its charge and was capped at it.", "refunds were larger than their charges and were capped at them."),
+      say(counts.refund_currency, "refund or dispute is in another currency than its charge.", "refunds or disputes are in another currency than their charges."),
+      say(counts.refund_unknown, "partial refund came without its amount and counts as 0.", "partial refunds came without their amounts and count as 0."),
+      say(counts.fx_rate, "exchange-rate update looked wrong.", "exchange-rate updates looked wrong."),
+      say(unchecked?.ends, "subscription cancellation couldn't be confirmed with the provider, so the subscription stays as it was.", "subscription cancellations couldn't be confirmed with the provider, so those subscriptions stay as they were."),
+    ].filter(Boolean);
+    if (problems.length) add("payments", "Payment checks", "warn", `In the last 30 days: ${problems.join(" ")} Flagged payments are marked in each site's Payments list; the log has the details.`);
+    if (unchecked?.n) {
+      add("gumroad", "Gumroad payments", "warn", `${say(unchecked.n, "Gumroad connection has", "Gumroad connections have")} no access token, so anyone who gets the webhook address can add payments. They are labelled unverified. Add an access token to have each sale confirmed with Gumroad.`, { advisory: true });
+    }
+  } catch (err) {
+    console.error(JSON.stringify({ message: "payment checks failed", error: String(err) }));
+  }
 }
 
 /** Configuration the setup wizard writes. Lengths and counts only: never a secret's value. */
@@ -444,6 +585,14 @@ function setupChecks(env: Env, add: (id: string, label: string, status: HealthSt
         : "ADMIN_PASSWORD_HASH (or ADMIN_PASSWORD)";
     const missing = [password, (env.SESSION_SECRET ?? "").length >= 32 ? "" : "SESSION_SECRET (32+ characters)"].filter(Boolean);
     add("password", "Admin password", "error", `Missing or invalid: ${missing.join(" and ")}. The admin stays closed until it's set.`, passwordFix);
+  } else if (!hash && mode === "password" && plain.length < SHORT_ADMIN_PASSWORD) {
+    add(
+      "password",
+      "Admin password",
+      "warn",
+      `Cloudflare Access is off and ADMIN_PASSWORD is shorter than ${SHORT_ADMIN_PASSWORD} characters, so the login page is one short password away from anyone. It keeps working: replace it with a long random one, or turn Access on.`,
+      passwordFix,
+    );
   } else if (!hash) {
     add(
       "password",
@@ -476,13 +625,34 @@ function setupChecks(env: Env, add: (id: string, label: string, status: HealthSt
   else add("secrets", "Secrets", "ok", legacyApiToken(env) ? "API token and visitor salt are set." : "The visitor salt is set.");
 
   // Deploy to Cloudflare installs: the generated SESSION_SECRET sits in D1, next to the secrets it would encrypt.
-  if (!env.ENCRYPTION_KEY && secretsFromD1(env).includes("SESSION_SECRET")) {
+  // Worth acting on, so not advisory: anyone who can read the database could read those secrets too.
+  const fromD1 = secretsFromD1(env);
+  if (!env.ENCRYPTION_KEY && fromD1.includes("SESSION_SECRET")) {
     add(
       "encryption",
       "Stored secrets",
       "warn",
-      "Webhook, share and payment secrets are encrypted with a key kept in the database itself. Add an ENCRYPTION_KEY secret (32+ random characters) in the Worker's Settings → Variables and Secrets, or with npx wrangler secret put ENCRYPTION_KEY; the daily cleanup then moves them over. Nobody is signed out.",
+      "Webhook, share and payment secrets are encrypted with a key kept in the same database, so one read of the database exposes them. Add an ENCRYPTION_KEY secret (32+ random characters) in the Worker's Settings → Variables and Secrets, or with npx wrangler secret put ENCRYPTION_KEY. The daily cleanup then moves them over; nothing stops working and nobody is signed out. Keep a copy of the key: without it they can't be read.",
+      { docs: "docs/SETUP.md#secrets" },
+    );
+  } else if (fromD1.length) {
+    add(
+      "generatedsecrets",
+      "Generated secrets",
+      "warn",
+      `${fromD1.join(" and ")} ${fromD1.length === 1 ? "is" : "are"} generated and kept in the database. To keep ${fromD1.length === 1 ? "it" : "them"} out of it, set your own as Worker secrets once System status shows no other warning here. A new SESSION_SECRET signs everyone out and a new VISITOR_SALT restarts visitor counting.`,
       { docs: "docs/SETUP.md#secrets", advisory: true },
+    );
+  }
+
+  // Whether workers_dev is on isn't visible from here, so this says what it means if it is.
+  if (configuredDomains(env).length && workersDevAdmin(env)) {
+    add(
+      "workersdev",
+      "Admin on workers.dev",
+      "warn",
+      'If workers_dev is on in your Wrangler config, the admin and the API also answer on your workers.dev address, where rate-limiting rules in your zone don\'t apply. It is handy when your domain breaks. Once the domain works, set workers_dev to false, or WORKERS_DEV_ADMIN to "off" to keep the address for links only.',
+      { docs: "docs/SETUP.md#deploy-button", advisory: true },
     );
   }
 
@@ -585,6 +755,12 @@ export async function scheduledDaily(env: Env, now = new Date()): Promise<void> 
  * it on the Free plan. Up to webRollupDays a run (src/worker/plan.ts).
  */
 export async function scheduledWebRollup(env: Env, now = new Date()): Promise<void> {
+  // A second go at the day salts, half an hour after the daily cleanup: one query, nothing to do if that worked.
+  try {
+    await pruneDaySalts(env.DB, utcDate(now));
+  } catch (err) {
+    console.error(JSON.stringify({ message: "day salt prune failed", error: String(err) }));
+  }
   try {
     const days = await rollupWebEvents(env, now);
     if (days.length) console.log(JSON.stringify({ message: "website rollup complete", from: days[0], to: days.at(-1) }));

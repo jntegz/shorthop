@@ -1,6 +1,6 @@
 import { Hono, type Context } from "hono";
 import { linkKey } from "../../shared/domains";
-import { sameSnapshot, snapshotOf, type Snapshot } from "../../shared/history";
+import { sameSnapshot, snapshotOf, type HistoryAction, type Snapshot } from "../../shared/history";
 import { parsePreview, validatePreview, type LinkPreview } from "../../shared/preview";
 import { validateQrStyle } from "../../shared/qr";
 import { capCount, capReset } from "../click-cap";
@@ -8,20 +8,20 @@ import { hashLinkPassword } from "../link-password";
 import { parseRouting, splitChanged, validateRouting, type RouteRule, type Routing, type RoutingError } from "../../shared/routing";
 import { pullLinks, VendorError } from "../import/vendors";
 import { destinationsOf, safetyOf, safetyOfEach, UNSAFE_FLAGGED, UNSAFE_NONE, UNSAFE_TRUSTED } from "../safety";
-import { parseBio, validateBio, type BioPage } from "../../shared/bio";
-import { bulkSchema, byTargetQuerySchema, pullSchema, createLinkSchema, exportQuerySchema, importSchema, linkParamSchema, normalizeTags, tagParamSchema, tagRenameSchema, versionParamSchema, listQuerySchema, resyncQuerySchema, updateLinkSchema } from "../../shared/schemas";
+import { bioButtonUrls, parseBio, validateBio, type BioPage } from "../../shared/bio";
+import { bulkSchema, byTargetQuerySchema, pullSchema, createLinkSchema, exportQuerySchema, importSchema, linkParamSchema, normalizeTags, restoreVersionQuerySchema, tagParamSchema, tagRenameSchema, versionParamSchema, listQuerySchema, resyncQuerySchema, updateLinkSchema } from "../../shared/schemas";
 import { isCheckProblem, isChecked, MONITOR_DEFAULT, MONITOR_NEVER, MONITOR_ON, type CheckStatus } from "../../shared/link-check";
-import { can } from "../../shared/permissions";
+import { can, PERMISSION_INFO } from "../../shared/permissions";
 import { generateSlug, validateSlug } from "../../shared/slug";
 import { normalizeTarget, validateUtmTemplate } from "../../shared/target";
 import type { BulkResult, CapDTO, ImportResult, ImportRowResult, LinkDTO, LinkListItem } from "../../shared/types";
 import { fullTokenScope, TOKEN_SCOPE_ERROR } from "../auth";
-import { getDefaultUtm, getLink, kvKey, nowSec, OFF_HOME, publish, toDTO, type LinkRow } from "../db";
+import { getDefaultUtm, getLink, kvKey, nowSec, OFF_HOME, publish, splitKey, toDTO, toKv, type LinkRow } from "../db";
 import { configuredDomains, domainsOf, isConfiguredDomain, NO_DOMAIN_ERROR, selfHosts, shortOrigin } from "../domains";
 import { csv, validate, type AppEnv } from "../hono";
 import { planLimits } from "../plan";
 import { changedFields, emit, emitAll, linkPayload, type Event } from "../webhooks";
-import { deletedLinks, getVersion, listVersions, SNAPSHOT_SQL, versionStmt } from "../history";
+import { deletedLinks, getVersion, listVersions, savedVersionStmt, SNAPSHOT_SQL, versionStmt } from "../history";
 import { clicksByLink } from "../stats-data";
 import { checkedSql, getCheckSettings } from "../link-check";
 
@@ -33,10 +33,51 @@ function isUniqueViolation(err: unknown): boolean {
 function dto(c: Context<AppEnv>, row: LinkRow): LinkDTO {
   const link = toDTO(row, shortOrigin(c.env, c.req.raw, row.domain));
   // Clicks counted before an import are statistics too.
-  return seesStats(c) ? link : { ...link, importedClicks: null };
+  const shown = seesStats(c) ? link : { ...link, importedClicks: null };
+  return link.protected && !seesProtected(c) ? { ...shown, target: "", notes: "", utmTemplate: null, routing: null, bio: null } : shown;
 }
 
 const seesStats = (c: Context<AppEnv>) => can(c.get("actor"), "stats.view");
+/** Where a password-protected link goes, and its notes: for people who can edit links. */
+const seesProtected = (c: Context<AppEnv>) => can(c.get("actor"), "links.edit");
+
+/**
+ * Tags this person may not put on a link, with why: a tag report publishes the
+ * statistics (and maybe revenue) of every link with its tag, so tagging a link
+ * needs what that report shows. An expired report counts too: extending it brings
+ * back every link with its tag. Only a revoked one, which can't return, doesn't.
+ */
+async function reportTagProblems(c: Context<AppEnv>, tags: string[]): Promise<Map<string, string>> {
+  const problems = new Map<string, string>();
+  const actor = c.get("actor");
+  const stats = can(actor, "stats.view");
+  const revenue = can(actor, "revenue.view");
+  if (!tags.length || (stats && revenue)) return problems;
+  const { results } = await c.env.DB.prepare(
+    `SELECT tag, MAX(show_revenue) AS revenue FROM stat_shares
+     WHERE scope = 'tag' AND revoked_at IS NULL AND tag IN (SELECT value FROM json_each(?1))
+     GROUP BY tag`,
+  )
+    .bind(JSON.stringify([...new Set(tags)]))
+    .all<{ tag: string; revenue: number }>();
+  for (const r of results) {
+    const missing = !stats ? "stats.view" : r.revenue === 1 && !revenue ? "revenue.view" : null;
+    if (missing) problems.set(r.tag, `tags: "${r.tag}" feeds a shared report, so adding it to a link needs the ${PERMISSION_INFO[missing].label} permission.`);
+  }
+  return problems;
+}
+
+/** Why the tags this request adds can't be added (one feeds a report the person may not extend); null when they can. */
+async function refusedTags(c: Context<AppEnv>, added: string[]): Promise<string | null> {
+  const [problem] = (await reportTagProblems(c, added)).values();
+  return problem ?? null;
+}
+
+/** Tags in `next` that `before` doesn't have (comma-separated, as stored). */
+const addedTags = (before: string, next: string) => {
+  const had = new Set(before.split(","));
+  return next.split(",").filter((t) => t && !had.has(t));
+};
 
 const notConfigured = (domain: string) => `domain: "${domain}" is not one of your short domains (SHORT_DOMAINS).`;
 
@@ -49,21 +90,36 @@ function insertStmt(db: D1Database, r: LinkRow): D1PreparedStatement {
     .bind(r.domain, r.slug, r.target, r.active, r.expires_at, r.utm, r.utm_template, r.pass_query, r.title, r.tags, r.notes, r.source, r.imported_clicks, r.broken, r.replacement, r.off_redirect, r.monitor, r.routing, r.preview, r.qr, r.password_hash, r.max_clicks, r.unsafe ?? 0, r.unsafe_at ?? null, r.bio ?? null, r.created_at, r.updated_at);
 }
 
+/** What an edit can change on a link, column by column. */
+const EDITED_COLUMNS = ["target", "active", "expires_at", "utm", "utm_template", "pass_query", "title", "tags", "notes", "broken", "replacement", "off_redirect", "monitor", "routing", "preview", "qr", "password_hash", "max_clicks", "bio"] as const satisfies readonly (keyof LinkRow)[];
+
+const newRev = () => crypto.randomUUID().slice(0, 13);
+
 /**
- * New destinations are new to the security-DNS backlog too: failed lookups of
- * the old ones don't put them last (src/worker/health.ts). The comparison reads
- * the row's old target and routing: SQLite evaluates every SET before assigning.
+ * Saves an edit: only the columns that differ from `before`, the row this edit
+ * was worked out from, so two edits at once can't undo each other's other
+ * fields. Every change gets a new `rev`. With `expected` the write only goes
+ * through while the link is still at that version. New destinations are new to
+ * the security-DNS backlog too: failed lookups of the old ones don't put them
+ * last (src/worker/health.ts).
  */
-function updateStmt(db: D1Database, r: LinkRow): D1PreparedStatement {
-  return db
-    .prepare(
-      `UPDATE links SET target = ?, active = ?, expires_at = ?, utm = ?, utm_template = ?, pass_query = ?,
-       title = ?, tags = ?, notes = ?, broken = ?, replacement = ?, off_redirect = ?, monitor = ?, routing = ?, preview = ?, qr = ?, password_hash = ?, max_clicks = ?,
-       unsafe = COALESCE(?, unsafe), unsafe_at = CASE WHEN ? = 1 THEN NULL ELSE COALESCE(?, unsafe_at) END,
-       unsafe_tried_at = CASE WHEN target IS NOT ? OR routing IS NOT ? THEN NULL ELSE unsafe_tried_at END,
-       bio = ?, updated_at = ? WHERE domain = ? AND slug = ? RETURNING *`,
-    )
-    .bind(r.target, r.active, r.expires_at, r.utm, r.utm_template, r.pass_query, r.title, r.tags, r.notes, r.broken, r.replacement, r.off_redirect, r.monitor, r.routing, r.preview, r.qr, r.password_hash, r.max_clicks, r.unsafe ?? null, r.unsafe_at === null ? 1 : 0, r.unsafe_at ?? null, r.target, r.routing, r.bio ?? null, r.updated_at, r.domain, r.slug);
+function updateStmt(db: D1Database, before: LinkRow, r: LinkRow, rev: string, expected?: string): D1PreparedStatement {
+  const sets: string[] = [];
+  const binds: (string | number | null)[] = [];
+  const set = (column: string, value: string | number | null) => {
+    sets.push(`${column} = ?`);
+    binds.push(value);
+  };
+  for (const column of EDITED_COLUMNS) if ((r[column] ?? null) !== (before[column] ?? null)) set(column, r[column] ?? null);
+  if ((r.unsafe ?? null) !== (before.unsafe ?? null)) set("unsafe", r.unsafe ?? 0);
+  if ((r.unsafe_at ?? null) !== (before.unsafe_at ?? null)) set("unsafe_at", r.unsafe_at ?? null);
+  if (r.target !== before.target || (r.routing ?? null) !== (before.routing ?? null)) sets.push("unsafe_tried_at = NULL");
+  // Saving without a change (to publish again) is no new version.
+  if (sets.length) set("rev", rev);
+  set("updated_at", r.updated_at);
+  binds.push(r.domain, r.slug);
+  if (expected !== undefined) binds.push(expected);
+  return db.prepare(`UPDATE links SET ${sets.join(", ")} WHERE domain = ? AND slug = ?${expected !== undefined ? " AND COALESCE(rev, '0') = ?" : ""} RETURNING *`).bind(...binds);
 }
 
 /** Publishes a saved link to KV; false when that failed (it's saved in D1 either way: answer 502 with the link). */
@@ -77,24 +133,55 @@ async function published(env: Env, row: LinkRow): Promise<boolean> {
   }
 }
 
+/** Whether two states of a link publish the same record ("" stands in for the default UTM template on both sides). */
+const samePublished = (a: LinkRow, b: LinkRow) => JSON.stringify(toKv(a, "")) === JSON.stringify(toKv(b, ""));
+
 /**
- * Saves an edit of an existing link with its version, runs onSaved (webhook
- * events) once D1 has it, then publishes it.
+ * Publishes a saved link and reads it back. Two saves can reach KV in the
+ * opposite order from D1; whoever publishes last then sees that D1 holds
+ * something else and publishes that, so KV ends up matching D1. "gone": the
+ * link was deleted meanwhile, and its record is removed again.
+ */
+async function publishLatest(env: Env, saved: LinkRow): Promise<"ok" | "failed" | "gone"> {
+  let row = saved;
+  for (let round = 0; round < 3; round++) {
+    if (!(await published(env, row))) return "failed";
+    const latest = await getLink(env.DB, row.domain, row.slug);
+    if (!latest) {
+      // Together with the delete's second KV pass, KV ends up matching D1 whichever way the two interleave.
+      await env.LINKS.delete(kvKey(row.domain, row.slug));
+      return "gone";
+    }
+    if (samePublished(latest, row)) return "ok";
+    row = latest;
+  }
+  return "ok";
+}
+
+/** The answer when `version` no longer matches. It names the current version so a client can read the link and decide. */
+const versionConflict = (c: Context<AppEnv>, current: LinkRow) =>
+  c.json({ error: "This link was changed since you loaded it. Load it again and repeat your change.", code: "version_conflict", version: current.rev ?? "0" }, 409);
+
+/**
+ * Saves an edit of an existing link, with a version when `record` says what
+ * to call it, runs onSaved (webhook events) once D1 has it, then publishes it.
  * RETURNING: a link deleted since it was read must not be published back to KV.
  */
-async function saveEdit(c: Context<AppEnv>, next: LinkRow, version: D1PreparedStatement | null, onSaved?: (saved: LinkRow) => Promise<void>) {
-  const [updated] = await c.env.DB.batch<LinkRow>([updateStmt(c.env.DB, next), ...(version ? [version] : [])]);
+async function saveEdit(c: Context<AppEnv>, before: LinkRow, next: LinkRow, record: { action: HistoryAction; restoredFrom?: number } | null, opts: { expected?: string; onSaved?: (saved: LinkRow) => Promise<void> } = {}) {
+  const rev = newRev();
+  const [updated] = await c.env.DB.batch<LinkRow>([
+    updateStmt(c.env.DB, before, next, rev, opts.expected),
+    ...(record ? [savedVersionStmt(c.env.DB, next, rev, record.action, c.get("identity"), { at: next.updated_at, restoredFrom: record.restoredFrom })] : []),
+  ]);
   const saved = updated?.results[0];
-  if (!saved) return c.json({ error: "Link not found" }, 404);
-  await onSaved?.(saved);
-  if (!(await published(c.env, saved))) return c.json({ error: PUBLISH_FAILED, link: dto(c, saved) }, 502);
-  // A delete that ran between the update and the publish would leave a record
-  // for a link that's gone. Together with the delete's second KV pass, KV ends
-  // up matching D1 whichever way the two interleave.
-  if (!(await getLink(c.env.DB, saved.domain, saved.slug))) {
-    await c.env.LINKS.delete(kvKey(saved.domain, saved.slug));
-    return c.json({ error: "Link not found" }, 404);
+  if (!saved) {
+    const current = opts.expected !== undefined ? await getLink(c.env.DB, next.domain, next.slug) : null;
+    return current ? versionConflict(c, current) : c.json({ error: "Link not found" }, 404);
   }
+  await opts.onSaved?.(saved);
+  const outcome = await publishLatest(c.env, saved);
+  if (outcome === "failed") return c.json({ error: PUBLISH_FAILED, link: dto(c, saved) }, 502);
+  if (outcome === "gone") return c.json({ error: "Link not found" }, 404);
   return c.json({ link: dto(c, saved) });
 }
 
@@ -192,7 +279,7 @@ function restoreProblem(c: Context<AppEnv>, r: LinkRow): string | null {
   }
   const bio = parseBio(r.bio);
   if (bio) {
-    const checked = validateBio(bio);
+    const checked = validateBio(bio, { selfHosts: selfHosts(c.env, c.req.raw) });
     if (!checked.ok) return `This version can't be restored: bio page: ${checked.problems[0]!.message}`;
   }
   return null;
@@ -205,7 +292,7 @@ function restoreProblem(c: Context<AppEnv>, r: LinkRow): string | null {
 async function bioFor(c: Context<AppEnv>, input: BioPage | null | undefined, prev: string | null): Promise<{ ok: true; json: string | null } | { ok: false; error: string }> {
   if (input === undefined) return { ok: true, json: prev };
   if (input === null) return { ok: true, json: null };
-  const checked = validateBio(input);
+  const checked = validateBio(input, { selfHosts: selfHosts(c.env, c.req.raw) });
   if (!checked.ok) return { ok: false, error: `bio: ${checked.problems[0]!.message}` };
   const linked = checked.bio.blocks.flatMap((b) => ("link" in b ? [linkKey(b.link.domain, b.link.slug)] : []));
   if (linked.length) {
@@ -238,7 +325,7 @@ const ACTIVE_SHARE = "revoked_at IS NULL AND (expires_at IS NULL OR expires_at >
 /** Escapes LIKE wildcards for a pattern used with ESCAPE '\'. */
 const likeEscape = (s: string) => s.replace(/[\\%_]/g, (m) => `\\${m}`);
 
-function listFilter(f: { domain?: string; q?: string; tag?: string; status: string }, scope: Parameters<typeof checkedSql>[0]): { where: string[]; params: (string | number)[] } {
+function listFilter(f: { domain?: string; q?: string; tag?: string; status: string }, scope: Parameters<typeof checkedSql>[0], hideProtected: boolean): { where: string[]; params: (string | number)[] } {
   const where: string[] = [];
   const params: (string | number)[] = [];
   if (f.domain) {
@@ -248,7 +335,9 @@ function listFilter(f: { domain?: string; q?: string; tag?: string; status: stri
   if (f.q) {
     params.push(`%${likeEscape(f.q)}%`);
     const n = params.length;
-    where.push(`(slug LIKE ?${n} ESCAPE '\\' OR target LIKE ?${n} ESCAPE '\\' OR title LIKE ?${n} ESCAPE '\\' OR notes LIKE ?${n} ESCAPE '\\')`);
+    // Searching a hidden destination or note would reveal it, a guess at a time.
+    const hidden = `(target LIKE ?${n} ESCAPE '\\' OR notes LIKE ?${n} ESCAPE '\\')`;
+    where.push(`(slug LIKE ?${n} ESCAPE '\\' OR title LIKE ?${n} ESCAPE '\\' OR ${hideProtected ? `(password_hash IS NULL AND ${hidden})` : hidden})`);
   }
   if (f.tag) {
     params.push(`%,${likeEscape(f.tag)},%`);
@@ -279,9 +368,9 @@ async function retag(c: Context<AppEnv>, from: string, to: string | null): Promi
   const identity = c.get("identity");
   const updates = results.map((r) => {
     const tags = normalizeTags(r.tags.split(",").flatMap((t) => (t === from ? (to ? [to] : []) : [t])));
-    return { before: r, after: { ...r, tags: tags.join(","), updated_at: now } };
+    return { before: r, after: { ...r, tags: tags.join(","), updated_at: now }, rev: newRev() };
   });
-  await c.env.DB.batch(updates.flatMap(({ after }) => [updateStmt(c.env.DB, after), versionStmt(c.env.DB, after, "update", identity)]));
+  await c.env.DB.batch(updates.flatMap(({ before, after, rev }) => [updateStmt(c.env.DB, before, after, rev), savedVersionStmt(c.env.DB, after, rev, "update", identity, { at: now })]));
   await emitAll(c.env, updates.map(({ before, after }) => ({ type: "link.updated", data: { link: linkPayload(after), changes: changedFields(before, after) } })), { ctx: c.executionCtx });
   return { changed: updates.length };
 }
@@ -306,7 +395,7 @@ export const linksApi = new Hono<AppEnv>()
   .get("/links", validate("query", listQuerySchema), async (c) => {
     const { domain, q, tag, status, sort, period } = c.req.valid("query");
     const { scope } = await getCheckSettings(c.env.DB);
-    const { where, params } = listFilter({ domain, q, tag, status }, scope);
+    const { where, params } = listFilter({ domain, q, tag, status }, scope, !seesProtected(c));
     // Click counts are statistics: only for people who may see those.
     const seesClicks = can(c.get("actor"), "stats.view");
     const counts = seesClicks
@@ -349,8 +438,8 @@ export const linksApi = new Hono<AppEnv>()
     const checkOf = new Map(checks.results.map((r) => [r.target, r]));
     let links: LinkListItem[] = results.map((r) => {
       const key = linkKey(r.domain, r.slug);
-      // The worst state across the target and every routed destination.
-      const urls = [r.target, ...(parseRouting(r.routing)?.rules.filter((x) => x.enabled).flatMap((x) => x.variants.map((v) => v.url)) ?? [])];
+      // The worst state across the target, every routed destination and the bio page's own buttons.
+      const urls = [r.target, ...(parseRouting(r.routing)?.rules.filter((x) => x.enabled).flatMap((x) => x.variants.map((v) => v.url)) ?? []), ...bioButtonUrls(parseBio(r.bio))];
       const ch = isChecked(r.monitor, scope) ? worstCheck(urls.map((u) => checkOf.get(u))) : undefined;
       return {
         ...dto(c, r),
@@ -368,7 +457,8 @@ export const linksApi = new Hono<AppEnv>()
   .get("/links/by-target", validate("query", byTargetQuerySchema), async (c) => {
     const target = normalizeTarget(c.req.valid("query").url, { allowHttp: true, selfHosts: selfHosts(c.env, c.req.raw) });
     if (!target.ok) return c.json({ links: [] });
-    const { results } = await c.env.DB.prepare("SELECT * FROM links WHERE target = ? ORDER BY created_at LIMIT 10").bind(target.url).all<LinkRow>();
+    // A protected link would confirm where it goes.
+    const { results } = await c.env.DB.prepare(`SELECT * FROM links WHERE target = ?${seesProtected(c) ? "" : " AND password_hash IS NULL"} ORDER BY created_at LIMIT 10`).bind(target.url).all<LinkRow>();
     return c.json({ links: results.map((r) => dto(c, r)) });
   })
 
@@ -387,6 +477,10 @@ export const linksApi = new Hono<AppEnv>()
       return c.json({ error: `Change at most ${bulkRows} links per request on this Workers plan; send the rest in further requests.`, code: "too_many_rows" }, 413);
     }
     const tag = normalizeTags([rawTag ?? ""])[0] ?? "";
+    if (action === "addTag") {
+      const refused = await refusedTags(c, [tag]);
+      if (refused) return c.json({ error: refused, code: "forbidden" }, 403);
+    }
     const { results } = await c.env.DB.prepare(
       `SELECT * FROM links WHERE (domain, slug) IN (SELECT json_extract(value, '$.domain'), json_extract(value, '$.slug') FROM json_each(?))`,
     )
@@ -436,7 +530,7 @@ export const linksApi = new Hono<AppEnv>()
       return c.json(result);
     }
 
-    const changed: { before: LinkRow; after: LinkRow }[] = [];
+    const changed: { before: LinkRow; after: LinkRow; rev: string }[] = [];
     for (const r of rows) {
       const next: LinkRow = { ...r, updated_at: now };
       if (action === "enable" || action === "disable") next.active = action === "enable" ? 1 : 0;
@@ -446,28 +540,43 @@ export const linksApi = new Hono<AppEnv>()
         next.tags = tags.join(",");
       }
       if (next.active === r.active && next.tags === r.tags) result.unchanged++;
-      else changed.push({ before: r, after: next });
+      else changed.push({ before: r, after: next, rev: newRev() });
     }
+    let saved: { row: LinkRow; before: LinkRow; after: LinkRow }[] = [];
     if (changed.length) {
-      await c.env.DB.batch(changed.flatMap(({ after }) => [updateStmt(c.env.DB, after), versionStmt(c.env.DB, after, "update", identity)]));
+      const written = await c.env.DB.batch<LinkRow>(changed.flatMap(({ before, after, rev }) => [updateStmt(c.env.DB, before, after, rev), savedVersionStmt(c.env.DB, after, rev, "update", identity, { at: now })]));
+      // What D1 holds now, a concurrent edit included. A link deleted meanwhile isn't published back.
+      saved = changed.flatMap(({ before, after }, i) => {
+        const row = written[i * 2]?.results[0];
+        return row ? [{ row, before, after }] : [];
+      });
       // Tags aren't part of the published record; turning a link on or off is.
       if (action === "enable" || action === "disable") {
         const defaultUtm = await getDefaultUtm(c.env.DB);
-        await Promise.all(
-          changed.map(async ({ after }) => {
-            try {
-              await publish(c.env, after, defaultUtm);
-            } catch (err) {
-              console.error(JSON.stringify({ message: "kv publish failed", domain: after.domain, slug: after.slug, error: String(err) }));
-              result.failed.push({ domain: after.domain, slug: after.slug, error: "Saved, but publishing failed; use Republish all links in Settings." });
-            }
-          }),
-        );
+        const publishRow = async (row: LinkRow) => {
+          try {
+            await publish(c.env, row, defaultUtm);
+          } catch (err) {
+            console.error(JSON.stringify({ message: "kv publish failed", domain: row.domain, slug: row.slug, error: String(err) }));
+            result.failed.push({ domain: row.domain, slug: row.slug, error: "Saved, but publishing failed; use Republish all links in Settings." });
+          }
+        };
+        await Promise.all(saved.map(({ row }) => publishRow(row)));
+        // One read for all of them: an edit that landed meanwhile may have reached KV first (publishLatest).
+        if (saved.length) {
+          const { results: latest } = await c.env.DB.prepare(
+            `SELECT l.* FROM json_each(?1) j JOIN links l ON l.domain = json_extract(j.value, '$[0]') AND l.slug = json_extract(j.value, '$[1]')`,
+          )
+            .bind(JSON.stringify(saved.map(({ row }) => [row.domain, row.slug])))
+            .all<LinkRow>();
+          const sent = new Map(saved.map(({ row }) => [linkKey(row.domain, row.slug), row]));
+          await Promise.all(latest.filter((row) => !samePublished(row, sent.get(linkKey(row.domain, row.slug))!)).map(publishRow));
+        }
       }
-      const events: Event[] = changed.map(({ before, after }) => ({ type: "link.updated", data: { link: linkPayload(after), changes: changedFields(before, after) } }));
+      const events: Event[] = saved.map(({ row, before, after }) => ({ type: "link.updated", data: { link: linkPayload(row), changes: changedFields(before, after) } }));
       await emitAll(c.env, events, { ctx: c.executionCtx });
     }
-    result.changed = changed.length;
+    result.changed = saved.length;
     return c.json(result);
   })
 
@@ -489,6 +598,8 @@ export const linksApi = new Hono<AppEnv>()
     if (!preview.ok) return c.json({ error: preview.error }, 400);
     const bio = await bioFor(c, body.bio, null);
     if (!bio.ok) return c.json({ error: bio.error }, 400);
+    const refusedTag = await refusedTags(c, body.tags ?? []);
+    if (refusedTag) return c.json({ error: refusedTag, code: "forbidden" }, 403);
 
     const now = nowSec();
     // Malware or phishing, per Cloudflare's security DNS: saved, but visitors are warned first.
@@ -569,13 +680,14 @@ export const linksApi = new Hono<AppEnv>()
     const row = await getLink(c.env.DB, domain, slug);
     if (!row) return c.json({ error: "Link not found" }, 404);
     const body = c.req.valid("json");
+    if (body.version !== undefined && body.version !== (row.rev ?? "0")) return versionConflict(c, row);
     const next: LinkRow = { ...row, updated_at: nowSec() };
 
     if (body.target !== undefined) {
-      const target = normalizeTarget(body.target, {
-        allowHttp: row.source === "import",
-        selfHosts: selfHosts(c.env, c.req.raw),
-      });
+      // An http:// destination from an older import may stay; no link gets a new one.
+      const own = selfHosts(c.env, c.req.raw);
+      const same = normalizeTarget(body.target, { allowHttp: true, selfHosts: own });
+      const target = same.ok && same.url === row.target ? same : normalizeTarget(body.target, { selfHosts: own });
       if (!target.ok) return c.json({ error: target.error }, 400);
       next.target = target.url;
     }
@@ -587,7 +699,11 @@ export const linksApi = new Hono<AppEnv>()
       next.utm_template = body.utmTemplate || null;
     }
     if (body.title !== undefined) next.title = body.title || null;
-    if (body.tags !== undefined) next.tags = body.tags.join(",");
+    if (body.tags !== undefined) {
+      next.tags = body.tags.join(",");
+      const refused = await refusedTags(c, addedTags(row.tags, next.tags));
+      if (refused) return c.json({ error: refused, code: "forbidden" }, 403);
+    }
     if (body.notes !== undefined) next.notes = body.notes;
     if (body.expiresAt !== undefined) next.expires_at = body.expiresAt;
     if (body.active !== undefined) next.active = body.active ? 1 : 0;
@@ -645,8 +761,11 @@ export const linksApi = new Hono<AppEnv>()
     // A new limit counts from now; changing an existing one keeps the count.
     if (row.max_clicks === null && next.max_clicks !== null) await resetCounter(c.env, next);
     const changed = !sameSnapshot(snapshotOf(row), snapshotOf(next)) || unsafeChanged;
-    return saveEdit(c, next, changed ? versionStmt(c.env.DB, next, "update", c.get("identity"), { at: next.updated_at }) : null, async (saved) => {
-      if (changed) await emit(c.env, "link.updated", { link: linkPayload(saved), changes: changedFields(row, saved) }, { ctx: c.executionCtx });
+    return saveEdit(c, row, next, changed ? { action: "update" } : null, {
+      expected: body.version,
+      onSaved: async (saved) => {
+        if (changed) await emit(c.env, "link.updated", { link: linkPayload(saved), changes: changedFields(row, next) }, { ctx: c.executionCtx });
+      },
     });
   })
 
@@ -693,24 +812,49 @@ export const linksApi = new Hono<AppEnv>()
   .get("/links/:domain/:slug/history", validate("param", linkParamSchema), async (c) => {
     const { domain, slug } = c.req.valid("param");
     const versions = await listVersions(c.env.DB, domain, slug);
-    // Each version remembers the clicks imported with the link: statistics, like the link's own.
-    return c.json({ versions: seesStats(c) ? versions : versions.map((v) => ({ ...v, snapshot: { ...v.snapshot, imported_clicks: null } })) });
+    // Destinations and notes stay hidden in every version of a protected link, and of any version that had a password.
+    const hide = !seesProtected(c);
+    const protectedNow = hide && Boolean((await getLink(c.env.DB, domain, slug))?.password_hash);
+    return c.json({
+      versions: versions.map((v) => {
+        const secret = hide && (protectedNow || Boolean(v.snapshot.password_hash));
+        return {
+          ...v,
+          snapshot: {
+            ...v.snapshot,
+            // Each version remembers the clicks imported with the link: statistics, like the link's own.
+            imported_clicks: seesStats(c) ? v.snapshot.imported_clicks : null,
+            ...(secret ? { target: "", notes: "", utm_template: null, routing: null, bio: null } : {}),
+          },
+        };
+      }),
+    });
   })
 
-  /** Puts a link back the way it was in an earlier version. */
-  .post("/links/:domain/:slug/history/:id/restore", validate("param", versionParamSchema), async (c) => {
+  /**
+   * Puts a link back the way it was in an earlier version. The password stays
+   * as it is now unless ?password=version asks for the version's: a restore
+   * must not quietly bring back an old password or take the protection off.
+   */
+  .post("/links/:domain/:slug/history/:id/restore", validate("param", versionParamSchema), validate("query", restoreVersionQuerySchema), async (c) => {
     const { domain, slug, id } = c.req.valid("param");
+    const { password } = c.req.valid("query");
     const [row, version] = await Promise.all([getLink(c.env.DB, domain, slug), getVersion(c.env.DB, domain, slug, id)]);
     if (!row) return c.json({ error: "Link not found" }, 404);
     if (!version || version.action === "delete") return c.json({ error: "That version doesn't exist." }, 404);
     const next = withSnapshot(row, version.snapshot);
+    if (password === "keep") next.password_hash = row.password_hash;
     const invalid = restoreProblem(c, next);
     if (invalid) return c.json({ error: invalid }, 400);
     if (sameSnapshot(snapshotOf(row), snapshotOf(next))) return c.json({ error: "The link already matches this version." }, 409);
+    const refusedTag = await refusedTags(c, addedTags(row.tags, next.tags));
+    if (refusedTag) return c.json({ error: refusedTag, code: "forbidden" }, 403);
     // An older destination is looked up again, as a saved change would be: a flag or "trusted anyway" was about the current one.
     if (next.target !== row.target || next.routing !== row.routing) await checkSafety(c.env, next);
-    return saveEdit(c, next, versionStmt(c.env.DB, next, "restore", c.get("identity"), { at: next.updated_at, restoredFrom: id }), async (saved) => {
-      await emit(c.env, "link.updated", { link: linkPayload(saved), changes: changedFields(row, saved), restored_version: id }, { ctx: c.executionCtx });
+    return saveEdit(c, row, next, { action: "restore", restoredFrom: id }, {
+      onSaved: async (saved) => {
+        await emit(c.env, "link.updated", { link: linkPayload(saved), changes: changedFields(row, next), restored_version: id }, { ctx: c.executionCtx });
+      },
     });
   })
 
@@ -720,7 +864,7 @@ export const linksApi = new Hono<AppEnv>()
     const row = await getLink(c.env.DB, domain, slug);
     if (!row) return c.json({ error: "Link not found" }, 404);
     // The limit is a setting; how far the count has got is statistics.
-    const cap: CapDTO = { limit: row.max_clicks, count: !seesStats(c) ? null : row.max_clicks ? await capCount(c.env, domain, slug) : 0 };
+    const cap: CapDTO = { limit: row.max_clicks, count: !seesStats(c) ? null : row.max_clicks ? await capCount(c.env, domain, slug, row.cap_since ?? 0) : 0 };
     return c.json(cap);
   })
 
@@ -734,7 +878,7 @@ export const linksApi = new Hono<AppEnv>()
     return c.json(cap);
   })
 
-  .get("/deleted", async (c) => c.json({ links: await deletedLinks(c.env.DB) }))
+  .get("/deleted", async (c) => c.json({ links: await deletedLinks(c.env.DB, undefined, { hideProtected: !seesProtected(c) }) }))
 
   /** Brings a deleted link back with its slug, settings and stats. */
   .post("/deleted/:domain/:slug/restore", validate("param", linkParamSchema), async (c) => {
@@ -751,6 +895,8 @@ export const linksApi = new Hono<AppEnv>()
     const row = withSnapshot({ domain, slug, source: s.source, imported_clicks: s.imported_clicks, created_at: s.created_at } as LinkRow, s, now);
     const invalid = restoreProblem(c, row);
     if (invalid) return c.json({ error: invalid }, 400);
+    const refusedTag = await refusedTags(c, addedTags("", row.tags));
+    if (refusedTag) return c.json({ error: refusedTag, code: "forbidden" }, 403);
     // Looked up as a new link would be: what was known when it was deleted may no longer hold.
     await checkSafety(c.env, row);
     try {
@@ -777,6 +923,11 @@ export const linksApi = new Hono<AppEnv>()
     const { from, to: raw } = c.req.valid("json");
     const to = normalizeTags([raw])[0];
     if (!to) return c.json({ error: "Name the new tag" }, 400);
+    // Every link with the old tag gets the new one, which may feed a report.
+    if (to !== from) {
+      const refused = await refusedTags(c, [to]);
+      if (refused) return c.json({ error: refused, code: "forbidden" }, 403);
+    }
     return c.json(await retag(c, from, to));
   })
 
@@ -792,13 +943,14 @@ export const linksApi = new Hono<AppEnv>()
       return c.json({ error: `Import at most ${importRows} rows per request on this Workers plan; send the rest in further requests.`, code: "too_many_rows" }, 413);
     }
     // Up front, even for a dry run, so a chunked import can't stop halfway.
-    if (mode === "overwrite" && !can(c.get("actor"), "links.edit")) {
-      return c.json({ error: "Overwriting existing links needs the Edit links permission." }, 403);
-    }
     // Overwriting would retarget existing links, which the API token's default scope can't do.
     if (mode === "overwrite" && c.get("actor").via === "token" && !fullTokenScope(c.env)) {
       return c.json({ error: TOKEN_SCOPE_ERROR }, 403);
     }
+    if (mode === "overwrite" && !can(c.get("actor"), "links.edit")) {
+      return c.json({ error: "Overwriting existing links needs the Edit links permission." }, 403);
+    }
+    const tagProblems = await reportTagProblems(c, rows.flatMap((r) => r.tags ?? []));
     const now = nowSec();
     const results: ImportRowResult[] = [];
     const valid: LinkRow[] = [];
@@ -807,15 +959,17 @@ export const linksApi = new Hono<AppEnv>()
     const fallbackDomain = defaultDomain || domainsOf(c.env).primary;
     /** Rows that brought their own settings: an overwrite replaces those too. */
     const withConfig = new Set<string>();
+    /** Rows carrying the settings exports hold since 2.0.3: an older file leaves those alone. */
+    const withLinkState = new Set<string>();
     const domainFor = (r: (typeof rows)[number]) => r.domain || fallbackDomain;
 
     const { results: existing } = await c.env.DB.prepare(
-      `SELECT json_extract(j.value, '$[0]') AS domain, json_extract(j.value, '$[1]') AS wanted, l.slug, l.target, l.routing
+      `SELECT json_extract(j.value, '$[0]') AS domain, json_extract(j.value, '$[1]') AS wanted, l.slug, l.target, l.routing, l.password_hash IS NOT NULL AS has_password
        FROM json_each(?1) j
        JOIN links l ON l.domain = json_extract(j.value, '$[0]') AND l.slug = json_extract(j.value, '$[1]') COLLATE NOCASE`,
     )
       .bind(JSON.stringify(rows.map((r) => [domainFor(r), r.slug])))
-      .all<{ domain: string; wanted: string; slug: string; target: string; routing: string | null }>();
+      .all<{ domain: string; wanted: string; slug: string; target: string; routing: string | null; has_password: number }>();
     /** The links an overwrite would replace, as they are now. */
     const before = new Map(existing.filter((e) => e.wanted === e.slug).map((e) => [linkKey(e.domain, e.slug), e]));
     const exact = new Set(before.keys());
@@ -839,9 +993,18 @@ export const linksApi = new Hono<AppEnv>()
         continue;
       }
       seen.add(key);
-      const target = normalizeTarget(r.target, { allowHttp: true, selfHosts: selfHosts(c.env, c.req.raw) });
+      const tagProblem = (r.tags ?? []).flatMap((t) => tagProblems.get(t) ?? [])[0];
+      if (tagProblem) {
+        fail(tagProblem);
+        continue;
+      }
+      // The same rule as a new link: nobody is sent on over plain http from here. A destination
+      // the link already has isn't a new one, as when saving the link (an older import's http://).
+      const own = selfHosts(c.env, c.req.raw);
+      const same = before.has(key) ? normalizeTarget(r.target, { allowHttp: true, selfHosts: own }) : null;
+      const target = same?.ok && same.url === before.get(key)!.target ? same : normalizeTarget(r.target, { selfHosts: own });
       if (!target.ok) {
-        fail(target.error);
+        fail(/^\s*http:/i.test(r.target) ? "Destination uses http://. Imports take https:// only: change it to https:// and import this row again. A full restore keeps it (docs/SETUP.md#restore)." : target.error);
         continue;
       }
       const exists = exact.has(key);
@@ -851,7 +1014,6 @@ export const linksApi = new Hono<AppEnv>()
       }
       const notes: string[] = [];
       if (target.url !== r.target.trim()) notes.push(`Target normalized to ${target.url}`);
-      if (target.url.startsWith("http:")) notes.push("Target uses http://");
       const clash = caseClash.get(key);
       if (clash) notes.push(`Differs only in case from existing "${clash}"`);
       const lowerKey = linkKey(domain, r.slug.toLowerCase());
@@ -863,6 +1025,7 @@ export const linksApi = new Hono<AppEnv>()
       let routing: string | null = null;
       let preview: string | null = null;
       let qrStyle: string | null = null;
+      let bio: string | null = null;
       if (cfg) {
         const rt = routingFor(c, cfg.routing ?? undefined, null);
         if (!rt.ok) {
@@ -887,14 +1050,42 @@ export const linksApi = new Hono<AppEnv>()
           fail(`utmTemplate: ${utmProblem}`);
           continue;
         }
+        if (cfg.bio) {
+          // Not bioFor: the links its buttons name may come later in this import.
+          let checked: ReturnType<typeof validateBio>;
+          try {
+            checked = validateBio(cfg.bio as unknown as BioPage, { selfHosts: own });
+          } catch {
+            fail("bio: This page can't be read.");
+            continue;
+          }
+          if (!checked.ok) {
+            fail(`bio: ${checked.problems[0]!.message}`);
+            continue;
+          }
+          bio = JSON.stringify(checked.bio);
+        }
+        if (cfg.replacement && linkKey(cfg.replacement.domain, cfg.replacement.slug) === key) {
+          fail("replacement: A link can't replace itself.");
+          continue;
+        }
+        if (cfg.offRedirect && cfg.offRedirect !== "home" && linkKey(cfg.offRedirect.domain, cfg.offRedirect.slug) === key) {
+          fail("offRedirect: A link can't send visitors to itself.");
+          continue;
+        }
         routing = rt.json;
         preview = pv.json;
+        if ([cfg.bio, cfg.broken, cfg.replacement, cfg.offRedirect, cfg.monitor, cfg.neverCheck].some((v) => v !== undefined)) withLinkState.add(key);
       }
+      // Passwords are never in a file: a link that had one mustn't arrive open to anyone with the address.
+      const lostPassword = Boolean(cfg?.passwordProtected) && !before.get(key)?.has_password;
+      if (lostPassword) notes.push("This link had a password, which isn't in the file, so it is turned off. Set a new password, then turn it on.");
+      const off = cfg?.offRedirect;
       valid.push({
         domain,
         slug: r.slug,
         target: target.url,
-        active: cfg?.active === false ? 0 : 1,
+        active: cfg?.active === false || lostPassword ? 0 : 1,
         expires_at: cfg?.expiresAt ?? null,
         utm: cfg?.utm ? 1 : 0,
         utm_template: cfg?.utmTemplate || null,
@@ -905,15 +1096,19 @@ export const linksApi = new Hono<AppEnv>()
         source: "import",
         imported_clicks: r.clicks ?? null,
         import_from: from ?? null,
-        broken: 0,
-        replacement: null,
-        off_redirect: null,
-        monitor: MONITOR_DEFAULT,
+        broken: cfg?.broken ? 1 : 0,
+        replacement: cfg?.replacement ? linkKey(cfg.replacement.domain, cfg.replacement.slug) : null,
+        off_redirect: off === "home" ? OFF_HOME : off ? linkKey(off.domain, off.slug) : null,
+        monitor: cfg?.neverCheck ? MONITOR_NEVER : cfg?.monitor ? MONITOR_ON : MONITOR_DEFAULT,
+        bio,
         routing,
         preview,
         qr: qrStyle,
         password_hash: null,
         max_clicks: cfg?.maxClicks ?? null,
+        rev: newRev(),
+        // A deleted link with this slug may have left a count behind: this limit starts from now.
+        cap_since: cfg?.maxClicks ? now : null,
         created_at: r.createdAt ?? now,
         updated_at: now,
       });
@@ -923,7 +1118,8 @@ export const linksApi = new Hono<AppEnv>()
 
     if (!dryRun && valid.length > 0) {
       // Skip mode never overwrites, even a link created since the check above.
-      // Settings from a JSON export (?24 = 1) replace the existing link's; otherwise they're kept.
+      // Settings from a JSON export (?30 = 1) replace the existing link's; otherwise they're kept.
+      // The ones exports added in 2.0.3 only when the row has them (?32 = 1).
       // New links and new destinations are looked up at the security DNS now, each host once across the
       // batch, while the request has lookups left (the plan's inlineLookups). The rest, and lookups that
       // failed, keep unsafe_at NULL: the cron's backlog takes those first (src/worker/health.ts).
@@ -938,10 +1134,11 @@ export const linksApi = new Hono<AppEnv>()
       let looked = 0;
       const safety = lookups.map((l) => (l.urls ? verdicts[looked++] : undefined));
       // A changed destination's old flag (or "trusted anyway") doesn't carry over. The answer looked up is used
-      // only while the link still has the routing it was looked up with (?25); otherwise the backlog decides.
-      const DESTINATIONS_CHANGED = "(links.target != excluded.target OR (?24 = 1 AND links.routing IS NOT excluded.routing))";
-      const LOOKED_UP = "(?24 = 1 OR links.routing IS ?25)";
-      const fromConfig = (col: string) => `${col} = CASE WHEN ?24 = 1 THEN excluded.${col} ELSE links.${col} END`;
+      // only while the link still has the routing it was looked up with (?31); otherwise the backlog decides.
+      const DESTINATIONS_CHANGED = "(links.target != excluded.target OR (?30 = 1 AND links.routing IS NOT excluded.routing))";
+      const LOOKED_UP = "(?30 = 1 OR links.routing IS ?31)";
+      const fromConfig = (col: string) => `${col} = CASE WHEN ?30 = 1 THEN excluded.${col} ELSE links.${col} END`;
+      const fromLinkState = (col: string) => `${col} = CASE WHEN ?32 = 1 THEN excluded.${col} ELSE links.${col} END`;
       const onConflict =
         mode === "overwrite"
           ? `DO UPDATE SET target = excluded.target, title = COALESCE(excluded.title, links.title),
@@ -951,12 +1148,14 @@ export const linksApi = new Hono<AppEnv>()
            unsafe_at = CASE WHEN NOT ${DESTINATIONS_CHANGED} THEN links.unsafe_at WHEN ${LOOKED_UP} THEN excluded.unsafe_at ELSE NULL END,
            unsafe_tried_at = CASE WHEN ${DESTINATIONS_CHANGED} THEN NULL ELSE links.unsafe_tried_at END,
            ${["active", "expires_at", "utm", "utm_template", "pass_query", "notes", "routing", "preview", "qr", "max_clicks"].map(fromConfig).join(", ")},
-           updated_at = excluded.updated_at`
+           ${["bio", "broken", "replacement", "off_redirect", "monitor"].map(fromLinkState).join(", ")},
+           cap_since = CASE WHEN ?30 = 1 AND links.max_clicks IS NULL AND excluded.max_clicks IS NOT NULL THEN excluded.cap_since ELSE links.cap_since END,
+           rev = excluded.rev, updated_at = excluded.updated_at`
           : "DO NOTHING";
       const stmt = c.env.DB.prepare(
         `INSERT INTO links (domain, slug, target, active, expires_at, utm, utm_template, pass_query, title, tags, notes, source, imported_clicks, monitor,
-           routing, preview, qr, max_clicks, import_from, created_at, updated_at, unsafe, unsafe_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)
+           routing, preview, qr, max_clicks, import_from, created_at, updated_at, unsafe, unsafe_at, rev, cap_since, bio, broken, replacement, off_redirect)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29)
          ON CONFLICT (domain, slug) ${onConflict}`,
       );
       const keysJson = JSON.stringify(valid.map((r) => [r.domain, r.slug]));
@@ -986,8 +1185,14 @@ export const linksApi = new Hono<AppEnv>()
             r.updated_at,
             safety[i] === "flagged" ? UNSAFE_FLAGGED : UNSAFE_NONE,
             safety[i] === "flagged" || safety[i] === "clean" ? now : null,
-            // ?24 and ?25 only appear in the overwrite statement.
-            ...(mode === "overwrite" ? [withConfig.has(linkKey(r.domain, r.slug)) ? 1 : 0, lookups[i]?.routing ?? null] : []),
+            r.rev ?? null,
+            r.cap_since ?? null,
+            r.bio ?? null,
+            r.broken,
+            r.replacement,
+            r.off_redirect,
+            // ?30 to ?32 only appear in the overwrite statement.
+            ...(mode === "overwrite" ? [withConfig.has(linkKey(r.domain, r.slug)) ? 1 : 0, lookups[i]?.routing ?? null, withLinkState.has(linkKey(r.domain, r.slug)) ? 1 : 0] : []),
           ),
         ),
         // A version per imported link, with what D1 now holds (an overwrite keeps the link's other settings).
@@ -1082,7 +1287,8 @@ export const linksApi = new Hono<AppEnv>()
   .get("/export/links.csv", validate("query", exportQuerySchema), async (c) => {
     const { links: picked, ...filter } = c.req.valid("query");
     const { scope } = await getCheckSettings(c.env.DB);
-    const { where, params } = listFilter(filter, scope);
+    const hide = !seesProtected(c);
+    const { where, params } = listFilter(filter, scope, hide);
     if (picked) {
       // A selection: "domain/slug" keys, comma-separated.
       params.push(JSON.stringify(picked.split(",").filter(Boolean)));
@@ -1096,21 +1302,22 @@ export const linksApi = new Hono<AppEnv>()
       const d = new Date((s ?? NaN) * 1000);
       return Number.isFinite(d.getTime()) ? d.toISOString() : "";
     };
+    const secret = (r: LinkRow) => hide && Boolean(r.password_hash);
     const body = csv([
       ["domain", "slug", "short_url", "target", "active", "expires_at", "utm", "utm_template", "pass_query", "title", "tags", "notes", "source", "imported_clicks", "created_at", "updated_at", "broken", "replacement", "monitor", "routing", "preview", "qr", "password_protected", "max_clicks", "off_redirect"],
       ...results.map((r) => [
         r.domain,
         r.slug,
         dto(c, r).shortUrl,
-        r.target,
+        secret(r) ? "" : r.target,
         r.active,
         iso(r.expires_at),
         r.utm,
-        r.utm_template,
+        secret(r) ? null : r.utm_template,
         r.pass_query,
         r.title,
         r.tags,
-        r.notes,
+        secret(r) ? "" : r.notes,
         r.source,
         seesStats(c) ? r.imported_clicks : null,
         iso(r.created_at),
@@ -1118,7 +1325,7 @@ export const linksApi = new Hono<AppEnv>()
         r.broken,
         r.replacement,
         r.monitor,
-        r.routing,
+        secret(r) ? null : r.routing,
         r.preview,
         r.qr,
         r.password_hash ? 1 : 0,
@@ -1135,12 +1342,14 @@ export const linksApi = new Hono<AppEnv>()
   /**
    * Every link with its settings, for another workspace's import: the rows are
    * import rows, settings in `config`. Clicks are the lifetime total (counted
-   * here, plus any imported before). Passwords are never exported.
+   * here, plus any imported before). Passwords are never exported, only that a
+   * link had one, so importing it can't leave it open. Protected links are left
+   * out for someone who may not see where they go.
    */
   .get("/export/links.json", async (c) => {
     const stats = seesStats(c);
     const [{ results }, counted] = await Promise.all([
-      c.env.DB.prepare("SELECT * FROM links ORDER BY created_at").all<LinkRow>(),
+      c.env.DB.prepare(`SELECT * FROM links${seesProtected(c) ? "" : " WHERE password_hash IS NULL"} ORDER BY created_at`).all<LinkRow>(),
       stats ? clicksByLink(c.env, "all") : Promise.resolve(new Map<string, number>()),
     ]);
     const links = results.map((r) => {
@@ -1165,6 +1374,13 @@ export const linksApi = new Hono<AppEnv>()
           preview: parsePreview(r.preview),
           qr: r.qr ? (JSON.parse(r.qr) as Record<string, unknown>) : null,
           maxClicks: r.max_clicks,
+          bio: parseBio(r.bio),
+          broken: r.broken === 1,
+          replacement: splitKey(r.replacement),
+          offRedirect: r.off_redirect === OFF_HOME ? "home" : splitKey(r.off_redirect),
+          monitor: r.monitor === MONITOR_ON,
+          neverCheck: r.monitor === MONITOR_NEVER,
+          passwordProtected: r.password_hash !== null,
         },
       };
     });

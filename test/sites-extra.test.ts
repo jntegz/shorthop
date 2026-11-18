@@ -190,9 +190,10 @@ describe("payments list", () => {
     const second = await get("limit=25&offset=25");
     expect(second.payments).toHaveLength(5);
     expect(new Set([...first.payments, ...second.payments].map((p) => p.id)).size).toBe(30);
-    const found = await get("q=NEEDLE");
+    const search = async (q: string) => (await call(`${API}/sites/${site.id}/payments/search`, json({ range: "7d", q }))).json<{ payments: { id: string }[]; total: number }>();
+    const found = await search("NEEDLE");
     expect(found).toMatchObject({ total: 1, payments: [{ id: "api:charge:o-7" }] });
-    expect((await get("q=50%25")).total).toBe(0);
+    expect((await search("50%")).total).toBe(0);
   });
 });
 

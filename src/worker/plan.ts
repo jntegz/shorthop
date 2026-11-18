@@ -47,8 +47,23 @@ export interface PlanLimits {
   fxPending: number;
   /** Unmatched payments one revenue run tries again (up to about eight D1 calls each). */
   rematchPayments: number;
-  /** Website events stored per UTC day (src/worker/web/budget.ts): each writes two or three D1 rows. */
-  collectEvents: number;
+  /**
+   * D1 calls a webhook carrying several events (FastSpring) may have made and still start another
+   * event, which can take about 14. What doesn't fit waits for the provider's retry (revenue/ingest.ts).
+   */
+  webhookBatchCalls: number;
+  /** D1 rows website events may write per UTC day (src/worker/web/budget.ts): a typical visit writes about eleven. */
+  collectRows: number;
+  /** Wrong API keys and tokens recorded in D1 per day, all networks together (src/worker/auth.ts): one row written each. */
+  apiFailureWrites: number;
+  /** Return-page references one site can store per UTC day, counted per isolate (src/worker/revenue/match.ts). */
+  claimsPerDay: number;
+  /** Consent withdrawals one site records per UTC day (src/worker/web/erasure.ts): about three D1 rows written each. */
+  withdrawalsPerDay: number;
+  /** Old visits one daily retention run removes across all sites: about seven D1 rows written each (src/worker/web/privacy.ts). */
+  prunedVisits: number;
+  /** Rows one step of re-applying erasures reads, each hashed up to four times (CPU, on Free above all). */
+  reapplyRows: number;
   /** Pages of past payments one import request reads from a provider (src/worker/api/sites.ts). */
   importPages: number;
   /** Payments on one such page: each costs up to about fourteen D1 queries (matching, currency, storing). */
@@ -75,7 +90,13 @@ export const PAID: PlanLimits = {
   fxDays: 10,
   fxPending: 500,
   rematchPayments: 300,
-  collectEvents: Number.POSITIVE_INFINITY,
+  webhookBatchCalls: Number.POSITIVE_INFINITY,
+  collectRows: Number.POSITIVE_INFINITY,
+  apiFailureWrites: Number.POSITIVE_INFINITY,
+  claimsPerDay: 50_000,
+  withdrawalsPerDay: 20_000,
+  prunedVisits: 20_000,
+  reapplyRows: 1000,
   importPages: 5,
   importPayments: 100,
 };
@@ -104,8 +125,20 @@ export const FREE: PlanLimits = {
   fxDays: 1,
   fxPending: 5,
   rematchPayments: 2,
-  // About 45,000 of D1's 100,000 rows written a day (a new visit writes three); the rest stays for logins, links and payments.
-  collectEvents: 15_000,
+  // 19, one more event (14) and about 17 around them (the connection, recording the event, announcing) make 50.
+  webhookBatchCalls: 19,
+  // 60,000 of D1's 100,000 rows written a day: about 5,000 to 6,000 typical visits (about five rows for
+  // a visit's first event, three for each later one). The rest stays for logins, links and payments.
+  collectRows: 60_000,
+  // A script with a stale key failing once a minute is 1,440 a day. Past this, wrong credentials are still refused.
+  apiFailureWrites: 5_000,
+  // Far more than real return pages; references cost rows from the same budget.
+  claimsPerDay: 2_000,
+  // Far more than real withdrawals; their rows come out of the same budget.
+  withdrawalsPerDay: 1_000,
+  // About 14,000 rows written a day at most, beside the visits being recorded.
+  prunedVisits: 2_000,
+  reapplyRows: 100,
   // One page of three a call: an invocation may make 50 D1 queries, and the admin keeps calling with the cursor.
   importPages: 1,
   importPayments: 3,

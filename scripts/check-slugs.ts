@@ -6,7 +6,8 @@
 //   npx tsx scripts/check-slugs.ts --per-domain          # after the move
 //
 // --base        the Worker to check. Each row's domain is sent as X-Shorthop-Domain,
-//               which localhost and workers.dev honor (production hosts ignore it).
+//               which only localhost honors: on workers.dev or a production host every
+//               row is read from the primary domain, so use --per-domain there.
 // --per-domain  checks https://<row's domain>/<slug> instead of --base.
 // --live        also asks the current production host (the old shortener before the move)
 //               and compares its Location header and status code. Without a

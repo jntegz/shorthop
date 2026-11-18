@@ -3,6 +3,12 @@
 # mode "commit"); merging it deploys through Workers Builds, which also applies
 # the database migrations. Your wrangler.toml ids, routes and vars are kept
 # (scripts/setup/update-copy.ts). docs/SETUP.md#deploy-button has the details.
+#
+# The release's code never runs here. One job, which can only read, checks the
+# release. The job that can write treats the release as files: it runs the
+# updater already in your copy, with install scripts off, and the token appears
+# only in the last step. A copy from before 1.2.0 has no updater, so it uses the
+# one from Shorthop 2.0.2, fixed by commit below.
 
 name: Update Shorthop
 
@@ -18,36 +24,44 @@ on:
         type: choice
         options: [pull-request, commit]
         default: pull-request
+      allow_downgrade:
+        description: "Go to a version older than the one installed. Older code may not work with a database already migrated."
+        type: boolean
+        default: false
 
-permissions:
-  contents: write
-  pull-requests: write
+# Nothing by default: each job says what it needs.
+permissions: {}
 
 concurrency:
   group: update-shorthop
   cancel-in-progress: false
 
 jobs:
-  update:
+  check:
+    name: Check the release
     # Only in copies: shorthop itself is updated by its own commits.
     if: github.repository != 'jntegz/shorthop'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      skip: ${{ steps.version.outputs.skip }}
+      sha: ${{ steps.version.outputs.sha }}
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+      current: ${{ steps.version.outputs.current }}
+      previous: ${{ steps.version.outputs.previous }}
+      base: ${{ steps.version.outputs.base }}
     env:
       UPSTREAM: jntegz/shorthop
-      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
       INPUT_VERSION: ${{ inputs.version }}
-      MODE: ${{ inputs.mode }}
+      ALLOW_DOWNGRADE: ${{ inputs.allow_downgrade }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ github.event.repository.default_branch }}
           path: copy
-          # The token stays out of .git/config while the release's npm ci runs; Commit sets it up.
           persist-credentials: false
-
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: 22
 
       - name: Find the version
         id: version
@@ -65,7 +79,7 @@ jobs:
           fi
           # The release's commit, checked to be a published release on upstream's main branch:
           # a tag moved to a commit outside main (or a draft) is refused, and the
-          # download below is pinned to this commit, not to the tag.
+          # download is pinned to this commit, not to the tag.
           if [ "$(gh api "repos/$UPSTREAM/releases/tags/$tag" --jq .draft)" != "false" ]; then
             echo "::error::$tag isn't a published release of $UPSTREAM."
             exit 1
@@ -80,52 +94,118 @@ jobs:
             echo "::error::$tag ($sha) isn't on $UPSTREAM's main branch ($on_main)."
             exit 1
           fi
-          current=$(node -p "require('./copy/package.json').version")
-          echo "sha=$sha" >> "$GITHUB_OUTPUT"
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
-          echo "current=$current" >> "$GITHUB_OUTPUT"
-          if [ "$current" = "${tag#v}" ]; then
+          version="${tag#v}"
+          current=$(jq -r .version copy/package.json)
+          {
+            echo "sha=$sha"
+            echo "tag=$tag"
+            echo "version=$version"
+            echo "current=$current"
+            echo "base=$(git -C copy rev-parse HEAD)"
+          } >> "$GITHUB_OUTPUT"
+          if [ "$current" = "$version" ]; then
             echo "Shorthop $current is already up to date." | tee -a "$GITHUB_STEP_SUMMARY"
             echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ! printf '%s' "$current" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::warning::Your copy's version \"$current\" isn't like 1.2.0, so files removed since then stay."
+            exit 0
+          fi
+          # An older release is refused unless asked for: migrations only go forward.
+          newest=$(printf '%s\n%s\n' "$current" "$version" | sort -V | tail -n 1)
+          if [ "$newest" != "$version" ] && [ "$ALLOW_DOWNGRADE" != "true" ]; then
+            echo "::error::$tag is older than the $current you run. To go back on purpose, run this with \"allow downgrade\" ticked."
+            exit 1
+          fi
+          # The version the copy is on, by commit, to find files the new one removed. Optional.
+          previous=$(gh api "repos/$UPSTREAM/commits/v$current" --jq .sha 2>/dev/null) || previous=""
+          if printf '%s' "$previous" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "previous=$previous" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::v$current isn't a release, so files removed since then stay."
           fi
 
-      - name: Download the release
-        if: steps.version.outputs.skip != 'true'
-        env:
-          TAG: ${{ steps.version.outputs.tag }}
-          SHA: ${{ steps.version.outputs.sha }}
-          CURRENT: ${{ steps.version.outputs.current }}
+  update:
+    name: Update the copy
+    needs: check
+    if: needs.check.outputs.skip != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      UPSTREAM: jntegz/shorthop
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      MODE: ${{ inputs.mode }}
+      TAG: ${{ needs.check.outputs.tag }}
+      SHA: ${{ needs.check.outputs.sha }}
+      VERSION: ${{ needs.check.outputs.version }}
+      PREVIOUS: ${{ needs.check.outputs.previous }}
+      # v2.0.2: the updater for copies that don't have one. A commit, so it can't change.
+      FALLBACK_UPDATER: e221df4d68b85935911d88142f92ca360ac63f91
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # The commit the check looked at. Commit mode's push is refused if the branch has moved on.
+          ref: ${{ needs.check.outputs.base }}
+          path: copy
+          # The token stays out of .git/config; the Commit step sets it up.
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+
+      - name: Download the release, as files
         run: |
           mkdir -p "$RUNNER_TEMP/new" "$RUNNER_TEMP/old"
-          # By commit: what was checked above is exactly what runs below.
+          # By commit: what was checked is exactly what is used. Nothing in it is run.
           curl -sSfL "https://github.com/$UPSTREAM/archive/$SHA.tar.gz" | tar -xz -C "$RUNNER_TEMP/new" --strip-components=1
+          found=$(jq -r .version "$RUNNER_TEMP/new/package.json")
+          if [ "$found" != "$VERSION" ]; then
+            echo "::error::$TAG's package.json says version \"$found\"."
+            exit 1
+          fi
           echo "Updating to $TAG, commit \`$SHA\` of $UPSTREAM." >> "$GITHUB_STEP_SUMMARY"
-          # The version the copy is on, to find files the new one removed. Optional.
-          curl -sSfL "https://github.com/$UPSTREAM/archive/refs/tags/v$CURRENT.tar.gz" | tar -xz -C "$RUNNER_TEMP/old" --strip-components=1 \
-            || { echo "::warning::v$CURRENT isn't a release, so files removed since then stay."; rm -rf "$RUNNER_TEMP/old"; }
-          cd "$RUNNER_TEMP/new" && npm ci --no-audit --no-fund
+          if [ -z "$PREVIOUS" ] || ! curl -sSfL "https://github.com/$UPSTREAM/archive/$PREVIOUS.tar.gz" | tar -xz -C "$RUNNER_TEMP/old" --strip-components=1; then
+            rm -rf "$RUNNER_TEMP/old"
+          fi
+
+      - name: Set up the updater
+        run: |
+          # The copy as committed, in a folder of its own: its code is what you already run.
+          mkdir -p "$RUNNER_TEMP/updater"
+          git -C copy archive HEAD | tar -x -C "$RUNNER_TEMP/updater"
+          if [ ! -f "$RUNNER_TEMP/updater/scripts/setup/update-copy.ts" ]; then
+            echo "Your copy is from before 1.2.0 and has no updater, so this run uses the one from Shorthop 2.0.2 (commit \`$FALLBACK_UPDATER\`)." | tee -a "$GITHUB_STEP_SUMMARY"
+            rm -rf "$RUNNER_TEMP/updater"
+            mkdir -p "$RUNNER_TEMP/updater"
+            if ! curl -sSfL "https://github.com/$UPSTREAM/archive/$FALLBACK_UPDATER.tar.gz" | tar -xz -C "$RUNNER_TEMP/updater" --strip-components=1; then
+              echo "::error::Couldn't download the updater. Update with git instead: docs/SETUP.md#update-button."
+              exit 1
+            fi
+          fi
+          cd "$RUNNER_TEMP/updater" && npm ci --ignore-scripts --no-audit --no-fund
 
       - name: Update the files
-        if: steps.version.outputs.skip != 'true'
-        working-directory: ${{ runner.temp }}/new
+        working-directory: ${{ runner.temp }}/updater
         run: |
           previous=()
           [ -d "$RUNNER_TEMP/old" ] && previous=(--previous "$RUNNER_TEMP/old")
-          npx tsx scripts/setup/update-copy.ts --target "$GITHUB_WORKSPACE/copy" "${previous[@]}" --summary "$RUNNER_TEMP/summary.md"
+          npx --no-install tsx scripts/setup/update-copy.ts --source "$RUNNER_TEMP/new" --target "$GITHUB_WORKSPACE/copy" "${previous[@]}" --summary "$RUNNER_TEMP/summary.md"
           cat "$RUNNER_TEMP/summary.md" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Commit
-        if: steps.version.outputs.skip != 'true'
         working-directory: copy
         env:
-          VERSION: ${{ steps.version.outputs.version }}
           GH_TOKEN: ${{ github.token }}
         run: |
           if [ -z "$(git status --porcelain)" ]; then
             echo "Nothing to change." | tee -a "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
+          git config core.hooksPath /dev/null
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           gh auth setup-git

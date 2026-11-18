@@ -23,7 +23,7 @@ type Expiry = (typeof EXPIRY)[number]["value"];
 
 /** What a key may do, in a few words. */
 function keySummary(permissions: readonly Permission[]): string {
-  return permissions.length ? permissions.map((p) => PERMISSION_INFO[p].label).join(" · ") : "View and copy links";
+  return permissions.length ? permissions.map((p) => PERMISSION_INFO[p].label).join(" · ") : "No permissions: it can only say who it belongs to";
 }
 
 export function ApiKeysSection({ me, origin }: { me: MeDTO; origin: string }) {
@@ -196,7 +196,7 @@ function CreateKeyDialog({ me, onClose, onCreated }: { me: MeDTO; onClose: () =>
         <Input label="Name" hint="What uses it, such as “iOS Shortcut” or “Zapier”." required maxLength={40} value={name} onChange={(e) => setName(e.target.value)} />
         <fieldset className="settings-a-fieldset">
           <legend className="ui-field-label">What it may do</legend>
-          <p className="settings-a-hint">Every key can list links and read their details. Tick only what the tool needs.</p>
+          <p className="settings-a-hint">Any permission also lets the key list links and read their details. Tick only what the tool needs. Where a password-protected link goes needs Edit links.</p>
           {offered.length ? (
             <div className="settings-a-checks">
               {offered.map((p) => (
@@ -222,12 +222,14 @@ function CreateKeyDialog({ me, onClose, onCreated }: { me: MeDTO; onClose: () =>
 
 function NewKey({ created, origin }: { created: NewApiKeyDTO; origin: string }) {
   const canCreate = created.key.permissions.includes("links.create");
+  // A key with no permission can't read links: /api/me is what it can show.
+  const readsLinks = created.key.permissions.length > 0;
   const example = canCreate
     ? `curl -X POST "${origin}/api/links?format=text" \\
   -H "Authorization: Bearer ${created.secret}" \\
   -H "Content-Type: application/json" \\
   -d '{"url":"https://example.com/new-post"}'`
-    : `curl "${origin}/api/links" \\
+    : `curl "${origin}/api/${readsLinks ? "links" : "me"}" \\
   -H "Authorization: Bearer ${created.secret}"`;
   return (
     <div className="settings-a-stack">
@@ -236,7 +238,7 @@ function NewKey({ created, origin }: { created: NewApiKeyDTO; origin: string }) 
         Send it as the header <code className="settings-a-mono">Authorization: Bearer {"<key>"}</code>. In a tool such as Zapier, Make or n8n, use an HTTP request step with that header and the base URL{" "}
         <code className="settings-a-mono">{origin}/api</code>.
       </p>
-      <CodeBlock title={canCreate ? "Create a link from a terminal" : "List your links from a terminal"} code={example} copied="Command copied" />
+      <CodeBlock title={canCreate ? "Create a link from a terminal" : readsLinks ? "List your links from a terminal" : "Try the key from a terminal"} code={example} copied="Command copied" />
     </div>
   );
 }

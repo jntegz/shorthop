@@ -118,7 +118,7 @@ export function newApiKey(): { id: string; key: string } {
   return { id, key: `shp_${id}_${randomToken()}` };
 }
 
-/** The audit label for history: who did it, and through which key. */
+/** The audit label for history: who did it, and through which key. auth.ts adds which session or network where one identity is shared. */
 export function actorLabel(actor: Actor): string {
   if (actor.via === "token") return "api-token";
   return actor.key ? `${actor.email} · API key ${actor.key.name}` : actor.email;
@@ -137,19 +137,24 @@ interface KeyLookup {
   user_permissions: string | null;
   user_paused_at: number | null;
   user_paused_until: number | null;
+  user_password_hash: string | null;
+  user_invite_hash: string | null;
 }
 
 /**
  * The Actor for a personal key, or null when it's unknown, expired, or its
- * owner is gone, paused or may no longer use the API. The key's permissions are
- * limited to what its owner can do right now.
+ * owner's standing has ended: gone, paused, waiting on an invite link (a reset
+ * by an admin clears their password until they choose a new one), unable to
+ * sign in because Access is off, or no longer allowed to use the API. The key's
+ * permissions are limited to what its owner can do right now.
  */
 export async function findApiKey(env: Env, presented: string, now: number): Promise<{ actor: Actor; lastUsedAt: number | null } | null> {
   if (!KEY_RE.test(presented)) return null;
   const row = await env.DB.prepare(
     `SELECT k.id, k.owner, k.name, k.permissions, k.expires_at, k.last_used_at,
             u.email AS user_email, u.name AS user_name, u.role AS user_role, u.permissions AS user_permissions,
-            u.paused_at AS user_paused_at, u.paused_until AS user_paused_until
+            u.paused_at AS user_paused_at, u.paused_until AS user_paused_until,
+            u.password_hash AS user_password_hash, u.invite_hash AS user_invite_hash
      FROM api_keys k LEFT JOIN users u ON u.email = k.owner WHERE k.hash = ?`,
   )
     .bind(await sha256Hex(presented))
@@ -159,7 +164,10 @@ export async function findApiKey(env: Env, presented: string, now: number): Prom
   let person: Actor;
   if (isOwner(env, row.owner)) person = ownerActor(row.owner);
   else if (row.user_email && row.user_role) {
+    // Without Access only the owner can sign in: other people's keys wait until it's back on.
+    if (env.ADMIN_AUTH === "password") return null;
     if (isPaused({ paused_at: row.user_paused_at, paused_until: row.user_paused_until }, now)) return null;
+    if (row.user_password_hash === null && row.user_invite_hash !== null) return null;
     person = userActor({ email: row.user_email, name: row.user_name ?? "", role: row.user_role, permissions: row.user_permissions ?? "" } as UserRow);
   } else return null;
   if (!person.permissions.includes("api.use")) return null;

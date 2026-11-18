@@ -19,7 +19,7 @@ Creates a short link from any app's share sheet and copies it to the clipboard. 
    | 7 | **Show Alert** | *Dictionary Value* |
    | 8 | **End If** | |
 
-4. Replace `ADMIN_HOST` with your admin host (the primary short domain if you have no separate one), and `YOUR_API_KEY` with a personal key: Admin → Settings → API, MCP & webhooks → **Create API key**, named "iOS Shortcut", with only **Create links** ticked. It's shown once, so paste it straight in. If the phone is lost, revoke that key in the same place. (An older `API_TOKEN` secret also works, limited to reading and creating links unless `API_TOKEN_SCOPE` is `"full"`.)
+4. Replace `ADMIN_HOST` with your admin host (the primary short domain if you have no separate one), and `YOUR_API_KEY` with a personal key: Admin → Settings → API, MCP & webhooks → **Create API key**, named "iOS Shortcut", with only **Create links** ticked. It's shown once, so paste it straight in. If the phone is lost, revoke that key in the same place. (An older `API_TOKEN` secret also works, limited to reading links and statistics and creating links unless `API_TOKEN_SCOPE` is `"full"`.)
 
 If you skip step 1, leave out `slug` and every link gets a random 6-character slug.
 

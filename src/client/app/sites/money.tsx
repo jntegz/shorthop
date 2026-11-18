@@ -292,7 +292,15 @@ export function reasonText(reason: string | null): string {
   return REASONS[reason] ?? words[0]!.toUpperCase() + words.slice(1);
 }
 
-function CsvButton({ href }: { href: string }) {
+/** What the payment checks found on a row, for the list. */
+const ANOMALY_TEXT: Record<string, { label: string; title: string }> = {
+  refund_capped: { label: "Capped at the charge", title: "More was reported as refunded than the charge, so the amount is capped. See the log for what was reported." },
+  refund_currency: { label: "Other currency than the charge", title: "This is in another currency than the charge it belongs to, so it couldn't be compared with it." },
+  refund_unknown: { label: "Partial refund, amount unknown", title: "The provider reported a partial refund without saying how much. It counts as 0 until the amount is known, so net revenue may be too high." },
+  no_charge: { label: "No charge found", title: "No charge was found for this refund or dispute. It still counts in net revenue." },
+};
+
+function CsvButton({ download }: { download: () => Promise<void> }) {
   const [busy, setBusy] = useState(false);
   return (
     <Button
@@ -303,7 +311,7 @@ function CsvButton({ href }: { href: string }) {
       title="Every payment of the period as CSV"
       onClick={() => {
         setBusy(true);
-        downloadFile(href)
+        download()
           .catch((e: unknown) => toast.error(errorText(e) ?? "The download failed."))
           .finally(() => setBusy(false));
       }}
@@ -332,13 +340,18 @@ export function Payments({ d }: { d: Dash }) {
   }, [search]);
   const filterKey = JSON.stringify([d.query, status, q, size]);
   useEffect(() => setPage(1), [filterKey]);
-  const base = { ...viewQuery(d.view), status, ...(q ? { q } : {}) };
+  const base = { ...viewQuery(d.view), status };
   const query = { ...base, limit: String(size), offset: String((page - 1) * size) };
   const data = useQuery({
-    queryKey: keys.siteData(d.id, "payments", query),
-    queryFn: () => call(api.sites[":id"].payments.$get({ param: { id: d.id }, query })),
+    queryKey: keys.siteData(d.id, "payments", { ...query, q }),
+    // A search is often a customer's email: it goes in the request body, never the URL.
+    queryFn: () => (q ? call(api.sites[":id"].payments.search.$post({ param: { id: d.id }, json: { ...query, q } })) : call(api.sites[":id"].payments.$get({ param: { id: d.id }, query }))),
     placeholderData: (prev) => prev,
   });
+  const downloadCsv = () =>
+    q
+      ? downloadFile(`/_admin/api/sites/${d.id}/payments/search.csv`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...base, q }) })
+      : downloadFile(`/_admin/api/sites/${d.id}/payments.csv?${new URLSearchParams(base).toString()}`);
   const rematch = useMutation({
     mutationFn: () => call(api.sites[":id"].rematch.$post({ param: { id: d.id } })),
     onSuccess: (r) => {
@@ -359,7 +372,7 @@ export function Payments({ d }: { d: Dash }) {
       aside={
         <>
           {d.manage ? <Button size="sm" variant="ghost" icon={RefreshCw} onClick={() => rematch.mutate()} loading={rematch.isPending}>Match again</Button> : null}
-          <CsvButton href={`/_admin/api/sites/${d.id}/payments.csv?${new URLSearchParams(base).toString()}`} />
+          <CsvButton download={downloadCsv} />
         </>
       }
     >
@@ -451,6 +464,16 @@ function PaymentRow({ p, site, onVisitor, fmt }: { p: SitePaymentDTO; site: Site
           {p.provider} · {kind}
           {p.testMode ? " · test" : ""}
         </span>
+        {p.unverified ? (
+          <span className="ui-table-sub ui-site-warn" title={`Gumroad didn't confirm this: its connection has no access token, or Gumroad couldn't be asked or didn't show it when it arrived. Anyone who knows the webhook address could have sent it.${p.kind === "charge" ? "" : " Unless its sale is unverified too, it doesn't count in net revenue until it is confirmed."}`}>
+            Unverified
+          </span>
+        ) : null}
+        {p.anomaly && ANOMALY_TEXT[p.anomaly] ? (
+          <span className="ui-table-sub ui-site-warn" title={ANOMALY_TEXT[p.anomaly]!.title}>
+            {ANOMALY_TEXT[p.anomaly]!.label}
+          </span>
+        ) : null}
       </td>
       <td className={cn("is-num", p.amountMinor < 0 && "ui-site-neg")} data-lead="">
         {fmt(p.amountMinor)}
@@ -479,7 +502,7 @@ function PaymentRow({ p, site, onVisitor, fmt }: { p: SitePaymentDTO; site: Site
       </td>
       <td>
         {p.matchedBy ? (
-          <span title={confidenceMeaning(p.confidence)}>
+          <span title={confidenceMeaning(p.confidence, p.provesIdentity)}>
             <Badge tone={CONFIDENCE_TONE[p.confidence ?? "low"] ?? "neutral"}>
               {matchLabel(p.matchedBy)}, {p.confidence ?? "low"}
             </Badge>

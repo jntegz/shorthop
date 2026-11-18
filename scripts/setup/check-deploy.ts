@@ -4,12 +4,21 @@
 //
 // In Workers Builds (a Deploy to Cloudflare install, WORKERS_CI=1), it applies
 // the database migrations to the button's wrangler.toml instead: there's no
-// setup there to do it, and the deploy that follows needs them.
+// setup there to do it, and the deploy that follows needs them. An update branch
+// that hasn't been merged is stopped first.
 
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { WRANGLER_BIN } from "../lib";
-import { BUTTON_FILE, CONFIG_FILE, configFromText, deployProblems, outdatedProblems } from "./template";
+import { BUTTON_FILE, buildBranchProblem, CONFIG_FILE, configFromText, deployProblems, outdatedProblems } from "./template";
+
+if (process.env.WORKERS_CI === "1") {
+  const problem = buildBranchProblem(process.env.WORKERS_CI_BRANCH);
+  if (problem) {
+    console.error(`\n✖ ${problem}\n`);
+    process.exit(1);
+  }
+}
 
 if (process.env.WORKERS_CI === "1" && !existsSync(CONFIG_FILE)) {
   // By binding name, so it works before and after the button writes the database id.

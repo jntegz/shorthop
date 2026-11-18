@@ -7,11 +7,12 @@
 
 import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from "jose";
 import { API_LOCK_MAX_SEC, API_MAX_FAILS, API_WINDOW_SEC } from "../shared/login-policy";
-import { PERMISSIONS, type Actor } from "../shared/permissions";
+import { can, PERMISSIONS, type Actor, type Permission } from "../shared/permissions";
 import { nowSec } from "./db";
 import { isLocalHost } from "./domains";
+import { planLimits } from "./plan";
 import { chargeAttempt, ipBucket, lock, loginConfig, parseSessionCookie, sessionState } from "./session";
-import { actorLabel, findApiKey, isPaused, OWNER_EPOCH, ownerActor, ownerEmails, PASSWORD_IDENTITY, pausedReason, touchApiKeyStmt, userActor } from "./users";
+import { actorLabel, findApiKey, isPaused, OWNER_EPOCH, ownerActor, ownerEmails, PASSWORD_IDENTITY, pausedReason, sha256Hex, touchApiKeyStmt, userActor } from "./users";
 
 type AuthFailure = { ok: false; status: 401 | 403 | 429 | 500; reason: string; code?: "login_required" | "not_allowed" | "paused" };
 
@@ -138,7 +139,7 @@ export async function verifySession(request: Request, env: Env, access: { email:
     if (!cookie || cookie.user !== OWNER_EPOCH) return LOGIN_REQUIRED;
     const { epoch, revoked } = await sessionState(env.DB, cookie.mac, null);
     if (revoked || cookie.global !== epoch) return LOGIN_REQUIRED;
-    return { ok: true, actor: ownerActor(access.email), identity: access.email, sessionExp: cookie.exp };
+    return { ok: true, actor: ownerActor(access.email), identity: await sessionIdentity(access.email, cookie.mac), sessionExp: cookie.exp };
   }
 
   const { epoch, revoked, user } = await sessionState(env.DB, cookie?.mac ?? null, access.email);
@@ -147,6 +148,16 @@ export async function verifySession(request: Request, env: Env, access: { email:
   if (!cfg) return unconfigured ?? { ok: true, actor: userActor(user), identity: user.email };
   if (!cookie || revoked || cookie.global !== epoch || cookie.user !== user.session_epoch) return LOGIN_REQUIRED;
   return { ok: true, actor: userActor(user), identity: user.email, sessionExp: cookie.exp };
+}
+
+/**
+ * How history records a session. Without Access everyone signs in as the same
+ * "admin", so a short hash of the session tells one sign-in from another; it
+ * can't be turned back into the cookie.
+ */
+async function sessionIdentity(email: string, mac: string): Promise<string> {
+  if (email !== PASSWORD_IDENTITY) return email;
+  return `${email} · session ${(await sha256Hex(`session-label|${mac}`)).slice(0, 8)}`;
 }
 
 /** The admin check: the identity first (Cloudflare Access unless turned off), then the password session bound to it. */
@@ -213,31 +224,87 @@ export async function verifyBearer(request: Request, env: Env, ctx?: WaitUntil):
       return { ok: true, actor, identity: actorLabel(actor) };
     }
   } else if (await tokenMatches(presented, legacyApiToken(env))) {
-    const actor: Actor = { email: "api-token", name: "API token", role: "admin", owner: true, permissions: [...PERMISSIONS], via: "token" };
-    return { ok: true, actor, identity: actorLabel(actor) };
+    const actor: Actor = { email: "api-token", name: "API token", role: "admin", owner: true, permissions: fullTokenScope(env) ? [...PERMISSIONS] : [...TOKEN_PERMISSIONS], via: "token" };
+    // The token is one secret on many devices: the network's keyed hash tells them apart in history.
+    return { ok: true, actor, identity: `${actorLabel(actor)} · network ${key.slice(4, 12)}` };
   }
 
   // A burst brake per location, then the lock that counts.
   try {
-    const { success } = await env.AUTH_LIMITER.limit({ key: `auth:${ip}` });
+    const { success } = await env.AUTH_LIMITER.limit({ key: `auth:${key}` });
     if (!success) return { ok: false, status: 429, reason: TOO_MANY };
   } catch (err) {
     console.error(JSON.stringify({ message: "rate limiter failed", error: String(err) }));
   }
   // The failure that reaches the limit locks the network; its next request gets a 429.
-  const state = await chargeAttempt(env.DB, key, now, API_WINDOW_SEC);
-  if (state.fails >= API_MAX_FAILS) await lock(env.DB, key, now, state.lockouts, API_LOCK_MAX_SEC);
+  if (await apiFailureBudgetLeft(env, now)) {
+    const state = await chargeAttempt(env.DB, key, now, API_WINDOW_SEC);
+    if (state.fails >= API_MAX_FAILS) await lock(env.DB, key, now, state.lockouts, API_LOCK_MAX_SEC);
+  }
   return { ok: false, status: 401, reason: "Invalid API key." };
 }
 
+const API_BUDGET_KEY = "api:*";
+const API_BUDGET_WINDOW_SEC = 86400;
+/** Failures an isolate counts in memory before adding them to the shared row: one D1 write per this many. */
+const API_BUDGET_FLUSH = 25;
+
+let apiBudget = { pending: 0, spentUntil: 0 };
+
+/** Tests only. */
+export function resetApiFailureBudget(): void {
+  apiBudget = { pending: 0, spentUntil: 0 };
+}
+
 /**
- * API_TOKEN_SCOPE: only the exact value "full" lets the API_TOKEN secret change
- * and delete links and settings. Anything else keeps the default: read, create
- * links, import new ones and send a test digest. Personal keys carry their own
- * permissions instead.
+ * Whether a wrong API credential may still be written to D1 today. Each network
+ * has its lock, but addresses are cheap (an IPv6 /48 holds 65,536 networks), and
+ * on Workers Free every write comes out of the account's daily allowance. Past
+ * the budget, wrong credentials are refused without being recorded: locks already
+ * set still hold, the limiter still applies, and keys (256 random bits) don't
+ * depend on the count. Passwords do, so their counters have no such budget.
+ * Isolates that haven't added their count yet can go over by a few each.
+ */
+async function apiFailureBudgetLeft(env: Env, now: number): Promise<boolean> {
+  const budget = planLimits(env).apiFailureWrites;
+  if (!Number.isFinite(budget)) return true;
+  if (apiBudget.spentUntil > now) return false;
+  if (++apiBudget.pending < API_BUDGET_FLUSH) return true;
+  const count = apiBudget.pending;
+  apiBudget.pending = 0;
+  try {
+    const { fails, windowStart } = await chargeAttempt(env.DB, API_BUDGET_KEY, now, API_BUDGET_WINDOW_SEC, count);
+    if (fails < budget) return true;
+    apiBudget.spentUntil = windowStart + API_BUDGET_WINDOW_SEC;
+    console.warn(JSON.stringify({ message: "wrong API credentials no longer recorded today", budget }));
+    return false;
+  } catch (err) {
+    console.error(JSON.stringify({ message: "API failure budget unavailable", error: String(err) }));
+    return true;
+  }
+}
+
+/**
+ * API_TOKEN_SCOPE: only the exact value "full" gives the API_TOKEN secret
+ * everything an owner can do. Anything else keeps the default: read links and
+ * statistics (the list in src/worker/permissions.ts), create links, import new
+ * ones and send a test digest. Personal keys carry their own permissions instead.
  */
 export function fullTokenScope(env: Env): boolean {
   return env.API_TOKEN_SCOPE === "full";
 }
 
-export const TOKEN_SCOPE_ERROR = 'Not available with the API token, which can read and create links. Use the admin, a personal API key, or set API_TOKEN_SCOPE to "full".';
+/**
+ * What the default scope counts as holding, so handlers that look at permissions
+ * treat it honestly: no links.edit (destinations of protected links stay hidden),
+ * no revenue.view. Which routes it reaches is decided in src/worker/app.ts.
+ * health.manage is here for GET /checks; missed visits stay closed (seesMisses).
+ */
+const TOKEN_PERMISSIONS: readonly Permission[] = ["links.create", "stats.view", "health.manage", "settings.manage"];
+
+/** Missed visits belong to Link health, and the default API token doesn't get them. */
+export function seesMisses(actor: Actor, env: Env): boolean {
+  return can(actor, "health.manage") && (actor.via !== "token" || fullTokenScope(env));
+}
+
+export const TOKEN_SCOPE_ERROR = 'Not available with the API token, which can read links and statistics and create links. Use the admin, a personal API key, or set API_TOKEN_SCOPE to "full".';

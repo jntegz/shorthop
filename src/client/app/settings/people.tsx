@@ -18,7 +18,7 @@ const ZERO_TRUST = "https://one.dash.cloudflare.com/";
 /** What someone can do, in a few words. */
 export function permissionSummary(role: Role, permissions: readonly Permission[]): string {
   if (role === "admin") return "Everything";
-  return permissions.length ? permissions.map((p) => PERMISSION_INFO[p].label).join(" · ") : "View and copy links";
+  return permissions.length ? permissions.map((p) => PERMISSION_INFO[p].label).join(" · ") : role === "manager" ? "Manages users; views and copies links" : "No access yet";
 }
 
 /** "Owner", "Admin", "Manager", "User". */
@@ -51,6 +51,7 @@ export function PeopleSection({ me }: { me: MeDTO }) {
   const [invite, setInvite] = useState<InviteDTO | null>(null);
   const [removing, setRemoving] = useState<PersonDTO | null>(null);
   const [pausing, setPausing] = useState<PersonDTO | null>(null);
+  const [revokingKeys, setRevokingKeys] = useState<PersonDTO | null>(null);
 
   // With email that reaches people, a new link is also emailed to them.
   const canEmail = Boolean(q.data) && !q.data?.emailProblem;
@@ -75,6 +76,15 @@ export function PeopleSection({ me }: { me: MeDTO }) {
     onSuccess: (_r, p) => toast.success(`${p.name || p.email} signed out everywhere`, { description: "Their password and API keys stay as they are." }),
     onError: toastError,
   });
+  const revokeKeys = useMutation({
+    mutationFn: (p: PersonDTO) => call(api.users[":email"]["revoke-keys"].$post({ param: { email: encodeURIComponent(p.email) } })),
+    onSuccess: (r, p) => {
+      void qc.invalidateQueries({ queryKey: keys.people });
+      setRevokingKeys(null);
+      toast.success(`${r.revoked} API ${r.revoked === 1 ? "key" : "keys"} of ${p.name || p.email} revoked`, { description: "Webhooks those keys set up keep sending, and are flagged under Webhooks for you to check." });
+    },
+    onError: toastError,
+  });
   const busy = (p: PersonDTO) => [reinvite, resume, signOut].some((m) => m.isPending && m.variables?.email === p.email);
 
   const remove = useMutation({
@@ -97,6 +107,7 @@ export function PeopleSection({ me }: { me: MeDTO }) {
       icon: KeyRound,
       onSelect: () => reinvite.mutate(p),
     },
+    ...(p.keys ? [{ label: `Revoke ${p.keys === 1 ? "API key" : `${p.keys} API keys`}…`, icon: KeyRound, onSelect: () => setRevokingKeys(p) }] : []),
     "separator",
     { label: "Remove…", icon: Trash2, danger: true, onSelect: () => setRemoving(p) },
   ];
@@ -173,7 +184,7 @@ export function PeopleSection({ me }: { me: MeDTO }) {
           <h3 className="settings-a-h3">Pause or remove someone</h3>
           <p className="settings-a-prose">
             In a person's <Ellipsis className="settings-a-inline-icon" aria-label="more" /> menu: <strong>Pause access</strong> stops their sign-in and API keys until a date or until you resume them, and keeps everything.{" "}
-            <strong>Sign out everywhere</strong> ends their sessions but keeps their password. <strong>Remove</strong> deletes them and their API keys; then take them out of the Access policy too.
+            <strong>Sign out everywhere</strong> ends their sessions but keeps their password. <strong>Reset password</strong> also stops their API keys until they choose a new one. <strong>Revoke API keys</strong> ends those keys for good, whatever else you do. <strong>Remove</strong> deletes them and their API keys; then take them out of the Access policy too.
           </p>
         </div>
       </div>
@@ -191,6 +202,21 @@ export function PeopleSection({ me }: { me: MeDTO }) {
       ) : null}
       <InviteDialog invite={invite} onClose={() => setInvite(null)} />
       {pausing ? <PauseDialog key={pausing.email} person={pausing} onClose={() => setPausing(null)} /> : null}
+      <Dialog
+        open={revokingKeys !== null}
+        onOpenChange={(o) => !o && setRevokingKeys(null)}
+        title={`Revoke the API keys of ${revokingKeys?.name || revokingKeys?.email || ""}?`}
+        description="Scripts and tools using them stop working at once, and the keys can't come back. Webhooks they set up keep sending and are flagged for you to check."
+        size="sm"
+        footer={
+          <>
+            <Button onClick={() => setRevokingKeys(null)}>Cancel</Button>
+            <Button variant="danger" onClick={() => revokingKeys && revokeKeys.mutate(revokingKeys)} loading={revokeKeys.isPending}>
+              Revoke keys
+            </Button>
+          </>
+        }
+      />
       <Dialog
         open={removing !== null}
         onOpenChange={(o) => !o && setRemoving(null)}
@@ -299,7 +325,7 @@ function PersonDialog({
         ) : (
           <fieldset className="settings-a-fieldset">
             <legend className="ui-field-label">What they may do</legend>
-            <p className="settings-a-hint">Everyone can view links, copy them and download QR codes.</p>
+            <p className="settings-a-hint">Any permission lets someone view links, copy them and download QR codes. Where a password-protected link goes needs Edit links.</p>
             <div className="settings-a-presets" role="group" aria-label="Presets">
               {PERMISSION_PRESETS.map((preset) => (
                 <Button

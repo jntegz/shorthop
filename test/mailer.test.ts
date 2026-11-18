@@ -4,11 +4,13 @@ import { runDigest } from "../src/worker/digest";
 import { applyMailSettings, mailerStatus, mailProviders, webhookSignature } from "../src/worker/mailer";
 import { API, bearer, call, resetData } from "./helpers";
 
-const admin = { "Content-Type": "application/json", ...bearer };
 const MAIL = `${API}/settings/mail`;
 /** Reading the mail setup is admin-only: the local dev bypass stands in for an admin session. */
 const ADMIN_MAIL = "http://localhost:5173/_admin/api/settings/mail";
 const readSetup = async (e: Partial<Env>) => (await call(ADMIN_MAIL, undefined, { ...e, DEV_AUTH_BYPASS: "1" })).json();
+/** Changing the mail setup takes a signed-in session (src/worker/permissions.ts). */
+const sendSetup = (method: "PUT" | "DELETE", body: unknown, e: Partial<Env> = {}) =>
+  call(ADMIN_MAIL, { method, headers: { Origin: "http://localhost:5173", "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) }, { ...e, DEV_AUTH_BYPASS: "1" });
 
 const SECRET = "whsec-0123456789abcdef0123456789abcdef"; // gitleaks:allow (test fixture)
 
@@ -121,7 +123,7 @@ describe("digest providers", () => {
 
   it("lets the admin switch provider and sender, but not the recipient", async () => {
     const e = { DIGEST_PROVIDER: "cloudflare", EMAILIT_API_KEY: "secret_abc" } as Partial<Env>;
-    const put = await call(MAIL, { method: "PUT", headers: admin, body: JSON.stringify({ provider: "emailit", from: "hello@sh.example", to: "evil@example.com" }) }, e);
+    const put = await sendSetup("PUT", { provider: "emailit", from: "hello@sh.example", to: "evil@example.com" }, e);
     expect(put.status).toBe(200);
     expect((await call(MAIL, { headers: bearer }, e)).status).toBe(403);
     const setup = (await readSetup(e)) as { provider: string; from: string; customized: boolean };
@@ -132,14 +134,16 @@ describe("digest providers", () => {
     expect(url).toBe("https://api.emailit.com/v2/emails");
     expect(JSON.parse(init.body as string)).toMatchObject({ to: env.DIGEST_TO, from: "Shorthop <hello@sh.example>" });
 
-    await call(MAIL, { method: "DELETE", headers: bearer }, e);
+    expect((await call(MAIL, { method: "DELETE", headers: bearer }, e)).status).toBe(403);
+    expect(((await readSetup(e)) as { provider: string }).provider).toBe("emailit");
+    await sendSetup("DELETE", undefined, e);
     expect(((await readSetup(e)) as { provider: string }).provider).toBe("cloudflare");
   });
 
   it("lets the admin turn email off without a sender, keeping DIGEST_FROM", async () => {
-    const put = await call(MAIL, { method: "PUT", headers: admin, body: JSON.stringify({ provider: "off", from: "" }) });
+    const put = await sendSetup("PUT", { provider: "off", from: "" });
     expect(put.status).toBe(200);
-    expect(await call(MAIL, { method: "PUT", headers: admin, body: JSON.stringify({ provider: "resend", from: "" }) })).toHaveProperty("status", 400);
+    expect(await sendSetup("PUT", { provider: "resend", from: "" })).toHaveProperty("status", 400);
     expect(await readSetup({})).toMatchObject({ provider: "off", from: env.DIGEST_FROM });
   });
 

@@ -582,7 +582,7 @@ describe("API token", () => {
 
     it("reads the newer endpoints but can't use their writes", async () => {
       await send("POST", "/links", { url: "https://example.com/a", slug: "a" });
-      for (const path of ["/checks", "/checks/links/sh.example/a", "/links/sh.example/a/history", "/deleted", "/links/sh.example/a/cap", "/utm-presets", "/qr/default"]) {
+      for (const path of ["/checks", "/checks/links/sh.example/a", "/links/sh.example/a/history", "/deleted", "/links/sh.example/a/cap", "/utm-presets", "/qr/default", "/stats/overview"]) {
         expect((await send("GET", path)).status, path).toBe(200);
       }
       const refused: [string, string, unknown?][] = [
@@ -603,11 +603,13 @@ describe("API token", () => {
       }
     });
 
-    it("needs the full scope for webhook deliveries, which hold link destinations", async () => {
-      expect((await send("GET", "/webhooks")).status).toBe(200);
-      const res = await send("GET", "/webhooks/abc123/deliveries");
-      expect(res.status).toBe(403);
-      expect((await res.json<{ error: string }>()).error).toMatch(/API_TOKEN_SCOPE/);
+    it("needs the full scope for webhooks and their deliveries", async () => {
+      for (const path of ["/webhooks", "/webhooks/abc123/deliveries"]) {
+        const res = await send("GET", path);
+        expect(res.status, path).toBe(403);
+        expect((await res.json<{ error: string }>()).error, path).toMatch(/API_TOKEN_SCOPE/);
+      }
+      expect((await send("GET", "/webhooks", undefined, { API_TOKEN_SCOPE: "full" })).status).toBe(200);
       expect((await send("GET", "/webhooks/abc123/deliveries", undefined, { API_TOKEN_SCOPE: "full" })).status).not.toBe(403);
     });
 

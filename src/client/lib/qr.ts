@@ -4,6 +4,7 @@
 import { strToU8, zipSync } from "fflate";
 import jsQR from "jsqr";
 import QRCode from "qrcode";
+import { csv } from "../../shared/csv";
 import { escapeHtml } from "../../shared/html";
 import { PREVIEW_IMAGE_PATH } from "../../shared/preview";
 import type { QrStyle } from "../../shared/qr";
@@ -265,13 +266,7 @@ export async function zipQrCodes(items: ZipItem[], format: "svg" | "png", px: nu
     csvRows.push([name, ...item.row]);
     onProgress(++done);
   }
-  // Cells starting like a formula are defused for spreadsheets, then quoted as needed.
-  const cell = (v: string) => {
-    const safe = /^[=+\-@]/.test(v) ? `'${v}` : v;
-    return /[",\n]/.test(safe) ? `"${safe.replaceAll('"', '""')}"` : safe;
-  };
-  const csv = csvRows.map((r) => r.map(cell).join(",")).join("\n");
-  files["qr-codes.csv"] = strToU8(`${csv}\n`);
+  files["qr-codes.csv"] = strToU8(csv(csvRows, "\n"));
   const zip = zipSync(files, { level: 6 });
   return new Blob([zip as BlobPart], { type: "application/zip" });
 }

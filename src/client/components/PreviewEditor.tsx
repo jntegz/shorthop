@@ -18,18 +18,32 @@ import {
 import { api, call, uploadPreviewImage } from "../api";
 import { useMe } from "../lib/me";
 import { cn } from "../lib/utils";
-import { Button, Input, Segmented, Textarea } from "./ui";
+import { Button, Input, Notice, Segmented, Textarea } from "./ui";
 
 type Platform = "linkedin" | "x" | "slack";
 
-function imageSrc(p: LinkPreview): string | null {
+/**
+ * What to show for the preview's image. An image at another site's address is
+ * loaded only once someone asks (`remoteOk`): fetching it tells that site who
+ * is looking, and when.
+ */
+function imageSrc(p: LinkPreview, remoteOk: boolean): string | null {
   if (!p.image) return null;
-  return p.image.kind === "upload" ? `${PREVIEW_IMAGE_PATH}${p.image.key}` : p.image.url;
+  if (p.image.kind === "upload") return `${PREVIEW_IMAGE_PATH}${p.image.key}`;
+  return remoteOk ? p.image.url : null;
 }
 
+const hostOf = (url: string): string => {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url;
+  }
+};
+
 /** The image's real size: from the upload, or measured in the browser for a URL. */
-function useImageSize(p: LinkPreview): { width: number; height: number } | null | "loading" | "error" {
-  const src = imageSrc(p);
+function useImageSize(p: LinkPreview, remoteOk: boolean): { width: number; height: number } | null | "loading" | "error" {
+  const src = imageSrc(p, remoteOk);
   const known = p.image?.kind === "upload" && p.image.width && p.image.height ? { width: p.image.width, height: p.image.height } : null;
   const [measured, setMeasured] = useState<{ src: string; size: { width: number; height: number } | "error" } | null>(null);
   useEffect(() => {
@@ -66,8 +80,8 @@ function Cut({ text, max }: { text: string; max: number }) {
 }
 
 /** Close-to-life mockups of how the link unfurls on each platform. */
-function PreviewCard({ platform, p, domain }: { platform: Platform; p: LinkPreview; domain: string }) {
-  const src = imageSrc(p);
+function PreviewCard({ platform, p, domain, remoteOk }: { platform: Platform; p: LinkPreview; domain: string; remoteOk: boolean }) {
+  const src = imageSrc(p, remoteOk);
   const title = p.title || "Your title";
   if (platform === "linkedin") {
     return (
@@ -110,12 +124,13 @@ function PreviewCard({ platform, p, domain }: { platform: Platform; p: LinkPrevi
   );
 }
 
-function ImageField({ value, onChange, problem }: { value: LinkPreview; onChange: (image: LinkPreview["image"]) => void; problem?: string }) {
+function ImageField({ value, onChange, problem, remoteOk, onLoadRemote }: { value: LinkPreview; onChange: (image: LinkPreview["image"]) => void; problem?: string; remoteOk: boolean; onLoadRemote: () => void }) {
   const input = useRef<HTMLInputElement>(null);
   const [mode, setMode] = useState<"upload" | "url">(value.image?.kind === "url" ? "url" : "upload");
   const [dragging, setDragging] = useState(false);
-  const size = useImageSize(value);
-  const src = imageSrc(value);
+  const size = useImageSize(value, remoteOk);
+  const src = imageSrc(value, remoteOk);
+  const waiting = value.image?.kind === "url" && !remoteOk ? value.image.url : null;
   const upload = useMutation({
     mutationFn: (file: File) => {
       if (!(PREVIEW_IMAGE_TYPES as readonly string[]).includes(file.type)) throw new Error("Use a PNG, JPEG, GIF or WebP image.");
@@ -172,6 +187,15 @@ function ImageField({ value, onChange, problem }: { value: LinkPreview; onChange
               {size.width}×{size.height}
             </span>
           ) : null}
+        </div>
+      ) : waiting ? (
+        <div className="flex aspect-[1.91] w-full flex-col items-center justify-center gap-2 rounded-md border border-line bg-surface-2 p-4 text-center">
+          <p className="text-xs text-muted">
+            This image is on <span className="font-medium break-all text-fg">{hostOf(waiting)}</span>. Loading it here tells that site you're looking.
+          </p>
+          <Button type="button" size="sm" variant="outline" onClick={onLoadRemote}>
+            Load the image
+          </Button>
         </div>
       ) : mode === "upload" ? (
         <button
@@ -251,6 +275,12 @@ export function PreviewEditor({
   problems: PreviewProblem[];
 }) {
   const [platform, setPlatform] = useState<Platform>("linkedin");
+  /** The outside image address someone chose to load. A different address asks again. */
+  const [loadedImage, setLoadedImage] = useState<string | null>(null);
+  const remote = value?.image?.kind === "url" ? value.image.url : null;
+  const remoteOk = remote !== null && remote === loadedImage;
+  /** Where the text came from, until someone edits it: the destination page decides what it says. */
+  const [origin, setOrigin] = useState<"page" | "ai" | null>(null);
   const load = useMutation({
     mutationFn: (url: string) => call(api.previews.fetch.$post({ json: { url } })),
     onSuccess: (r) => {
@@ -259,6 +289,7 @@ export function PreviewEditor({
         description: clip(r.description, PREVIEW_DESCRIPTION_MAX),
         image: r.image ? { kind: "url", url: r.image } : (value?.image ?? null),
       });
+      setOrigin("page");
       toast.success("Loaded the destination's preview", { description: r.title ? "Edit anything you'd like to change." : "It has no title; add one." });
     },
     onError: (e) => toast.error(e.message),
@@ -269,6 +300,7 @@ export function PreviewEditor({
     mutationFn: (url: string) => call(api.previews.ai.preview.$post({ json: { url } })),
     onSuccess: (r) => {
       onChange({ title: r.title, description: r.description, image: value?.image ?? null });
+      setOrigin("ai");
       toast.success("Written with Workers AI", { description: "Check it, and edit anything that isn't right." });
     },
     onError: (e) => toast.error(e.message),
@@ -301,6 +333,12 @@ export function PreviewEditor({
   return (
     <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(0,18rem)]">
       <div className="space-y-4">
+        {origin ? (
+          <Notice>
+            {origin === "ai" ? "Written by AI from the destination page's own text. " : "Copied from the destination page. "}
+            That site decides what it says, so read it before you save.
+          </Notice>
+        ) : null}
         <div className="space-y-1.5">
           <div className="flex items-center justify-between gap-2">
             <label htmlFor="preview-title" className="text-sm font-medium text-fg">
@@ -308,7 +346,7 @@ export function PreviewEditor({
             </label>
             <Counter value={value.title.length} shown={PREVIEW_TITLE_SHOWN} max={PREVIEW_TITLE_MAX} />
           </div>
-          <Input id="preview-title" value={value.title} maxLength={PREVIEW_TITLE_MAX + 20} aria-invalid={Boolean(problem("title"))} onChange={(e) => onChange({ ...value, title: e.target.value })} placeholder="What people see in bold" />
+          <Input id="preview-title" value={value.title} maxLength={PREVIEW_TITLE_MAX + 20} aria-invalid={Boolean(problem("title"))} onChange={(e) => { setOrigin(null); onChange({ ...value, title: e.target.value }); }} placeholder="What people see in bold" />
           {problem("title") ? (
             <p role="alert" className="text-xs text-danger">
               {problem("title")}
@@ -322,14 +360,14 @@ export function PreviewEditor({
             </label>
             <Counter value={value.description.length} shown={PREVIEW_DESCRIPTION_SHOWN} max={PREVIEW_DESCRIPTION_MAX} />
           </div>
-          <Textarea id="preview-description" rows={3} value={value.description} maxLength={PREVIEW_DESCRIPTION_MAX + 50} onChange={(e) => onChange({ ...value, description: e.target.value })} placeholder="A sentence or two. Slack and messaging apps show it; LinkedIn doesn't." />
+          <Textarea id="preview-description" rows={3} value={value.description} maxLength={PREVIEW_DESCRIPTION_MAX + 50} onChange={(e) => { setOrigin(null); onChange({ ...value, description: e.target.value }); }} placeholder="A sentence or two. Slack and messaging apps show it; LinkedIn doesn't." />
           {problem("description") ? (
             <p role="alert" className="text-xs text-danger">
               {problem("description")}
             </p>
           ) : null}
         </div>
-        <ImageField value={value} onChange={(image) => onChange({ ...value, image })} problem={problem("image")} />
+        <ImageField value={value} onChange={(image) => onChange({ ...value, image })} problem={problem("image")} remoteOk={remoteOk} onLoadRemote={() => setLoadedImage(remote)} />
         <div className="flex flex-wrap items-center gap-2 border-t border-line pt-3">
           <Button type="button" variant="ghost" size="sm" disabled={!destination} loading={load.isPending} onClick={() => destination && load.mutate(destination)}>
             {load.isPending ? null : <RefreshCw />} Reload from destination
@@ -357,7 +395,7 @@ export function PreviewEditor({
           ]}
         />
         <div className="rounded-md border border-line bg-white p-3" aria-label={`How the link looks on ${platform}`}>
-          <PreviewCard platform={platform} p={value} domain={domain} />
+          <PreviewCard platform={platform} p={value} domain={domain} remoteOk={remoteOk} />
         </div>
         <div className="space-y-1.5 text-xs leading-relaxed text-muted">
           <p>

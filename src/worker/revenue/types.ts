@@ -10,8 +10,16 @@ export interface NormalizedPayment {
   /** The provider's id of this money movement (charge, refund, dispute…). */
   providerId: string;
   occurredAt: number;
+  /**
+   * When the provider says this payment was begun, if that can be long before it
+   * completed (a bank debit settles days after its checkout). A return page
+   * belongs to that moment, so browser claims are compared with it too.
+   */
+  startedAt?: number | null;
   /** Magnitude in minor units; the sign comes from the kind. */
   amountMinor: number;
+  /** A partial refund nothing states the size of: stored as 0 and flagged, not as the whole charge. */
+  amountUnknown?: boolean;
   currency: string;
   /** null: worked out from the subscription's earlier charges. */
   billing: Billing | null;
@@ -36,6 +44,8 @@ export interface NormalizedPayment {
   ref?: string | null;
   productIds: string[];
   testMode: boolean;
+  /** Nothing but the webhook's own word backs this (a Gumroad ping with no access token, or one Gumroad couldn't confirm). */
+  unverified?: boolean;
   /**
    * Refunds reported as a running total for their parent (Stripe, Lemon Squeezy):
    * the row is replaced, not added to, on the next event.
@@ -75,6 +85,14 @@ export interface NormalizedSubscription {
   endedAt?: number | null;
   /** Lemon Squeezy: the order that created it (its charge becomes "sub_new"). */
   firstOrderRef?: string | null;
+  /**
+   * When the provider says this event happened: an event older than the state
+   * stored is ignored. null when it gives no time: such an event can't bring a
+   * canceled or ended subscription back.
+   */
+  eventAt?: number | null;
+  /** Gumroad: ids of sales the event names, to confirm it with (ProviderAdapter.confirmEnded). */
+  saleRefs?: string[];
 }
 
 /** A checkout that names the visit but isn't a payment itself (Stripe subscription checkouts). */
@@ -99,6 +117,14 @@ export interface NormalizedEvent {
   subscriptions: NormalizedSubscription[];
   claims: NormalizedClaim[];
   links: NormalizedLink[];
+  /**
+   * The provider couldn't confirm this event. It is stored all the same, marked
+   * unverified, and `problem` shows on the connection. With `retry` the provider
+   * is asked to send it again, which can confirm it. Either way the event isn't
+   * marked finished, so a later delivery of it counts: a forged event mustn't make
+   * the real one a "duplicate".
+   */
+  unconfirmed?: { problem: string; retry: boolean };
 }
 
 export interface AdapterContext {
@@ -106,6 +132,10 @@ export interface AdapterContext {
   apiKey: string | null;
   /** Non-secret provider settings (PayPal client id and webhook id…). */
   settings: Record<string, string>;
+  /** One delivery's answers from the provider, so verify and parse don't ask twice. */
+  memo?: Map<string, unknown>;
+  /** The event was built from the provider's own API (an import): there is nothing to confirm. */
+  fromApi?: boolean;
 }
 
 export interface VerifyContext extends AdapterContext {
@@ -130,6 +160,12 @@ export interface ProviderAdapter {
    * stored carries its ids: more ids to look the charge up by. Needs ctx.apiKey.
    */
   parentRefs?(p: NormalizedPayment, ctx: AdapterContext): Promise<string[]>;
+  /**
+   * Asks the provider whether a subscription really was canceled or ended, by
+   * the sales named here. true only when it says so; otherwise why not, and
+   * whether asking again may help. Needs ctx.apiKey.
+   */
+  confirmEnded?(s: NormalizedSubscription, saleIds: string[], ctx: AdapterContext): Promise<true | { problem: string; retry: boolean }>;
 }
 
 export const emptyEvent = (id: string, type: string): NormalizedEvent => ({ id, type, payments: [], subscriptions: [], claims: [], links: [] });
@@ -138,3 +174,5 @@ export const emptyEvent = (id: string, type: string): NormalizedEvent => ({ id, 
 export const firstOfRef = (subscriptionId: string) => `first_of:${subscriptionId}`;
 /** A token on a refund stored before its charge was known: an id of that charge (the cleanup in storePayment finds it by this). */
 export const partOfRef = (chargeRef: string) => `part_of:${chargeRef}`;
+/** A token on a refund or dispute stored before its charge: an id that charge will carry, so the two can be joined when it arrives. */
+export const awaitsRef = (chargeRef: string) => `awaits:${chargeRef}`;

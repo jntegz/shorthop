@@ -119,9 +119,13 @@
     // per run) to the plan's subrequest limit, and System status checks the
     // password hash cost against it. Say "free" unless you pay for Workers.
     "WORKERS_PLAN": "free",
-    // What the API token may do: "create" reads, creates links and imports new
-    // ones; "full" also changes and deletes links and settings.
+    // What the API token may do: "create" reads links and statistics, creates
+    // links and imports new ones; "full" does everything an owner can.
     "API_TOKEN_SCOPE": "create",
+    // "off": the workers.dev address no longer serves the admin and the API once
+    // SHORT_DOMAINS is set (with no domain yet it always does). Empty keeps it as
+    // a way in when your domain breaks. Only matters with workers_dev on.
+    "WORKERS_DEV_ADMIN": "off",
     // "host": browsers use HTTPS for each domain above. "subdomains": for their
     // subdomains too; only when every one of them serves HTTPS, since browsers
     // keep it for a year.
@@ -151,9 +155,13 @@
     "required": ["VISITOR_SALT", "ADMIN_PASSWORD_HASH", "SESSION_SECRET"]
   },
 
+  // The Worker's own log lines stay (errors, job results). Cloudflare's record of
+  // every request and sampled traces are off: they carry full addresses, and some
+  // of Shorthop's addresses hold secrets (share, invite and reset links, payment
+  // webhooks). To debug a problem, turn them on for a while in the dashboard.
   "observability": {
     "enabled": true,
-    "logs": { "enabled": true, "head_sampling_rate": 1 },
-    "traces": { "enabled": true, "head_sampling_rate": 0.05 }
+    "logs": { "enabled": true, "head_sampling_rate": 1, "invocation_logs": false },
+    "traces": { "enabled": false }
   }
 }

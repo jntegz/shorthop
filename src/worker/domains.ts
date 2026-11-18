@@ -75,9 +75,20 @@ export interface Site {
 }
 
 /**
+ * WORKERS_DEV_ADMIN = "off": the workers.dev address stops serving the admin and
+ * the API once a real short domain is configured. Left empty it stays on, as
+ * the way in when a custom domain breaks. Without a domain it's the only admin
+ * there is, so it can't be turned off then.
+ */
+export function workersDevAdmin(env: Env): boolean {
+  return env.WORKERS_DEV_ADMIN !== "off" || configuredDomains(env).length === 0;
+}
+
+/**
  * Maps a request to its short domain, or null for a host this Worker doesn't
- * serve. Dev hosts read the primary domain's links unless an X-Shorthop-Domain
- * header names another configured domain (used by check-slugs before a move).
+ * serve. Dev hosts read the primary domain's links. On localhost, an
+ * X-Shorthop-Domain header can name another configured domain (used by
+ * check-slugs before a move); anywhere else it is ignored.
  */
 export function resolveSite(request: Request, env: Env, url: URL): Site | null {
   const { list, primary, admin } = domainsOf(env);
@@ -85,8 +96,9 @@ export function resolveSite(request: Request, env: Env, url: URL): Site | null {
   if (list.includes(host)) return { domain: host, admin: host === admin, adminOnly: false };
   if (host === admin) return { domain: primary, admin: true, adminOnly: true };
   if (!isDevHost(host)) return null;
-  const wanted = request.headers.get("X-Shorthop-Domain")?.trim().toLowerCase();
-  return { domain: wanted && list.includes(wanted) ? wanted : primary, admin: true, adminOnly: false };
+  const local = isLocalHost(host);
+  const wanted = local ? request.headers.get("X-Shorthop-Domain")?.trim().toLowerCase() : undefined;
+  return { domain: wanted && list.includes(wanted) ? wanted : primary, admin: local || workersDevAdmin(env), adminOnly: false };
 }
 
 /** Base URL of a domain's short links. In dev, primary-domain links use the dev origin. */

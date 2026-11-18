@@ -3,7 +3,7 @@
 // placeholder values (a test keeps the two in step).
 
 import { existsSync, readFileSync } from "node:fs";
-import { parse, printParseErrorCode, type ParseError } from "jsonc-parser";
+import { applyEdits, modify, parse, printParseErrorCode, type JSONPath, type ParseError } from "jsonc-parser";
 import { parse as parseToml } from "smol-toml";
 import { CHECKS_CRON, DIGEST_CRON, ROLLUP_CRON } from "../../src/shared/schedule";
 import { DIGEST_PROVIDERS as PROVIDERS, type DigestProvider } from "../../src/shared/types";
@@ -241,9 +241,13 @@ ${sendEmail}
     // per run) to the plan's subrequest limit, and System status checks the
     // password hash cost against it. Say "free" unless you pay for Workers.
     "WORKERS_PLAN": ${j(c.plan)},
-    // What the API token may do: "create" reads, creates links and imports new
-    // ones; "full" also changes and deletes links and settings.
+    // What the API token may do: "create" reads links and statistics, creates
+    // links and imports new ones; "full" does everything an owner can.
     "API_TOKEN_SCOPE": ${j(c.tokenScope)},
+    // "off": the workers.dev address no longer serves the admin and the API once
+    // SHORT_DOMAINS is set (with no domain yet it always does). Empty keeps it as
+    // a way in when your domain breaks. Only matters with workers_dev on.
+    "WORKERS_DEV_ADMIN": "off",
     // "host": browsers use HTTPS for each domain above. "subdomains": for their
     // subdomains too; only when every one of them serves HTTPS, since browsers
     // keep it for a year.
@@ -273,10 +277,14 @@ ${sendEmail}
     "required": ["VISITOR_SALT", "ADMIN_PASSWORD_HASH", "SESSION_SECRET"]
   },
 
+  // The Worker's own log lines stay (errors, job results). Cloudflare's record of
+  // every request and sampled traces are off: they carry full addresses, and some
+  // of Shorthop's addresses hold secrets (share, invite and reset links, payment
+  // webhooks). To debug a problem, turn them on for a while in the dashboard.
   "observability": {
     "enabled": true,
-    "logs": { "enabled": true, "head_sampling_rate": 1 },
-    "traces": { "enabled": true, "head_sampling_rate": 0.05 }
+    "logs": { "enabled": true, "head_sampling_rate": 1, "invocation_logs": false },
+    "traces": { "enabled": false }
   }
 }
 `;
@@ -339,6 +347,76 @@ export function configFromText(text: string, file = CONFIG_FILE): SetupConfig {
   };
 }
 
+/** Vars the setup reads into SetupConfig and writes back: the wizard may have just changed them. */
+const CONFIG_VARS = new Set([
+  "ADMIN_AUTH",
+  "ACCESS_TEAM_DOMAIN",
+  "ACCESS_AUD",
+  "ADMIN_EMAIL",
+  "CF_ACCOUNT_ID",
+  "SHORT_DOMAINS",
+  "ADMIN_HOST",
+  "FALLBACK_URL",
+  "AE_DATASET",
+  "AE_WEB_DATASET",
+  "WORKERS_PLAN",
+  "API_TOKEN_SCOPE",
+  "HSTS",
+  "DIGEST_PROVIDER",
+  "DIGEST_FROM",
+  "DIGEST_TO",
+  "DIGEST_MAILGUN_DOMAIN",
+  "DIGEST_MAILGUN_REGION",
+  "DIGEST_CUSTOM_AUTH",
+  "DIGEST_CUSTOM_BODY",
+]);
+/** Top-level keys renderConfig always writes from SetupConfig, or that this version decides (UPSTREAM_KEYS below). */
+const RENDERED_KEYS = new Set(["$schema", "name", "account_id", "workers_dev", "routes", "kv_namespaces", "d1_databases", "analytics_engine_datasets", "send_email", "vars", "secrets"]);
+
+/**
+ * A freshly rendered config with what the owner added to their wrangler.jsonc by
+ * hand: top-level settings the template only has as comments or not at all (ai,
+ * r2_buckets, limits, ...), vars the setup doesn't manage (KV_CACHE_TTL, their own),
+ * workers_dev, extra bindings, routes that aren't custom domains, the PEOPLE_MAIL
+ * sender, and invocation logs or traces they chose to keep on. Everything else is
+ * this version's, comments included.
+ */
+export function keepOwnSettings(rendered: string, ownText: string, file = CONFIG_FILE): string {
+  const own = parseJsonc(ownText, file);
+  const next = parseJsonc(rendered, file);
+  let text = rendered;
+  const set = (path: JSONPath, value: unknown) => {
+    text = applyEdits(text, modify(text, path, value, { formattingOptions: { insertSpaces: true, tabSize: 2 } }));
+  };
+
+  for (const [key, value] of Object.entries(own)) if (!RENDERED_KEYS.has(key) && !UPSTREAM_KEYS.has(key) && !(key in next)) set([key], value);
+  if (typeof own.workers_dev === "boolean" && own.workers_dev !== next.workers_dev) set(["workers_dev"], own.workers_dev);
+
+  const nextVars = obj(next.vars);
+  for (const [name, value] of Object.entries(obj(own.vars))) if (!CONFIG_VARS.has(name) && JSON.stringify(value) !== JSON.stringify(nextVars[name])) set(["vars", name], value);
+  // Someone who turned workers_dev on before this setting existed keeps the admin there, their way in when a domain breaks.
+  if (own.workers_dev === true && !("WORKERS_DEV_ADMIN" in obj(own.vars))) set(["vars", "WORKERS_DEV_ADMIN"], "");
+
+  // Binding lists: the template's entries, with fields only the owner's has (preview ids), then their other bindings.
+  for (const [list, id] of [["kv_namespaces", "binding"], ["d1_databases", "binding"], ["analytics_engine_datasets", "binding"], ["send_email", "name"]] as const) {
+    const mine = arr(own[list]).map(obj);
+    const theirs = arr(next[list]).map(obj);
+    const merged = theirs.map((e) => ({ ...mine.find((m) => m[id] === e[id]), ...e }));
+    // The digest's sender goes with the email provider, which the setup decides.
+    merged.push(...mine.filter((m) => !theirs.some((e) => e[id] === m[id]) && m[id] !== "DIGEST"));
+    if (merged.length && JSON.stringify(merged) !== JSON.stringify(theirs)) set([list], merged);
+  }
+  // Custom domains come from SHORT_DOMAINS and ADMIN_HOST, so a removed domain stays removed.
+  const ownRoutes = arr(own.routes).filter((r) => obj(r).custom_domain !== true);
+  if (ownRoutes.length) set(["routes"], [...arr(next.routes), ...ownRoutes]);
+
+  // A config that already has invocation_logs has seen this choice: what it says about logging is deliberate.
+  const logs = obj(obj(own.observability).logs);
+  if (logs.invocation_logs === true) set(["observability", "logs", "invocation_logs"], true);
+  if ("invocation_logs" in logs && obj(obj(own.observability).traces).enabled === true) set(["observability", "traces", "enabled"], true);
+  return text;
+}
+
 /** wrangler.jsonc when the setup has written one, else the example (for local dev). */
 export function localConfig(): { file: string; config: SetupConfig } {
   const file = existsSync(CONFIG_FILE) ? CONFIG_FILE : EXAMPLE_FILE;
@@ -381,7 +459,22 @@ export function outdatedProblems(text: string, file = CONFIG_FILE): string[] {
   if (!limiters.includes("COLLECT_LIMITER")) problems.push("The COLLECT_LIMITER rate limiter (website analytics) is missing.");
   if (!datasets.includes("WEB")) problems.push("The WEB Analytics Engine dataset (website analytics) is missing.");
   if (!objects.includes("CLICK_CAPS")) problems.push("The CLICK_CAPS Durable Object and its migrations entry (click limits) are missing.");
+  // Asks for a decision, not a value: true is fine, a config that has never said is the old default (on).
+  if (obj(obj(raw.observability).logs).invocation_logs === undefined) problems.push("observability.logs.invocation_logs isn't set, so Cloudflare keeps a log of every request's full address, and those can hold secrets.");
   return problems;
+}
+
+/** The branch the Update Shorthop workflow opens its pull request from. */
+export const UPDATE_BRANCH_PREFIX = "shorthop-update-";
+
+/**
+ * Why this Workers Builds branch must not deploy, or null. A pull request's
+ * update branch hasn't been reviewed, and `npm run deploy` applies migrations
+ * to the production database.
+ */
+export function buildBranchProblem(branch: string | undefined): string | null {
+  if (!branch?.startsWith(UPDATE_BRANCH_PREFIX)) return null;
+  return `${branch} is an update waiting for review: merge its pull request to deploy. Nothing was migrated or deployed. To stop these builds, turn off non-production branch builds (docs/SETUP.md#update-button).`;
 }
 
 // --- The Deploy to Cloudflare button ---------------------------------------------------------
@@ -485,6 +578,8 @@ export function renderButtonConfig(c: SetupConfig = BUTTON_CONFIG): string {
   // The deploy page asks for ADMIN_PASSWORD (.dev.vars.example); the rest is generated in D1.
   delete raw.secrets;
   raw.workers_dev = true;
+  // The button's install starts on workers.dev: the admin stays there until the owner says otherwise.
+  (raw.vars as Record<string, unknown>).WORKERS_DEV_ADMIN = "";
   return `${BUTTON_HEADER}\n${toToml(raw, BUTTON_COMMENTS)}`;
 }
 

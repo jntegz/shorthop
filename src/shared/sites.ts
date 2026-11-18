@@ -64,7 +64,7 @@ export interface ProviderInfo {
 export const PROVIDER_INFO: Record<Provider, ProviderInfo> = {
   stripe: {
     label: "Stripe",
-    checkout: "Payment Links get client_reference_id=sh_<ref> from the script, and from a short link that points straight at one. Checkout Sessions you create: client_reference_id: \"sh_\" + shorthop.ref().",
+    checkout: "Payment Links get client_reference_id=sh_<ref> from the script, and from a short link that points straight at one. Checkout Sessions you create: client_reference_id: \"sh_\" + ref, when shorthop.ref() gave one (it can be null).",
     where: "Developers → Webhooks → Add endpoint",
     events: ["checkout.session.completed", "checkout.session.async_payment_succeeded", "invoice.paid", "invoice_payment.paid", "charge.refunded", "charge.dispute.created", "charge.dispute.closed", "customer.subscription.created", "customer.subscription.updated", "customer.subscription.deleted"],
     webhookSecret: { label: "Signing secret", hint: "Developers → Webhooks → your endpoint → Signing secret (Reveal).", prefix: "whsec_", suggestedName: "STRIPE_WEBHOOK_SECRET" },
@@ -120,11 +120,11 @@ export const PROVIDER_INFO: Record<Provider, ProviderInfo> = {
   gumroad: {
     label: "Gumroad",
     checkout: "Product links (gumroad.com/l/…) get ?sh_ref= from the script, and from a short link that points straight at one; Gumroad sends it back in url_params.",
-    where: "Settings → Advanced → Ping (paste the address there)",
+    where: "Settings → Advanced → Ping (paste the address there; it sends sales only, the setup guide adds the rest)",
     events: ["sale", "refund", "dispute", "dispute_won", "cancellation", "subscription_ended"],
     webhookSecret: null,
     urlToken: true,
-    apiKey: { label: "Access token", hint: "Settings → Advanced → Applications → create an application → Generate access token.", use: "Confirms each ping with Gumroad (Gumroad doesn't sign pings) and imports past sales.", required: false, suggestedName: "GUMROAD_ACCESS_TOKEN" },
+    apiKey: { label: "Access token", hint: "Settings → Advanced → Applications → create an application → Generate access token.", use: "Confirms each ping with Gumroad, which doesn't sign them, and stores the sale as Gumroad reports it. Needs the view_sales scope. Imports past sales too. Without it, Gumroad payments are labelled unverified.", required: false, suggestedName: "GUMROAD_ACCESS_TOKEN" },
     settings: [],
     importable: true,
     docs: "https://gumroad.com/ping",
@@ -218,7 +218,7 @@ export interface SiteDTO {
   digestHour: number;
   /** Off: visits aren't recorded and short links aren't tagged; payments still are. */
   tracking: boolean;
-  /** Months after which customer details are removed from payments; null keeps them until the site is deleted. */
+  /** Months after which customer details are removed from payments and visits are deleted or made anonymous; null keeps them until the site is deleted. */
   customerRetentionMonths: number | null;
   createdAt: number;
   updatedAt: number;
@@ -312,6 +312,8 @@ export interface SiteOverviewDTO {
   unmatched: number;
   /** Payments in the period still without an amount in the site's currency (no exchange rate): they count as 0 in the totals. */
   unconverted?: number;
+  /** Payments, refunds and disputes in the period that rest only on an unconfirmed webhook (Gumroad without an access token, or Gumroad unreachable). */
+  unverified?: number;
   aeAvailable: boolean;
 }
 
@@ -357,10 +359,16 @@ export interface SitePaymentDTO {
   subscriptionId: string | null;
   matchedBy: string | null;
   confidence: string | null;
+  /** The match says who paid. A checkout reference credits a visit but doesn't: anyone can put one on a checkout address. */
+  provesIdentity: boolean;
   unmatchedReason: string | null;
   testMode: boolean;
   /** The matched visitor, for their journey. */
   visitorId: string | null;
+  /** What the checks found: refund_capped, refund_currency, refund_unknown or no_charge. */
+  anomaly: string | null;
+  /** Rests only on an unconfirmed webhook (Gumroad without an access token, or Gumroad unreachable when it arrived). */
+  unverified: boolean;
   session: { id: string; startedAt: number; channel: string; source: string; campaign: string; link: string; entry: string; country: string } | null;
   credited: { id: string; startedAt: number; channel: string; source: string; campaign: string; link: string; entry: string; country: string } | null;
 }
@@ -408,6 +416,8 @@ export interface ConnectionDTO {
   enabled: boolean;
   hasSecret: boolean;
   hasApiKey: boolean;
+  /** Nothing can confirm this connection's webhooks (a URL token and no access token): its payments are labelled unverified. */
+  unverified: boolean;
   /** Where each secret lives: pasted (encrypted in D1) or a named Cloudflare Worker secret. */
   webhookSecretMode: SecretMode | null;
   webhookSecretRef: string | null;
@@ -667,14 +677,19 @@ export const eventListQuerySchema = siteQuerySchema.and(z.object({ list: z.enum(
 export const goalPropsQuerySchema = siteQuerySchema.and(z.object({ name: z.string().regex(GOAL_NAME_RE) }));
 export const peakQuerySchema = siteQuerySchema.and(z.object({ metric: z.enum(["visits", "sales", "revenue"]).default("visits") }));
 
+const paymentsListFields = {
+  status: z.enum(["all", "matched", "unmatched"]).default("all"),
+  limit: z.coerce.number().int().min(1).max(500).default(25),
+  offset: z.coerce.number().int().min(0).max(1_000_000).default(0),
+};
+
+/** Listing payments by URL. A search is often a customer's email, which must stay out of URLs: it has its own route. */
 export const paymentsQuerySchema = siteQuerySchema.and(
-  z.object({
-    status: z.enum(["all", "matched", "unmatched"]).default("all"),
-    limit: z.coerce.number().int().min(1).max(500).default(25),
-    offset: z.coerce.number().int().min(0).max(1_000_000).default(0),
-    q: z.string().max(100).optional(),
-  }),
+  z.object({ ...paymentsListFields, q: z.never({ error: "Search payments with POST /sites/:id/payments/search: the search term doesn't belong in a URL." }).optional() }),
 );
+
+/** A payments search: the same filters, in the request body. `q` finds part of an email, customer id or payment id. */
+export const paymentsSearchSchema = siteQuerySchema.and(z.object({ ...paymentsListFields, q: z.string().trim().min(1).max(100) }));
 
 /** A Cloudflare Worker secret's name, as `wrangler secret put` takes it. */
 export const SECRET_NAME_RE = /^[A-Z][A-Z0-9_]{2,63}$/;
@@ -704,7 +719,11 @@ export const connectionSchema = z.object({
   settings: z.record(z.string().regex(/^[a-zA-Z]{1,40}$/), z.string().trim().max(500)).optional(),
   productFilter: z.array(z.string().trim().min(1).max(100)).max(100).default([]),
 });
-export const connectionUpdateSchema = connectionSchema.omit({ provider: true }).partial();
+export const connectionUpdateSchema = connectionSchema
+  .omit({ provider: true })
+  .partial()
+  /** A new random token for a provider that authenticates by the webhook address (the old address stops working). */
+  .extend({ rotateWebhookToken: z.literal(true).optional() });
 
 /** The generic payments API: providers without an adapter, or your own billing. */
 export const apiPaymentSchema = z.object({
@@ -714,9 +733,9 @@ export const apiPaymentSchema = z.object({
   amount: z.number().nonnegative().max(1e9),
   currency: z.string().trim().toUpperCase().regex(CURRENCY_RE),
   occurredAt: z.union([z.number().int().positive(), z.iso.datetime({ offset: true })]).optional(),
-  /** The sh_ref from shorthop.ref() in the browser, if you passed it through checkout. */
-  ref: z.string().regex(SESSION_ID_RE).optional(),
-  visitorId: z.string().max(64).optional(),
+  /** The sh_ref from shorthop.ref() in the browser, if you passed it through checkout. Null (a browser with GPC or DNT has none) means the same as leaving it out. */
+  ref: z.string().regex(SESSION_ID_RE).nullish(),
+  visitorId: z.string().max(64).nullish(),
   customerId: z.string().max(200).optional(),
   email: z.email().max(254).optional(),
   subscriptionId: z.string().max(200).optional(),
@@ -726,9 +745,9 @@ export const apiPaymentSchema = z.object({
 });
 
 export const apiIdentifySchema = z.object({
-  /** sh_ref from shorthop.ref(), or the visitor id from shorthop.visitor(). */
-  ref: z.string().regex(SESSION_ID_RE).optional(),
-  visitorId: z.string().max(64).optional(),
+  /** sh_ref from shorthop.ref(), or the visitor id from shorthop.visitor(). Either may be null, but one is needed. */
+  ref: z.string().regex(SESSION_ID_RE).nullish(),
+  visitorId: z.string().max(64).nullish(),
   email: z.email().max(254).optional(),
   name: z.string().max(200).optional(),
   userId: z.string().max(200).optional(),
@@ -736,16 +755,36 @@ export const apiIdentifySchema = z.object({
 
 // ---- Privacy requests ----------------------------------------------------------------
 
+/**
+ * Visitors tied to a person only by something a browser could have sent: an email it
+ * claimed, or a checkout reference on one of the person's payments. They are left
+ * out unless the operator includes them.
+ */
+export const PRIVACY_LINK_KINDS = ["claimed_email", "payment_reference"] as const;
+export type PrivacyLinkKind = (typeof PRIVACY_LINK_KINDS)[number];
+
 /** One person, by exactly one of what a request can name. */
 export const privacyPersonSchema = z
   .object({
     email: z.email().max(254).toLowerCase().optional(),
     visitorId: z.string().trim().min(1).max(64).optional(),
     paymentId: z.string().trim().min(1).max(300).optional(),
+    /** Unproven links to take in as well, chosen after seeing them in the lookup. */
+    include: z.array(z.enum(PRIVACY_LINK_KINDS)).max(PRIVACY_LINK_KINDS.length).optional(),
   })
   .refine((v) => [v.email, v.visitorId, v.paymentId].filter(Boolean).length === 1, { message: "Send exactly one of email, visitorId or paymentId" });
 export const privacyEraseSchema = privacyPersonSchema.and(z.object({ confirm: z.literal(true, { message: "Send confirm: true to erase" }) }));
 export type PrivacyPersonInput = z.infer<typeof privacyPersonSchema>;
+export const privacyReapplySchema = z.object({ cursor: z.string().max(2000).nullish() });
+
+/** Visitors reached only through an unproven link. */
+export interface PrivacyUnprovenDTO {
+  kind: PrivacyLinkKind;
+  identities: number;
+  visits: number;
+  /** Counted in the totals above because the request asked for them. */
+  included: boolean;
+}
 
 /** What was found for one person (lookup), or removed (erase). */
 export interface PrivacyCountsDTO {
@@ -755,12 +794,26 @@ export interface PrivacyCountsDTO {
   subscriptions: number;
   /** Of the subscriptions, the ones still active or past due. */
   activeSubscriptions: number;
+  /** Present when some visitors are linked only by something a browser could have sent. */
+  unproven?: PrivacyUnprovenDTO[];
+  /** Payments matched to these visitors without proving who paid: not this person's, and left out. */
+  otherPayments?: number;
 }
 
 export interface PrivacyEraseDTO {
   /** What was removed or anonymized. */
   counts: PrivacyCountsDTO & { anonymizedVisits: number; webhookDeliveries: number };
   warnings: string[];
+}
+
+/** One step of re-applying erasures after a restore: call again with `cursor` until `done`. */
+export interface PrivacyReapplyDTO {
+  done: boolean;
+  cursor: string | null;
+  /** Records erased again by this step. */
+  erased: { identities: number; visits: number; payments: number; subscriptions: number };
+  /** Ledger entries made with a secret this install no longer has. */
+  unreadable: number;
 }
 
 export interface PrivacyRequestDTO {

@@ -156,7 +156,7 @@ describe("Deploy to Cloudflare button config", () => {
     assert.equal((toml.vars as Record<string, string>).SHORT_DOMAINS, "");
     assert.deepEqual(outdatedProblems(JSON.stringify(toml)), []);
     // Last: deepEqual narrows the type.
-    assert.deepEqual(toml, { ...json, workers_dev: true });
+    assert.deepEqual(toml, { ...json, workers_dev: true, vars: { ...(json.vars as Record<string, unknown>), WORKERS_DEV_ADMIN: "" } });
   });
 });
 

@@ -28,6 +28,11 @@ const PARAM: Record<CheckoutProvider, string> = {
   gumroad: "sh_ref",
 };
 
+const REF_PARAMS: ReadonlySet<string> = new Set(Object.values(PARAM));
+
+/** Whether a query parameter carries a checkout's reference, at any provider. Only the owner or the redirect may set one. */
+export const isCheckoutRefParam = (key: string) => REF_PARAMS.has(key);
+
 /**
  * The checkout URL with `ref` added for its provider. A reference the owner
  * already put in the URL wins: it's theirs. Stripe's client_reference_id

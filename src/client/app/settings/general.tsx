@@ -447,12 +447,13 @@ export function BackupSection() {
       for (const t of info.data.tables) {
         if (t.personalOnly && !personal) continue;
         const rows: unknown[] = [];
-        let offset: number | null = 0;
-        while (offset !== null) {
+        let cursor: string | null | undefined;
+        while (cursor !== null) {
           setProgress(`${t.name}: ${num(rows.length)} rows`);
-          const page: { rows: unknown[]; next: number | null } = await call(api.backup[":table"].$get({ param: { table: t.name }, query: { offset: String(offset), personal: personal ? "1" : "0" } }));
+          const query: { personal: "0" | "1"; cursor?: string } = { personal: personal ? "1" : "0", ...(cursor ? { cursor } : {}) };
+          const page: { rows: unknown[]; next: string | null } = await call(api.backup[":table"].$get({ param: { table: t.name }, query }));
           rows.push(...page.rows);
-          offset = page.next;
+          cursor = page.next;
         }
         counts[t.name] = rows.length;
         files[`tables/${t.name}.json`] = strToU8(JSON.stringify(rows));
@@ -501,8 +502,9 @@ export function BackupSection() {
           </span>
         </div>
         <p className="settings-note">
-          To restore links into this or another workspace, import <Code>links.json</Code> from the ZIP (Import → a file). A full restore is in docs/SETUP.md, "Restore a backup".
+          To restore links into this or another workspace, import <Code>links.json</Code> from the ZIP (Import → a file). Links that had a password come back turned off, and the results list anything that couldn't be restored. A full restore is in docs/SETUP.md, "Restore a backup".
         </p>
+        <p className="settings-note">Every backup holds your team's emails and names: the people list, API keys, and who changed what in link history and shares. Keep it as safely as the workspace.</p>
         {info.isPending ? (
           <Skeleton className="ui-skel-text" style={{ width: "70%" }} />
         ) : info.data ? (

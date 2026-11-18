@@ -234,7 +234,7 @@ export function LinkProtection({
                 {capError}
               </p>
             ) : null}
-            {link?.maxClicks ? <CapCounter domain={link.domain} slug={link.slug} limit={link.maxClicks} /> : <p className="text-xs text-muted">Counting starts when you save.</p>}
+            {link?.maxClicks ? <CapCounter domain={link.domain} slug={link.slug} limit={link.maxClicks} /> : <p className="text-xs text-muted">Counting starts when you save. First come, first served: anyone with the link can use a click.</p>}
           </div>
         ) : null}
       </div>

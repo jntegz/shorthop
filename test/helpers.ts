@@ -1,12 +1,15 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { resetDaySaltCache } from "../src/worker/analytics";
+import { resetApiFailureBudget } from "../src/worker/auth";
 import type { KvLink } from "../src/worker/db";
 import { resetDeadLinkCache } from "../src/worker/dead-link";
 import worker from "../src/worker/index";
 import { resetMissPolicyCache } from "../src/worker/misses";
 import { resetNotFoundCache } from "../src/worker/not-found";
 import { resetSlugRecoveryCache } from "../src/worker/redirect";
+import { resetClaimLimits } from "../src/worker/revenue/match";
 import { resetSiteCaches } from "../src/worker/web/sites";
+import { resetClickTokenUse } from "../src/worker/web/token";
 
 export const ORIGIN = "https://sh.example";
 export const API = `${ORIGIN}/api`;
@@ -45,12 +48,15 @@ export async function enableChecks(everyHours = 24): Promise<void> {
 
 /** Clears D1 rows, settings state and KV between tests (storage is shared per file). */
 export async function resetData(): Promise<void> {
+  resetApiFailureBudget();
   resetMissPolicyCache();
   resetNotFoundCache();
   resetDaySaltCache();
   resetDeadLinkCache();
   resetSiteCaches();
   resetSlugRecoveryCache();
+  resetClaimLimits();
+  resetClickTokenUse();
   await env.DB.batch([
     env.DB.prepare("DELETE FROM links"),
     env.DB.prepare("DELETE FROM target_checks"),
@@ -73,10 +79,12 @@ export async function resetData(): Promise<void> {
     env.DB.prepare("DELETE FROM payment_events"),
     env.DB.prepare("DELETE FROM payments"),
     env.DB.prepare("DELETE FROM payment_claims"),
+    env.DB.prepare("DELETE FROM payment_anomalies"),
     env.DB.prepare("DELETE FROM subscriptions"),
     env.DB.prepare("DELETE FROM fx_rates"),
     env.DB.prepare("DELETE FROM funnels"),
     env.DB.prepare("DELETE FROM privacy_requests"),
+    env.DB.prepare("DELETE FROM erasure_ledger"),
     env.DB.prepare("DELETE FROM stat_shares"),
     env.DB.prepare("DELETE FROM settings WHERE key != 'default_utm'"),
     env.DB.prepare(

@@ -29,6 +29,28 @@ export function versionStmt(
     .bind(row.domain, row.slug, opts.at ?? nowSec(), action, actor, JSON.stringify(snapshotOf(row)), opts.restoredFrom ?? null);
 }
 
+/**
+ * A version of the link as D1 holds it right after an edit made with `rev`
+ * (updateStmt in src/worker/api/links.ts), in the same batch: it records what
+ * the link now is, a concurrent edit's fields included, and nothing at all if
+ * this edit didn't go through.
+ */
+export function savedVersionStmt(
+  db: D1Database,
+  row: Pick<LinkRow, "domain" | "slug">,
+  rev: string,
+  action: HistoryAction,
+  actor: string,
+  opts: { at?: number; restoredFrom?: number } = {},
+): D1PreparedStatement {
+  return db
+    .prepare(
+      `INSERT INTO link_versions (domain, slug, at, action, actor, snapshot, restored_from)
+       SELECT domain, slug, ?1, ?2, ?3, ${SNAPSHOT_SQL}, ?4 FROM links WHERE domain = ?5 AND slug = ?6 AND rev = ?7`,
+    )
+    .bind(opts.at ?? nowSec(), action, actor, opts.restoredFrom ?? null, row.domain, row.slug, rev);
+}
+
 interface VersionRow {
   id: number;
   at: number;
@@ -73,8 +95,12 @@ export async function getVersion(db: D1Database, domain: string, slug: string, i
   return r ? toDTO(r) : null;
 }
 
-/** Deleted links that can still be restored: the latest version of each is a delete, and no link has the slug now. */
-export async function deletedLinks(db: D1Database, now = nowSec()): Promise<DeletedLinkDTO[]> {
+/**
+ * Deleted links that can still be restored: the latest version of each is a
+ * delete, and no link has the slug now. hideProtected leaves out where a
+ * password-protected one went.
+ */
+export async function deletedLinks(db: D1Database, now = nowSec(), opts: { hideProtected?: boolean } = {}): Promise<DeletedLinkDTO[]> {
   const { results } = await db
     .prepare(
       `SELECT v.id, v.domain, v.slug, v.at, v.actor, v.snapshot FROM link_versions v
@@ -88,7 +114,7 @@ export async function deletedLinks(db: D1Database, now = nowSec()): Promise<Dele
   return results.flatMap((r) => {
     try {
       const s = JSON.parse(r.snapshot) as StoredSnapshot;
-      return [{ versionId: r.id, domain: r.domain, slug: r.slug, deletedAt: r.at, actor: r.actor, target: s.target, title: s.title }];
+      return [{ versionId: r.id, domain: r.domain, slug: r.slug, deletedAt: r.at, actor: r.actor, target: opts.hideProtected && s.password_hash ? "" : s.target, title: s.title }];
     } catch {
       return [];
     }

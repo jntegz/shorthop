@@ -8,11 +8,11 @@
 // #privacy, #delete). Look: sitepages.css.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BookOpen, Bot, Download, EyeOff, Search, Trash2 } from "lucide-react";
+import { BookOpen, Bot, Download, EyeOff, RotateCcw, Search, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router";
 import { toast } from "sonner";
-import { ATTRIBUTION_INFO, ATTRIBUTION_MODELS, CUSTOMER_RETENTION_MONTHS, LOOKBACK_DAYS, type AttributionModel, type IdMode, type PrivacyCountsDTO, type SiteDTO } from "../../../shared/sites";
+import { ATTRIBUTION_INFO, ATTRIBUTION_MODELS, CUSTOMER_RETENTION_MONTHS, LOOKBACK_DAYS, type AttributionModel, type IdMode, type PrivacyCountsDTO, type PrivacyLinkKind, type PrivacyReapplyDTO, type SiteDTO } from "../../../shared/sites";
 import { api, ApiError, call, downloadFile, keys } from "../../api";
 import { ago } from "../../lib/format";
 import { useDomains } from "../../lib/links";
@@ -262,7 +262,7 @@ const ID_MODE_NOTE: Record<IdMode, string> = {
   consent:
     "Cookieless until the visitor accepts, in the script's built-in banner or yours calling shorthop(\"consent\", true); from then on a random ID in localStorage recognises the visitor across days. Visitors who decline stay cookieless.",
   persistent:
-    "A random ID in localStorage recognises a visitor across days, so a payment days later is credited to the visit that first brought them. In the EU this needs the visitor's consent; update your privacy notice.",
+    "A random ID in localStorage recognises a visitor across days, so a payment days later is credited to the visit that first brought them. Nobody is asked first. Update your privacy notice.",
 };
 
 function GeneralSection({ site }: { site: SiteDTO }) {
@@ -352,8 +352,19 @@ function GeneralSection({ site }: { site: SiteDTO }) {
             ]}
           />
           <p className="ui-field-hint">{ID_MODE_NOTE[form.idMode]}</p>
+          {form.idMode === "persistent" ? (
+            <Notice tone="warn" title="This stores an ID without asking.">
+              In the EU, keeping an ID in a visitor's browser generally needs their consent. If you don't collect it yourself before this script runs, choose After consent instead.
+            </Notice>
+          ) : null}
           {form.idMode !== "cookieless" ? (
-            <Checkbox id="gs-gpc" checked={form.respectGpc} onCheckedChange={(v) => set("respectGpc", v)} label="Respect Global Privacy Control and Do Not Track" description="Those visitors are counted cookieless." />
+            <Checkbox
+              id="gs-gpc"
+              checked={form.respectGpc}
+              onCheckedChange={(v) => set("respectGpc", v)}
+              label="Respect Global Privacy Control and Do Not Track"
+              description="Those visitors are counted cookieless. With or without this, an identify from their browser is ignored and they get no checkout reference."
+            />
           ) : null}
         </fieldset>
 
@@ -436,17 +447,18 @@ function GeneralSection({ site }: { site: SiteDTO }) {
 function ApiSection({ site, origin }: { site: SiteDTO; origin: string }) {
   // The API only answers on the admin host, which serves this page. `origin` is a short domain, for the script.
   const api = `${window.location.origin}/api`;
-  const curl = `curl -X POST ${api}/sites/${site.id}/payments \\
+  const curl = `# "ref" is null or left out when the browser has none (Global Privacy Control, Do Not Track): the payment is still stored.
+curl -X POST ${api}/sites/${site.id}/payments \\
   -H "Authorization: Bearer $SHORTHOP_API_KEY" -H "Content-Type: application/json" \\
   -d '{"id": "order-1001", "amount": 49.00, "currency": "USD", "ref": "<shorthop.ref() from the browser>", "email": "buyer@example.com"}'
 
-# Trusted identify (overwrites what the browser sent)
+# Trusted identify (overwrites what the browser sent). Needs a ref or visitorId: skip it when you have neither.
 curl -X POST ${api}/sites/${site.id}/identify \\
   -H "Authorization: Bearer $SHORTHOP_API_KEY" -H "Content-Type: application/json" \\
   -d '{"ref": "<shorthop.ref()>", "email": "buyer@example.com"}'`;
   const prompt = `Add Shorthop revenue analytics to this project.
 1. In the <head> of every page add: <script defer src="${origin}/_t/script.js" data-site="${site.id}"></script>
-2. Find where checkouts are created (Stripe, Paddle, Lemon Squeezy, Dodo Payments or Creem). Hosted checkout links on our pages are tagged automatically. Where a checkout is created on the server, read the visit reference in the browser with window.shorthop.ref() and pass it through: Stripe client_reference_id "sh_" + ref; Paddle customData.sh_ref; Lemon Squeezy checkout_data.custom.sh_ref; Dodo and Creem metadata.sh_ref.
+2. Find where checkouts are created (Stripe, Paddle, Lemon Squeezy, Dodo Payments or Creem). Hosted checkout links on our pages are tagged automatically. Where a checkout is created on the server, read the visit reference in the browser with window.shorthop.ref(callback) and pass it through: Stripe client_reference_id "sh_" + ref; Paddle customData.sh_ref; Lemon Squeezy checkout_data.custom.sh_ref; Dodo and Creem metadata.sh_ref. The callback always runs, and gets null when there is no reference (Global Privacy Control, Do Not Track, tracking off): then leave the field out and continue the checkout.
 3. Make the success/return URL carry the provider's id (Stripe: ?session_id={CHECKOUT_SESSION_ID}).
 4. After sign-in call window.shorthop("identify", { email, id }).
 5. Add data-sh-goal="<name>" to signup and pricing buttons.
@@ -478,6 +490,7 @@ ${site.idMode === "consent" ? 'The site counts visitors cookieless until consent
 }
 
 type PersonKind = "email" | "visitorId" | "paymentId";
+type PersonRequest = { email?: string; visitorId?: string; paymentId?: string; include?: PrivacyLinkKind[] };
 const PERSON_KINDS: { value: PersonKind; label: string }[] = [
   { value: "email", label: "Email" },
   { value: "visitorId", label: "Visitor ID" },
@@ -489,6 +502,11 @@ function countsText(c: Partial<PrivacyCountsDTO>): string {
   return [plural(c.identities ?? 0, "identity", "identities"), plural(c.visits ?? 0, "visit"), plural(c.payments ?? 0, "payment"), plural(c.subscriptions ?? 0, "subscription")].join(", ");
 }
 
+const UNPROVEN_LABEL: Record<PrivacyLinkKind, string> = {
+  claimed_email: "Visitors whose browser reported this email",
+  payment_reference: "Visitors tied to these payments by a checkout reference",
+};
+
 /** Customer data retention, and requests from visitors and customers (access, export, erasure). */
 function PrivacySection({ site }: { site: SiteDTO }) {
   const qc = useQueryClient();
@@ -496,9 +514,9 @@ function PrivacySection({ site }: { site: SiteDTO }) {
   const requests = useQuery({ queryKey: requestsKey, queryFn: () => call(api.sites[":id"].privacy.requests.$get({ param: { id: site.id } })) });
   const [kind, setKind] = useState<PersonKind>("email");
   const [value, setValue] = useState("");
-  const [found, setFound] = useState<{ who: Record<string, string>; counts: PrivacyCountsDTO } | null>(null);
+  const [found, setFound] = useState<{ who: PersonRequest; counts: PrivacyCountsDTO } | null>(null);
   const [confirmErase, setConfirmErase] = useState(false);
-  const who = { [kind]: value.trim() };
+  const who: PersonRequest = { [kind]: value.trim() };
 
   const retention = useMutation({
     mutationFn: (months: number | null) => call(api.sites[":id"].$patch({ param: { id: site.id }, json: { customerRetentionMonths: months } })),
@@ -509,18 +527,41 @@ function PrivacySection({ site }: { site: SiteDTO }) {
     onError: (e) => toast.error(e.message),
   });
   const lookup = useMutation({
-    mutationFn: () => call(api.sites[":id"].privacy.lookup.$post({ param: { id: site.id }, json: who })),
-    onSuccess: (counts) => setFound({ who, counts }),
+    mutationFn: (person: PersonRequest) => call(api.sites[":id"].privacy.lookup.$post({ param: { id: site.id }, json: person })),
+    onSuccess: (counts, person) => setFound({ who: person, counts }),
+    onError: (e) => toast.error(e.message),
+  });
+  const toggleLink = (link: PrivacyLinkKind, on: boolean) => {
+    if (!found) return;
+    const rest = (found.who.include ?? []).filter((k) => k !== link);
+    lookup.mutate({ ...found.who, include: on ? [...rest, link] : rest });
+  };
+  const reapply = useMutation({
+    mutationFn: async () => {
+      const total = { identities: 0, visits: 0, payments: 0, subscriptions: 0, unreadable: 0 };
+      let cursor: string | null = null;
+      for (;;) {
+        const step: PrivacyReapplyDTO = await call(api.sites[":id"].privacy.reapply.$post({ param: { id: site.id }, json: { cursor } }));
+        for (const k of ["identities", "visits", "payments", "subscriptions"] as const) total[k] += step.erased[k];
+        total.unreadable = Math.max(total.unreadable, step.unreadable);
+        if (step.done) return total;
+        cursor = step.cursor;
+      }
+    },
+    onSuccess: (t) => {
+      void qc.invalidateQueries({ queryKey: ["sites", site.id] });
+      toast.success(`Erased again: ${countsText(t)}`, { description: t.unreadable ? `${plural(t.unreadable, "entry", "entries")} couldn't be read: they were made with a SESSION_SECRET or ENCRYPTION_KEY this install doesn't have.` : undefined, duration: 15_000 });
+    },
     onError: (e) => toast.error(e.message),
   });
   const exportJson = useMutation({
-    mutationFn: (person: Record<string, string>) =>
+    mutationFn: (person: PersonRequest) =>
       downloadFile(`/_admin/api/sites/${site.id}/privacy/export`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(person) }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: requestsKey }),
     onError: (e) => toast.error(e.message),
   });
   const erase = useMutation({
-    mutationFn: (person: Record<string, string>) => call(api.sites[":id"].privacy.erase.$post({ param: { id: site.id }, json: { ...person, confirm: true } })),
+    mutationFn: (person: PersonRequest) => call(api.sites[":id"].privacy.erase.$post({ param: { id: site.id }, json: { ...person, confirm: true } })),
     onSuccess: (res) => {
       setConfirmErase(false);
       setFound(null);
@@ -532,9 +573,9 @@ function PrivacySection({ site }: { site: SiteDTO }) {
   });
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    if (value.trim()) lookup.mutate();
+    if (value.trim()) lookup.mutate(who);
   };
-  const empty = found && !found.counts.identities && !found.counts.visits && !found.counts.payments && !found.counts.subscriptions;
+  const empty = found && !found.counts.identities && !found.counts.visits && !found.counts.payments && !found.counts.subscriptions && !found.counts.unproven?.length;
   const kindLabel = PERSON_KINDS.find((k) => k.value === kind)!.label;
 
   return (
@@ -544,7 +585,7 @@ function PrivacySection({ site }: { site: SiteDTO }) {
           id="privacy-retention"
           className="sitepage-narrow"
           label="Customer data retention"
-          hint="After this, payments lose the customer’s email, customer ID and visitor; amounts stay, so revenue reports still add up. Your payment provider remains the accounting record."
+          hint="After this, payments lose the customer’s email, customer ID and visitor, and visits are deleted a batch a day. A visit a payment is credited to stays as its source, campaign, short link and day only, so revenue by source still adds up. Your payment provider remains the accounting record."
           value={site.customerRetentionMonths === null ? "" : String(site.customerRetentionMonths)}
           disabled={retention.isPending}
           onChange={(e) => retention.mutate(e.target.value ? Number(e.target.value) : null)}
@@ -583,6 +624,23 @@ function PrivacySection({ site }: { site: SiteDTO }) {
           {found ? (
             <div className="sitepage-found" role="status">
               <p>{empty ? "Nothing recorded for them on this site." : `Found ${countsText(found.counts)}${found.counts.activeSubscriptions ? ` (${found.counts.activeSubscriptions} active)` : ""}.`}</p>
+              {found.counts.unproven?.length ? (
+                <div className="sitepage-stack">
+                  <p className="sitepage-note">Not proven to be this person: a browser could have sent these. They are left out unless you include them, so check first.</p>
+                  {found.counts.unproven.map((u) => (
+                    <Checkbox
+                      key={u.kind}
+                      id={`privacy-link-${u.kind}`}
+                      checked={u.included}
+                      disabled={lookup.isPending}
+                      onCheckedChange={(on) => toggleLink(u.kind, on)}
+                      label={UNPROVEN_LABEL[u.kind]}
+                      description={`${plural(u.identities, "identity", "identities")}, ${plural(u.visits, "visit")}`}
+                    />
+                  ))}
+                </div>
+              ) : null}
+              {found.counts.otherPayments ? <p className="sitepage-note">{plural(found.counts.otherPayments, "payment")} matched to these visitors without proof of who paid {found.counts.otherPayments === 1 ? "is" : "are"} left out. To include them, look up the customer by email or payment ID.</p> : null}
               {empty ? null : (
                 <div className="sitepage-row-wrap">
                   <Button icon={Download} onClick={() => exportJson.mutate(found.who)} loading={exportJson.isPending}>
@@ -595,14 +653,23 @@ function PrivacySection({ site }: { site: SiteDTO }) {
               )}
             </div>
           ) : null}
-          <p className="sitepage-note">The export has everything stored here. Single page views stay in Cloudflare Analytics Engine, without a name, for about 90 days.</p>
+          <p className="sitepage-note">The export holds what is stored here for them and lists what it leaves out. Single page views stay in Cloudflare Analytics Engine, without a name, for about 90 days.</p>
         </form>
+        <div className="sitepage-group">
+          <h3 className="sitepage-h3">After restoring a backup</h3>
+          <p className="sitepage-note">A restored backup can bring back people you erased. This finds them from the erasure ledger and erases them again.</p>
+          <div>
+            <Button icon={RotateCcw} loading={reapply.isPending} onClick={() => reapply.mutate()}>
+              Re-apply erasures
+            </Button>
+          </div>
+        </div>
         <Dialog
           open={confirmErase && Boolean(found)}
           onOpenChange={setConfirmErase}
           size="sm"
           title={found ? `Erase ${countsText(found.counts)}?` : "Erase?"}
-          description="Their visits and identity are deleted, and their payments keep only the amount and date. This can’t be undone."
+          description="Their visits and identity are deleted, and their payments keep only the amount and date. Anything you didn’t include above stays. This can’t be undone."
           footer={
             <>
               <Button onClick={() => setConfirmErase(false)}>Cancel</Button>

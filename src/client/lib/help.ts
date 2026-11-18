@@ -19,6 +19,9 @@ function duration(sec: number): string {
   return `${n} ${unit}${n === 1 ? "" : "s"}`;
 }
 
+/** Shown when a change is meant to stop visitors: it isn't instant, and people should know. */
+export const STOP_DELAY_NOTE = "Not instant: for a minute or two, some visitors can still reach the destination through Cloudflare's cached copy.";
+
 export const LINK_HELP = {
   domain: h(
     "Domain",
@@ -27,7 +30,7 @@ export const LINK_HELP = {
   ),
   target: h(
     "Destination URL",
-    "Where visitors end up. It must start with https:// (links imported from another shortener may keep http://); an address typed without it, such as example.com/page, gets https:// added. It can't contain a username or password, can't point back at one of your short domains, and can be up to 2,048 characters. Changes reach every Cloudflare location within about a minute.",
+    "Where visitors end up. It must start with https:// (a link imported with http:// by an earlier version keeps it until you change it); an address typed without it, such as example.com/page, gets https:// added. It can't contain a username or password, can't point back at one of your short domains, and can be up to 2,048 characters. Changes reach every Cloudflare location within about a minute.",
     "https://example.com/guide",
   ),
   slug: h(
@@ -82,7 +85,7 @@ export const LINK_HELP = {
   ),
   passQuery: h(
     "Pass query parameters through",
-    "Forwards extra ?parameters from the short link to the destination, unchanged and in order. Two are kept by Shorthop for its stats and never forwarded: s (source tag) and q=1 (QR scan). When this is off, extra parameters are dropped. A parameter that's already in the destination is sent twice.",
+    "Forwards extra ?parameters from the short link to the destination, unchanged and in order. Two are kept by Shorthop for its stats and never forwarded: s (source tag) and q=1 (QR scan). When this is off, extra parameters are dropped. A parameter that's already in the destination keeps the destination's value. Anyone opening the link can add others, so the destination shouldn't trust them. On a hosted checkout, a visitor can't set the checkout reference.",
     "sh.example/guide?ref=post → …/guide?ref=post",
   ),
 } satisfies Record<string, Help>;
@@ -90,7 +93,7 @@ export const LINK_HELP = {
 export const SETTINGS_HELP = {
   webhooks: h(
     "Webhooks",
-    "Each event is a POST with a JSON body: id, type, created_at, api_version and data. Link events carry the link (never its password); updates also list the fields that changed. Requests are signed with X-Shorthop-Signature (HMAC-SHA256 of t.body with the webhook's secret), carry X-Shorthop-Event and X-Shorthop-Delivery, and must be answered with a 2xx within 10 seconds. Redirects aren't followed. A failed delivery is retried after 30 minutes, then 2, 6, 12 and 24 hours; changes you make are sent at once, while destination alerts, milestones and retries go out with the half-hourly checks. A delivery can arrive twice, so use X-Shorthop-Delivery to ignore repeats.",
+    "Each event is a POST with a JSON body: id, type, created_at, api_version and data. Link events carry the link (never its password); updates also list the fields that changed. Where a password-protected link goes takes Edit links: without it the delivery log hides it, and a webhook whose address was set without it isn't sent it. Requests are signed with X-Shorthop-Signature (HMAC-SHA256 of t.body with the webhook's secret), carry X-Shorthop-Event and X-Shorthop-Delivery, and must be answered with a 2xx within 10 seconds. Redirects aren't followed. A failed delivery is retried after 30 minutes, then 2, 6, 12 and 24 hours; changes you make are sent at once, while destination alerts, milestones and retries go out with the half-hourly checks. A delivery can arrive twice, so use X-Shorthop-Delivery to ignore repeats.",
   ),
   domains: h(
     "Short domains",
@@ -124,7 +127,7 @@ export const SETTINGS_HELP = {
   ),
   api: h(
     "API and iOS Shortcut",
-    "Scripts, tools and the Shortcut use the API with a key, not your browser session. Create a personal key under API keys: it's shown once, can only do what you allow (and never more than you can), and stops working when it's revoked, when it expires or when you lose access. An older API_TOKEN secret also works: by default it can read and create links but not change or delete them (API_TOKEN_SCOPE=\"full\" in wrangler.jsonc allows that). After 10 wrong keys in a minute, a network is refused for a while. Add ?format=text to get only the short URL, and \"domain\" in the JSON body to use another short domain.",
+    "Scripts, tools and the Shortcut use the API with a key, not your browser session. Create a personal key under API keys: it's shown once, can only do what you allow (and never more than you can), and stops working when it's revoked, when it expires or when you lose access. An older API_TOKEN secret also works: by default it can read links and statistics and create links, but not change or delete them or read webhooks, shares or customer data (API_TOKEN_SCOPE=\"full\" in wrangler.jsonc allows that). After 10 wrong keys in a minute, a network is refused for a while. Add ?format=text to get only the short URL, and \"domain\" in the JSON body to use another short domain.",
   ),
   apiKeys: h(
     "Personal API keys",
@@ -132,11 +135,11 @@ export const SETTINGS_HELP = {
   ),
   people: h(
     "People and roles",
-    "Owners are set in ADMIN_EMAIL (wrangler.jsonc) and can do everything; they can't be changed here. Admins can do everything too, including adding admins. Managers add, change and remove users, and can only give permissions they have themselves. Users view and copy links, plus what's ticked for them. Changes apply on their next click. Pausing someone stops their sign-in and API keys until a date or until resumed, and keeps everything. Removing someone ends their sessions and API keys at once, but also take them out of your Cloudflare Access policy. People are told apart by their Access email, so with ADMIN_AUTH set to \"password\" there are only owners.",
+    "Owners are set in ADMIN_EMAIL (wrangler.jsonc) and can do everything; they can't be changed here. Admins can do everything too, including adding admins. Managers add, change and remove users, and can only give permissions they have themselves. Users get what's ticked for them, and any tick also lets them view and copy links; with nothing ticked they see no links. Changes apply on their next click. Pausing someone stops their sign-in and API keys until a date or until resumed, and keeps everything. Removing someone ends their sessions and API keys at once, but also take them out of your Cloudflare Access policy. People are told apart by their Access email, so with ADMIN_AUTH set to \"password\" there are only owners.",
   ),
   botCheck: h(
     "Bot check",
-    "Cloudflare Turnstile asks visitors of the login, forgot-password, invite and reset pages to pass a quick, usually invisible check before their attempt counts. It's off by default because Cloudflare Access already decides who reaches those pages; with password-only sign-in, where anyone can reach the login page, it's worth turning on. It turns on only after a test with your site key and TURNSTILE_SECRET passes. If Cloudflare can't be reached, logins still work (the lockouts still apply). Emergency off: npx wrangler d1 execute DB --remote --command \"DELETE FROM settings WHERE key = 'turnstile'\"",
+    "Cloudflare Turnstile asks visitors of the login and forgot-password pages to pass a quick, usually invisible check before their attempt counts. It's off by default because Cloudflare Access already decides who reaches those pages; with password-only sign-in, where anyone can reach the login page, it's worth turning on. It turns on only after a test with your site key and TURNSTILE_SECRET passes. If Cloudflare can't be reached, logins still work (the lockouts still apply). Emergency off: npx wrangler d1 execute DB --remote --command \"DELETE FROM settings WHERE key = 'turnstile'\"",
   ),
   security: h(
     "Security",

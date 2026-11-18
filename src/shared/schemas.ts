@@ -163,6 +163,13 @@ export const updateLinkSchema = z.object({
   replacement: z.object({ domain: z.string().regex(HOSTNAME_RE), slug: z.string().regex(IMPORT_SLUG_RE) }).nullish(),
   /** Where visitors go while the link is off: "home" (the main site), another link, or null for the not-found page. */
   offRedirect: z.union([z.literal("home"), z.object({ domain: z.string().regex(HOSTNAME_RE), slug: z.string().regex(IMPORT_SLUG_RE) })]).nullish(),
+  /** The link's `version` this edit is based on: a link changed since answers 409. Without it, only the fields sent change. */
+  version: z.string().min(1).max(64).optional(),
+});
+
+/** Restoring a version: "keep" (the default) leaves the link's password as it is now; "version" takes the version's, set or none. */
+export const restoreVersionQuerySchema = z.object({
+  password: z.enum(["keep", "version"]).default("keep"),
 });
 
 /** A link's full settings in another workspace's JSON export (GET /export/links.json); never a password. */
@@ -177,6 +184,16 @@ export const importConfigSchema = z.object({
   preview: previewSchema.optional(),
   qr: z.record(z.string(), z.unknown()).nullish(),
   maxClicks: z.number().int().min(1).max(MAX_CLICK_LIMIT).nullish(),
+  // From 2.0.3. A file without these leaves them alone when it overwrites a link.
+  /** A link-in-bio page, checked row by row (validateBio), so one bad page doesn't refuse the whole batch. */
+  bio: z.record(z.string(), z.unknown()).nullish(),
+  broken: z.boolean().optional(),
+  replacement: z.object({ domain: z.string().regex(HOSTNAME_RE), slug: z.string().regex(IMPORT_SLUG_RE) }).nullish(),
+  offRedirect: z.union([z.literal("home"), z.object({ domain: z.string().regex(HOSTNAME_RE), slug: z.string().regex(IMPORT_SLUG_RE) })]).nullish(),
+  monitor: z.boolean().optional(),
+  neverCheck: z.boolean().optional(),
+  /** The link had a password. It isn't in the file, so the imported link starts turned off. */
+  passwordProtected: z.boolean().optional(),
 });
 
 export const importRowSchema = z.object({

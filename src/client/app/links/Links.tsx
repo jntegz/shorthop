@@ -19,6 +19,7 @@ import { DeletedLinks } from "./Deleted";
 import { LinkForm } from "../../components/LinkForm";
 import { TagManager } from "../../components/TagManager";
 import { fullNum, hostOf } from "../../lib/format";
+import { STOP_DELAY_NOTE } from "../../lib/help";
 import { linkKey, linkPath, linkState, useDomains, useLinkLabel } from "../../lib/links";
 import { useCan } from "../../lib/me";
 import { PAGE_SIZES, pageOf, parsePageSize, savedPageSize, savePageSize, sortRows, type PageSize, type SortDir } from "../../lib/table";
@@ -190,6 +191,7 @@ export function LinksPage() {
     onSuccess: ({ link }) => {
       // The list offers undo instead of a confirmation.
       toast.success(link.active ? `${label(link)} enabled` : `${label(link)} disabled`, {
+        ...(link.active ? {} : { description: STOP_DELAY_NOTE }),
         action: { label: "Undo", onClick: () => toggle.mutate({ domain: link.domain, slug: link.slug, active: link.active }) },
       });
       void qc.invalidateQueries({ queryKey: keys.allLinks });
@@ -561,6 +563,7 @@ export function LinksPage() {
           }}
           initialTarget={prefill?.url}
           initialTitle={prefill?.title}
+          prefilledFromLink={Boolean(prefill)}
           asBio={bios && !prefill}
           onSaved={(l) => navigate(linkPath(l))}
         />

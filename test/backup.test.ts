@@ -30,7 +30,7 @@ describe("what a backup holds", () => {
   });
 
   it("lists every secret-looking column as secret, personal or known safe", async () => {
-    const known = new Set(["preview_images.key", "settings.key", "api_keys.id", "payments.order_ref", "payments.ref", "link_clicks.ref", "payment_connections.webhook_secret_ref", "payment_connections.api_key_ref"]);
+    const known = new Set(["preview_images.key", "settings.key", "api_keys.id", "payments.order_ref", "payments.ref", "link_clicks.ref", "payment_connections.webhook_secret_ref", "payment_connections.api_key_ref", "webhooks.key_id", "webhooks.key_revoked_at", "erasure_ledger.hash", "erasure_ledger.key_id", "links.rev", "links.cap_since"]);
     const s = await schema();
     const missing: string[] = [];
     for (const table of BACKUP_TABLE_NAMES) {

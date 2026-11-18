@@ -268,7 +268,7 @@ describe("statistics without the permission", () => {
   });
 
   it("hides a capped link's count and imported clicks without See statistics", async () => {
-    await addUser(VIEWER);
+    await addUser(VIEWER, "user", ["links.create"]);
     await addUser(STATS, "user", ["stats.view"]);
     expect((await call(`${API}/import`, json({ rows: [{ slug: "old", target: "https://example.com/old", clicks: 1234 }] }))).status).toBe(200);
     expect((await call(`${API}/links/sh.example/old`, { ...json({ maxClicks: 5 }), method: "PATCH" })).status).toBe(200);
@@ -285,7 +285,7 @@ describe("statistics without the permission", () => {
       expect(await (await adminCall(VIEWER, path)).text(), path).not.toContain("1234");
       expect(await (await adminCall(STATS, path)).text(), path).toContain("1234");
     }
-    const { auth } = await addKey("owner@example.com", []);
+    const { auth } = await addKey("owner@example.com", ["links.create"]);
     expect(await (await call(`${API}/export/links.json`, { headers: auth })).text()).not.toContain("1234");
   });
 });

@@ -177,10 +177,12 @@ function Payments({ settings }: { settings: ReactNode }) {
         <p>Stripe Payment Links, Lemon Squeezy, Dodo, Creem and Gumroad links on your pages, and Paddle.js and FastSpring checkouts, are tagged by the script automatically. Nothing to change.</p>
         <h3 className="sitepage-h3">Checkouts your server creates</h3>
         <p>Read the visit reference in the browser with <C>shorthop.ref()</C>, send it to your server, and put it in the checkout’s metadata. Settings and setup shows the exact field for each provider.</p>
-        <Code label="checkout example">{`const res = await fetch("/api/checkout", {
+        <p>The reference can be <C>null</C>: the browser sends Global Privacy Control or Do Not Track, tracking is off, or the page has only just loaded. <C>shorthop.ref(callback)</C> waits for it (up to 3 seconds) and always calls back, with <C>null</C> if there is none. Carry on with the checkout and leave the field out.</p>
+        <Code label="checkout example">{`const ref = await new Promise((done) => (window.shorthop ? window.shorthop.ref(done) : done(null)));
+const res = await fetch("/api/checkout", {
   method: "POST",
   headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ plan: "pro", ref: window.shorthop?.ref() }),
+  body: JSON.stringify({ plan: "pro", ...(ref ? { ref } : {}) }),
 });`}</Code>
         <h3 className="sitepage-h3">The page after payment</h3>
         <p>Let the return URL carry the provider’s id, for example Stripe’s <C>?session_id={"{CHECKOUT_SESSION_ID}"}</C>. The script reports it, which matches payments the reference couldn’t.</p>
@@ -219,7 +221,7 @@ function Visitors({ site, settings }: { site: SiteDTO; settings: ReactNode }) {
         <p>
           No consent banner of your own? Add <C>data-consent-banner</C> to the script tag and it asks with a small Accept / Decline bar (<C>data-consent-text="…"</C> changes the sentence). The choice is remembered, and a “Cookie settings” link calling <C>shorthop("consent-settings")</C> shows the bar again so visitors can change it. Visitors can also see or clear what’s kept, <C>sh_consent</C> and <C>sh_vid</C>, in their browser’s site data for your domain.
         </p>
-        <p>Visitors who send Global Privacy Control or Do Not Track are counted cookieless when “Respect Global Privacy Control” is on in {settings}.</p>
+        <p>Visitors who send Global Privacy Control or Do Not Track are counted cookieless when “Respect Global Privacy Control” is on in {settings}. Whatever that setting says, <C>shorthop("identify")</C> from their browser is ignored and they get no checkout reference, so their payments are matched only by what your server reports.</p>
         <p>
           Every mode records the same about a visit: the pages, where it came from, approximate location (country, region, city, continent and time zone) and the network’s operator as Cloudflare reports them, device, browser, language, screen size class, reading time, scroll depth and page speed. No IP address is stored. Mention these in your site’s privacy notice.
         </p>

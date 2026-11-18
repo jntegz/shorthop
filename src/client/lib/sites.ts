@@ -128,13 +128,14 @@ export function matchLabel(by: string | null): string {
 
 /** What a match's confidence means, for its tooltip. */
 const CONFIDENCE_MEANING: Record<string, string> = {
-  high: "High confidence: the provider's own data ties this payment to the visit.",
+  high: "High confidence that this visit led to the payment: a reference or a provider's event ties them together.",
   medium: "Medium confidence: matched by an email your server reported for this visitor.",
-  low: "Low confidence: an educated guess (an email the browser reported, or the only visit that went to checkout shortly before). Anyone can send browser events, so treat it as likely, not certain.",
+  low: "Low confidence: an educated guess (a payment id or email the browser reported, or the only visit that went to checkout shortly before). Anyone can send browser events, so treat it as likely, not certain.",
 };
 
-export function confidenceMeaning(confidence: string | null): string {
-  return CONFIDENCE_MEANING[confidence ?? "low"] ?? CONFIDENCE_MEANING.low!;
+export function confidenceMeaning(confidence: string | null, provesIdentity = false): string {
+  const meaning = CONFIDENCE_MEANING[confidence ?? "low"] ?? CONFIDENCE_MEANING.low!;
+  return provesIdentity ? meaning : `${meaning} It credits the visit but doesn't show who paid: anyone can put a reference on a checkout address.`;
 }
 
 /** The browser's own zone, a sensible default for a new site. */

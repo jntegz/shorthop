@@ -25,7 +25,7 @@ import {
   updateShareSchema,
   utmPresetSchema,
 } from "../shared/schemas";
-import { apiIdentifySchema, apiPaymentSchema, breakdownQuerySchema, createSiteSchema, eventListQuerySchema, funnelSchema, goalPropsQuerySchema, paymentsQuerySchema, peakQuerySchema, siteQuerySchema, updateSiteSchema } from "../shared/sites";
+import { apiIdentifySchema, apiPaymentSchema, breakdownQuerySchema, createSiteSchema, eventListQuerySchema, funnelSchema, goalPropsQuerySchema, paymentsQuerySchema, paymentsSearchSchema, peakQuerySchema, siteQuerySchema, updateSiteSchema } from "../shared/sites";
 import { RULES } from "./permissions";
 
 interface Route {
@@ -44,11 +44,11 @@ export const CATALOG: Record<string, Route> = {
   "GET /links": { tag: "Links", summary: "List links with clicks in a period (up to 5,000)", query: listQuerySchema },
   "POST /links": { tag: "Links", summary: "Create a link (target or url is required). ?format=text returns just the short URL.", body: createLinkSchema },
   "GET /links/:domain/:slug": { tag: "Links", summary: "One link with all its settings" },
-  "PATCH /links/:domain/:slug": { tag: "Links", summary: "Change any of a link's settings; only the fields sent change", body: updateLinkSchema },
+  "PATCH /links/:domain/:slug": { tag: "Links", summary: "Change any of a link's settings; only the fields sent change. Send the link's `version` to get a 409 instead of editing a newer state", body: updateLinkSchema },
   "DELETE /links/:domain/:slug": { tag: "Links", summary: "Delete a link (restorable for 90 days)" },
   "GET /links/:domain/:slug/dependents": { tag: "Links", summary: "Links that send their visitors to this one" },
   "GET /links/:domain/:slug/history": { tag: "Links", summary: "A link's saved versions" },
-  "POST /links/:domain/:slug/history/:id/restore": { tag: "Links", summary: "Put a link back the way it was in a version" },
+  "POST /links/:domain/:slug/history/:id/restore": { tag: "Links", summary: "Put a link back the way it was in a version. Its password stays as it is now unless you add ?password=version" },
   "GET /links/:domain/:slug/cap": { tag: "Links", summary: "A capped link's click counter (the count needs stats.view; without it only the limit)" },
   "POST /links/:domain/:slug/cap/reset": { tag: "Links", summary: "Start a capped link's count again" },
   "GET /links/by-target": { tag: "Links", summary: "Links that already go to a destination", query: byTargetQuerySchema },
@@ -58,7 +58,7 @@ export const CATALOG: Record<string, Route> = {
   "GET /tags": { tag: "Links", summary: "Tags, with how many links have each" },
   "POST /tags/rename": { tag: "Links", summary: "Rename a tag on every link, or merge it into another", body: tagRenameSchema },
   "DELETE /tags/:tag": { tag: "Links", summary: "Remove a tag from every link" },
-  "POST /import": { tag: "Links", summary: "Import links (20 rows per request on Workers Free, 100 on Paid)", body: importSchema },
+  "POST /import": { tag: "Links", summary: "Import links (20 rows per request on Workers Free, 100 on Paid). Destinations must be https://; other rows are refused one by one", body: importSchema },
   "POST /resync": { tag: "Links", summary: "Republish links to the edge, a page at a time; call again with next until it is null" },
   "GET /export/links.csv": { tag: "Links", summary: "Links as CSV, optionally filtered", query: exportQuerySchema, produces: "text/csv" },
   "GET /export/links.json": { tag: "Links", summary: "Every link with its settings, as import rows (never passwords; click counts need stats.view)" },
@@ -105,12 +105,12 @@ export const CATALOG: Record<string, Route> = {
   "GET /qr/default": { tag: "Tools", summary: "The default QR code design" },
   "PUT /qr/default": { tag: "Tools", summary: "Set the default QR code design" },
   "GET /webhooks": { tag: "Webhooks", summary: "Webhooks and their delivery status" },
-  "POST /webhooks": { tag: "Webhooks", summary: "Add a webhook (site.payment needs revenue.view; link.clicked, link.milestone and site.traffic_spike need stats.view; link.health_changed needs health.manage)" },
-  "PUT /webhooks/:id": { tag: "Webhooks", summary: "Change a webhook (needs the permissions of the events it has, of deliveries still waiting, and of those it gets)" },
+  "POST /webhooks": { tag: "Webhooks", summary: "Add a webhook; fields is full (the default) or minimal, which leaves out customer emails and visit details (site.payment needs revenue.view; link.clicked, link.milestone and site.traffic_spike need stats.view; link.health_changed needs health.manage). Without links.edit, the webhook isn't sent where password-protected links go" },
+  "PUT /webhooks/:id": { tag: "Webhooks", summary: "Change a webhook (needs the permissions of the events it has, of deliveries still waiting, and of those it gets). Changing the address without links.edit stops it receiving where password-protected links go; saving with links.edit lifts that" },
   "POST /webhooks/:id/rotate": { tag: "Webhooks", summary: "Make a new signing secret (needs the permissions of the webhook's events)" },
   "DELETE /webhooks/:id": { tag: "Webhooks", summary: "Delete a webhook" },
   "POST /webhooks/:id/test": { tag: "Webhooks", summary: "Send a test event" },
-  "GET /webhooks/:id/deliveries": { tag: "Webhooks", summary: "The last deliveries (only of events you may see)" },
+  "GET /webhooks/:id/deliveries": { tag: "Webhooks", summary: "The last deliveries (only of events you may see; without links.edit, payloads leave out where password-protected links go)" },
   "POST /webhooks/deliveries/:delivery/redeliver": { tag: "Webhooks", summary: "Send a delivery again (needs the permission of its event)" },
   "POST /mcp": { tag: "AI assistants", summary: "Model Context Protocol server (JSON-RPC): tools to create links and read statistics" },
 
@@ -133,6 +133,8 @@ export const CATALOG: Record<string, Route> = {
   "GET /sites/:id/install-status": { tag: "Websites", summary: "Whether the tracker is sending visits" },
   "GET /sites/:id/payments": { tag: "Revenue", summary: "Payments and the visits they were matched to", query: paymentsQuerySchema },
   "GET /sites/:id/payments.csv": { tag: "Revenue", summary: "Payments as CSV", query: paymentsQuerySchema, produces: "text/csv" },
+  "POST /sites/:id/payments/search": { tag: "Revenue", summary: "Search payments by part of an email, customer id or payment id (the term goes in the body, not the URL)", body: paymentsSearchSchema },
+  "POST /sites/:id/payments/search.csv": { tag: "Revenue", summary: "A payments search as CSV", body: paymentsSearchSchema, produces: "text/csv" },
   "GET /sites/:id/subscriptions": { tag: "Revenue", summary: "MRR, new subscriptions and churn", query: siteQuerySchema },
   "GET /sites/:id/visitors/:visitor": { tag: "Revenue", summary: "One visitor's visits and payments" },
   "POST /sites/:id/rematch": { tag: "Revenue", summary: "Try matching unmatched payments again" },
@@ -185,12 +187,14 @@ export const INTERNAL = new Set([
   "POST /users/:email/pause",
   "POST /users/:email/resume",
   "POST /users/:email/sign-out",
+  "POST /users/:email/revoke-keys",
   "GET /keys",
   "POST /keys",
   "DELETE /keys/:id",
   "POST /sites/:id/privacy/lookup",
   "POST /sites/:id/privacy/export",
   "POST /sites/:id/privacy/erase",
+  "POST /sites/:id/privacy/reapply",
   "GET /sites/:id/privacy/requests",
   "GET /sites/:id/connections",
   "POST /sites/:id/connections",
@@ -217,6 +221,8 @@ function permissionText(key: string): string {
   const text =
     need === "signed-in"
       ? "any key"
+      : need === "links.read"
+        ? "any permission"
       : typeof need === "string"
         ? need
         : "any" in need

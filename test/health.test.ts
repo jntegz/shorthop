@@ -4,6 +4,7 @@ import { addDays, utcDate } from "../src/shared/dates";
 import { formatPasswordHash } from "../src/shared/password";
 import { checkAndAlert, recordJob, systemHealth } from "../src/worker/health";
 import { API, bearer, call, resetData } from "./helpers";
+import { adminCall } from "./people";
 
 let fetchMock: ReturnType<typeof vi.fn>;
 
@@ -31,6 +32,7 @@ const healthy = {
   ADMIN_PASSWORD_HASH: formatPasswordHash({ iterations: 100_000, salt: new Uint8Array(32), hash: new Uint8Array(32) }),
   DIGEST_PROVIDER: "resend",
   DIGEST_API_KEY: "re_key",
+  WORKERS_DEV_ADMIN: "off",
 } as unknown as Env;
 const statusOf = async (e: Env, id: string) => (await systemHealth(e, NOON)).checks.find((c) => c.id === id)?.status;
 
@@ -115,7 +117,7 @@ describe("system status", () => {
   it("forgets old digest and alert failures when the mail setup changes", async () => {
     await recordJob(env.DB, "alert", false, "HTTP 401: bad key");
     await recordJob(env.DB, "digest", false, "HTTP 401: bad key");
-    const res = await call(`${API}/settings/mail`, { method: "PUT", headers: { ...bearer, "Content-Type": "application/json" }, body: JSON.stringify({ provider: "resend", from: "digest@example.com" }) });
+    const res = await adminCall("", "/settings/mail", { method: "PUT", body: { provider: "resend", from: "digest@example.com" } });
     expect(res.status).toBe(200);
     const h = await systemHealth(healthy, NOON);
     expect(h.checks.find((c) => c.id === "alert")).toBeUndefined();

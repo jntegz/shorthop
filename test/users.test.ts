@@ -84,7 +84,7 @@ describe("people", () => {
     expect((await adminCall("ben@example.com", "/me")).status).toBe(200);
     const created = await adminCall("ben@example.com", "/keys", { body: { name: "Script" } });
     const { secret } = await created.json<{ secret: string }>();
-    expect((await call(`${API}/links`, { headers: { Authorization: `Bearer ${secret}` } })).status).toBe(200);
+    expect((await call(`${API}/me`, { headers: { Authorization: `Bearer ${secret}` } })).status).toBe(200);
 
     const removed = await adminCall("", "/users/ben%40example.com", { method: "DELETE" });
     expect(await removed.json()).toEqual({ removed: true, keysRevoked: 1 });
@@ -225,7 +225,7 @@ describe("pausing and signing out", () => {
 
     expect((await adminCall("", "/users/ben%40example.com/resume", { method: "POST" })).status).toBe(200);
     expect((await adminCall("ben@example.com", "/me")).status).toBe(200);
-    expect((await call(`${API}/links`, key)).status).toBe(200);
+    expect((await call(`${API}/me`, key)).status).toBe(200);
     expect((await status("ben@example.com"))?.status).toBe("active");
   });
 

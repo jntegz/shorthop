@@ -12,27 +12,27 @@ Generated from the server's own catalog (`scripts/skill-reference.ts`). Base URL
 
 | Endpoint | What it does | Permission |
 |---|---|---|
-| `GET /links` | List links with clicks in a period (up to 5,000) | any key |
+| `GET /links` | List links with clicks in a period (up to 5,000) | any permission |
 | `POST /links` | Create a link (target or url is required). ?format=text returns just the short URL. | links.create |
-| `GET /links/{domain}/{slug}` | One link with all its settings | any key |
-| `PATCH /links/{domain}/{slug}` | Change any of a link's settings; only the fields sent change | links.edit |
+| `GET /links/{domain}/{slug}` | One link with all its settings | any permission |
+| `PATCH /links/{domain}/{slug}` | Change any of a link's settings; only the fields sent change. Send the link's `version` to get a 409 instead of editing a newer state | links.edit |
 | `DELETE /links/{domain}/{slug}` | Delete a link (restorable for 90 days) | links.delete |
-| `GET /links/{domain}/{slug}/dependents` | Links that send their visitors to this one | any key |
-| `GET /links/{domain}/{slug}/history` | A link's saved versions | any key |
-| `POST /links/{domain}/{slug}/history/{id}/restore` | Put a link back the way it was in a version | links.edit |
-| `GET /links/{domain}/{slug}/cap` | A capped link's click counter (the count needs stats.view; without it only the limit) | any key |
+| `GET /links/{domain}/{slug}/dependents` | Links that send their visitors to this one | any permission |
+| `GET /links/{domain}/{slug}/history` | A link's saved versions | any permission |
+| `POST /links/{domain}/{slug}/history/{id}/restore` | Put a link back the way it was in a version. Its password stays as it is now unless you add ?password=version | links.edit |
+| `GET /links/{domain}/{slug}/cap` | A capped link's click counter (the count needs stats.view; without it only the limit) | any permission |
 | `POST /links/{domain}/{slug}/cap/reset` | Start a capped link's count again | links.edit |
-| `GET /links/by-target` | Links that already go to a destination | any key |
+| `GET /links/by-target` | Links that already go to a destination | any permission |
 | `POST /links/bulk` | Enable, disable, tag, untag or delete many links (20 per request on Workers Free, 100 on Paid) | links.edit or links.delete |
-| `GET /deleted` | Recently deleted links | any key |
+| `GET /deleted` | Recently deleted links | any permission |
 | `POST /deleted/{domain}/{slug}/restore` | Restore a deleted link | links.delete |
-| `GET /tags` | Tags, with how many links have each | any key |
+| `GET /tags` | Tags, with how many links have each | any permission |
 | `POST /tags/rename` | Rename a tag on every link, or merge it into another | links.edit |
 | `DELETE /tags/{tag}` | Remove a tag from every link | links.edit |
-| `POST /import` | Import links (20 rows per request on Workers Free, 100 on Paid) | links.create |
+| `POST /import` | Import links (20 rows per request on Workers Free, 100 on Paid). Destinations must be https://; other rows are refused one by one | links.create |
 | `POST /resync` | Republish links to the edge, a page at a time; call again with next until it is null | links.edit or settings.manage |
-| `GET /export/links.csv` | Links as CSV, optionally filtered | any key |
-| `GET /export/links.json` | Every link with its settings, as import rows (never passwords; click counts need stats.view) | any key |
+| `GET /export/links.csv` | Links as CSV, optionally filtered | any permission |
+| `GET /export/links.json` | Every link with its settings, as import rows (never passwords; click counts need stats.view) | any permission |
 
 ## Sharing
 
@@ -75,7 +75,7 @@ Generated from the server's own catalog (`scripts/skill-reference.ts`). Base URL
 | `PUT /checks/settings` | Turn checks on or off, and how often | settings.manage |
 | `POST /checks/recheck` | Check destinations with problems now | health.manage |
 | `PUT /checks/confirmed` | Say a destination that refuses checks works, or take that back | health.manage |
-| `GET /checks/links/{domain}/{slug}` | One link's destination checks | any key |
+| `GET /checks/links/{domain}/{slug}` | One link's destination checks | any permission |
 | `POST /checks/links/{domain}/{slug}` | Check one link's destinations now | health.manage |
 
 ## Tools
@@ -98,7 +98,7 @@ Generated from the server's own catalog (`scripts/skill-reference.ts`). Base URL
 | Endpoint | What it does | Permission |
 |---|---|---|
 | `GET /webhooks` | Webhooks and their delivery status | settings.manage |
-| `POST /webhooks` | Add a webhook (site.payment needs revenue.view; link.clicked, link.milestone and site.traffic_spike need stats.view; link.health_changed needs health.manage) | settings.manage |
+| `POST /webhooks` | Add a webhook; fields is full (the default) or minimal, which leaves out customer emails and visit details (site.payment needs revenue.view; link.clicked, link.milestone and site.traffic_spike need stats.view; link.health_changed needs health.manage) | settings.manage |
 | `PUT /webhooks/{id}` | Change a webhook (needs the permissions of the events it has, of deliveries still waiting, and of those it gets) | settings.manage |
 | `POST /webhooks/{id}/rotate` | Make a new signing secret (needs the permissions of the webhook's events) | settings.manage |
 | `DELETE /webhooks/{id}` | Delete a webhook | settings.manage |
@@ -144,6 +144,8 @@ Generated from the server's own catalog (`scripts/skill-reference.ts`). Base URL
 |---|---|---|
 | `GET /sites/{id}/payments` | Payments and the visits they were matched to | revenue.view |
 | `GET /sites/{id}/payments.csv` | Payments as CSV | revenue.view |
+| `POST /sites/{id}/payments/search` | Search payments by part of an email, customer id or payment id (the term goes in the body, not the URL) | revenue.view |
+| `POST /sites/{id}/payments/search.csv` | A payments search as CSV | revenue.view |
 | `GET /sites/{id}/subscriptions` | MRR, new subscriptions and churn | revenue.view |
 | `GET /sites/{id}/visitors/{visitor}` | One visitor's visits and payments | revenue.view |
 | `POST /sites/{id}/rematch` | Try matching unmatched payments again | sites.manage |

@@ -274,6 +274,12 @@ function Loaded({ link }: { link: LinkDTO }) {
           </div>
           <p className="ui-ld-urls">
             <span className="ui-ld-short" translate="no">{bare(link.shortUrl)}</span>
+            {!link.target ? (
+              <span className="ui-ld-dest">
+                <span className="ui-ld-arrow" aria-hidden>→</span>
+                <span className="ui-ld-dest-text">Destination hidden (password-protected)</span>
+              </span>
+            ) : (
             <a href={link.target} target="_blank" rel="noreferrer noopener" className="ui-ld-dest" title={link.target}>
               <span className="ui-ld-arrow" aria-hidden>→</span>
               <span className="ui-sr">Destination: </span>
@@ -287,6 +293,7 @@ function Loaded({ link }: { link: LinkDTO }) {
               </span>
               <span className="ui-sr"> (opens in a new tab)</span>
             </a>
+            )}
           </p>
           {link.title ? <p className="ui-ld-name">{link.title}</p> : null}
         </div>

@@ -124,6 +124,7 @@ export const fastspring: ProviderAdapter = {
         const state = (str(d.state) ?? "").toLowerCase();
         const cur = currency(d.currency);
         out.subscriptions.push({
+          eventAt: sec(e.created),
           providerId: idOf(d.id) ?? idOf(d.subscription) ?? "",
           status: type === "subscription.deactivated" ? "ended" : type === "subscription.canceled" ? "canceled" : (SUB_STATUS[state] ?? "active"),
           customerId: idOf(d.account),

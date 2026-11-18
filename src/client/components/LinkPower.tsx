@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { splitKey } from "../../shared/domains";
 import type { LinkDTO } from "../../shared/types";
 import { api, call, keys } from "../api";
+import { STOP_DELAY_NOTE } from "../lib/help";
 import { linkKey } from "../lib/links";
 import { useMe } from "../lib/me";
 import { LinkPicker } from "./LinkPicker";
@@ -43,7 +44,7 @@ export function LinkPower({ link, open, onOpenChange }: { link: LinkDTO; open: b
     onSuccess: (data) => {
       qc.setQueryData(keys.link(link.domain, link.slug), data);
       void qc.invalidateQueries({ queryKey: keys.allLinks });
-      toast.success(data.link.active ? "Link turned back on" : "Link turned off", { description: "Takes effect worldwide within about a minute." });
+      toast.success(data.link.active ? "Link turned back on" : "Link turned off", { description: data.link.active ? "Takes effect worldwide within about a minute." : STOP_DELAY_NOTE });
       onOpenChange(false);
     },
     onError: (e) => toast.error(e.message),

@@ -111,6 +111,8 @@ FALLBACK_URL = "https://www.example.com" # where "/" goes: your own site
 
 Commit, and Workers Builds deploys it. The custom domain gets its DNS record and certificate within a few minutes. The admin is then at `https://go.example.com/_admin/`. Settings → Short domains checks the domain live. Once it shows the domain works, set `workers_dev = false` and commit: rate-limiting rules in your zone ([SECURITY.md](../SECURITY.md#daily-cap)) don't cover the `workers.dev` address.
 
+Keeping `workers_dev` on keeps the admin reachable at the workers.dev address if the domain ever breaks. To keep that address for links only, set `WORKERS_DEV_ADMIN = "off"`: it then stops serving the admin and the API (only while `SHORT_DOMAINS` has a domain, so a new install can't lock itself out). System status reminds you while the admin answers there. `X-Shorthop-Domain` only works on localhost now.
+
 **Statistics.** Clicks are recorded from the start. To read them:
 
 1. Put your account ID in `CF_ACCOUNT_ID` in `wrangler.toml`.
@@ -121,20 +123,33 @@ Commit, and Workers Builds deploys it. The custom domain gets its DNS record and
 - **Cloudflare Access and people:** create the Access application ([Cloudflare Access](#access)). Then set `ADMIN_AUTH = "access+password"`, `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD` and `ADMIN_EMAIL`.
 - **Email:** Settings → Statistics & email → **Set up email** shows each provider's steps. Its keys are secrets. Cloudflare Email Service also needs a `send_email` binding: copy it from `wrangler.example.jsonc`.
 - **A hashed password:** run `npx tsx scripts/hash-password.ts --generate` anywhere you have Node.js, put the output in an `ADMIN_PASSWORD_HASH` secret, then delete `ADMIN_PASSWORD`. Changing either one signs everyone out.
-- **Your own session secret or visitor salt:** add `SESSION_SECRET` (32+ random characters) or `VISITOR_SALT` as secrets, and they replace the generated ones. A new session secret signs everyone out, and webhook secrets then need rotating.
+- **An encryption key (do this first):** add `ENCRYPTION_KEY` (32+ random characters) as a secret and keep a copy somewhere safe. Until then, your webhook, share and payment secrets are encrypted with a key kept in the same database, and System status says so. The daily cleanup moves them to the new key; nothing stops working and nobody is signed out.
+- **Your own session secret or visitor salt:** add `SESSION_SECRET` (32+ random characters) or `VISITOR_SALT` as secrets, and they replace the generated ones. Add the encryption key first and give the cleanup a day: a new session secret signs everyone out, and anything still encrypted with the old one can't be read and needs rotating.
 
 <a id="update-button"></a>
 **Updates.** Your copy doesn't follow this repository by itself: the button makes a copy, not a fork, so GitHub's **Sync fork** doesn't apply. It comes with a workflow that does the update for you:
 
-1. In your copy on GitHub, open **Actions → Update Shorthop → Run workflow**, and run it. Leave the version at `latest`.
-2. It opens a pull request with the new version and its changelog. Read the Upgrading notes in it, then **merge** it. Workers Builds deploys, and the deploy applies the new database migrations.
+1. **Once, before updating to 2.0.3 or later: copy the new workflow in.** Open [`.github/workflows/update-shorthop.yml`](../.github/workflows/update-shorthop.yml) in this repository, and in your copy on GitHub replace that file with it (open the file → Edit, paste, commit; if your copy has none, Add file → Create new file). If Workers Builds deploys on that commit, it deploys your current version again, with nothing changed.
+2. In your copy on GitHub, open **Actions → Update Shorthop → Run workflow**, and run it. Leave the version at `latest`.
+3. It opens a pull request with the new version and its changelog. Read the Upgrading notes in it, then **merge** it. Workers Builds deploys, and the deploy applies the new database migrations.
+
+Why first: a workflow can't change itself, and an update never touches `.github/workflows`, so the run uses whichever workflow your copy has when you start it.
+
+| Your copy has | What the run does |
+|---|---|
+| The workflow from 2.0.3 or later, on 1.2.0 or later | Doesn't run the new version's code. It reads the release as files and updates your copy with the updater your copy already has, with install scripts off. The token that can write appears only in the last step. It refuses a version older than yours unless you tick **allow downgrade**. |
+| The workflow from 2.0.3 or later, on a version before 1.2.0 | The same, but those versions have no updater, so it downloads the one from 2.0.2, fixed by commit in the workflow. |
+| The workflow from 2.0.2 or earlier | The update still works, the way it always has: it runs `npm ci` with install scripts inside the new release and then the release's updater, in a job that can write to your repository. None of the protections above apply to that run. The summary tells you to copy the workflow in. |
+| No workflow (before 1.2.0) | Nothing to run. Do step 1, or update with git as below. |
+
+In Workers Builds, keep **non-production branch builds** off (Settings → Build → Branch control), so a `shorthop-update-v…` branch isn't built before you've merged it. If such a branch does reach `npm run deploy`, the deploy stops before touching the database.
 
 Your `wrangler.toml` keeps its ids, routes and vars, and gets the bindings the new version adds. Files the new version removed are deleted. To keep your own changes to a file, list it in a `.shorthop-keep` file at the root of your copy, one path or glob per line (`docs/`, `public/*.png`).
 
 - **"GitHub Actions is not permitted to create pull requests":** new repositories don't allow it. The update is then on a `shorthop-update-v…` branch, and the run's summary links to open the pull request yourself. To allow it for next time: Settings → Actions → General → **Allow GitHub Actions to create and approve pull requests**.
 - **Straight to your main branch,** without a pull request: run it with mode `commit`. It deploys at once.
-- **Workflow files** (`.github/workflows/`) can't be changed by a workflow. When a version changes them, the run's summary lists them to copy from the release by hand.
-- **No Update Shorthop workflow** in Actions: your copy is from before 1.2.0. Add [`.github/workflows/update-shorthop.yml`](../.github/workflows/update-shorthop.yml) to your copy once (Add file → Create new file, paste it, commit), or update with git as below.
+- **Workflow files** (`.github/workflows/`) can't be changed by a workflow. When a version changes them, the run's summary lists them to copy from the release by hand. Do it for `update-shorthop.yml` in particular: improvements to how updates run reach you only that way.
+- **The updater is your copy's,** so a fix to the updater itself takes effect one update after the version that brings it.
 
 **With git instead** (GitLab, or if you prefer), pull the new version into a clone of your copy and push:
 
@@ -249,7 +264,7 @@ If you don't want Access, choose **Password only** in the setup (`ADMIN_AUTH="pa
 What changes:
 
 - **The login page is public.** Anyone who finds `/_admin/login` can try passwords. They're slowed by the lockout (5 wrong passwords within 15 minutes lock a network for a minute, doubling up to 24 hours; 30 failures an hour from 5 or more networks pause every login for 15 minutes), but nothing stops them from trying.
-- **Someone with several networks can keep you from signing in.** That global pause applies to you too: by failing from 5 or more networks every 15 minutes, an attacker can block new logins. One network alone can't trigger it. Sessions you already have keep working. Access avoids this, because nobody reaches the login page without your email.
+- **Someone with several networks can keep you from signing in.** That global pause applies to you too: by failing from 5 or more networks every 15 minutes, an attacker can block new logins. One network alone can't trigger it. Sessions you already have keep working, and so does a network you signed in from in the last 30 days. From a new network, wait or [lift the pause from your Cloudflare account](../SECURITY.md#password-only-mode-add-a-rate-limiting-rule). Access avoids this, because nobody reaches the login page without your email.
 - **Use a long random password.** The setup accepts any password of at least 9 characters, but the generated one (32 characters) is the right choice.
 - **Add a rate-limiting rule** for `/_admin/login` in the Cloudflare WAF. See [SECURITY.md](../SECURITY.md).
 - The admin shows a "Cloudflare Access off" warning in Settings → Access & security and in System status. It isn't emailed as an alert, unless Access settings are left filled in (then it's a configuration warning).
@@ -276,7 +291,7 @@ The owners are the emails in `ADMIN_EMAIL`. They can do everything, sign in with
 
 - **Admin:** everything, including people and security.
 - **Manager:** adds, changes and removes users, and can give only the permissions they have themselves.
-- **User:** views and copies links, plus what you tick: create, edit or delete links; statistics; Link health and missed visits; workspace settings; personal API keys; **See revenue** (payments, revenue and customers of tracked websites, and revenue per short link); **Manage websites** (add sites, change their settings and connect payment providers).
+- **User:** what you tick, and any tick also lets them view and copy links (with nothing ticked they can sign in but see no links; where a password-protected link goes needs **Edit links**): create, edit or delete links; statistics; Link health and missed visits; workspace settings; personal API keys; **See revenue** (payments, revenue and customers of tracked websites, and revenue per short link); **Manage websites** (add sites, change their settings and connect payment providers).
 
 **Adding someone** creates a one-time invite link (`/_admin/invite/…`). It works for 24 hours and only for their Access email, and they choose their own password with it (at least 12 characters). Shorthop can email it to them, or you send it yourself. Also add their email to the Access policy ([Cloudflare Access](#access), step 4): Access lets them reach the admin, and their role decides what they can do there. Changes apply on their next click.
 
@@ -286,7 +301,7 @@ The owners are the emails in `ADMIN_EMAIL`. They can do everything, sign in with
 
 **Emailing people** (invites and reset links) uses the email setup from Settings → Statistics & email. Resend, Emailit, Postmark, SendGrid, Mailgun and a custom API can send to anyone. Cloudflare Email Service sends the digest only to `DIGEST_TO`; to email people with it, add a `PEOPLE_MAIL` binding (Email Sending, Workers Paid; it's commented out in `wrangler.example.jsonc`). Without email, you copy the links yourself.
 
-**Bot check (optional).** Cloudflare Turnstile can ask everyone on the login, forgot-password, invite and reset pages to pass a quick, usually invisible check:
+**Bot check (optional).** Cloudflare Turnstile can ask everyone on the login and forgot-password pages to pass a quick, usually invisible check:
 
 1. In the Cloudflare dashboard, open **Turnstile → Add widget** and add your admin host.
 2. Paste the site key in Settings → Access & security → **Bot check**.
@@ -308,9 +323,9 @@ Scripts, the [iOS Shortcut](ios-shortcut.md), and tools such as Zapier or Make u
 - Optionally, let it expire after 30, 90 or 365 days.
 - The key (`shp_…`) is shown once. Only a SHA-256 hash of it is stored.
 
-Revoke a key in the same place. Keys stop working when their owner is removed or loses the API permission. Keys can't manage people, other keys or sessions. Settings shows when each was last used (updated at most once an hour).
+Revoke a key in the same place, or all of someone's keys from their menu under People. Keys stop working when their owner is removed or paused, loses the API permission, is waiting on a new invite link after a password reset, or (with Access off) isn't the owner. A key with nothing ticked can't read links. A revoked key's webhooks keep running and are flagged in Settings and System status: open one and save it once you've checked it. Keys can't manage people, other keys, sessions or the email setup. Settings shows when each was last used (updated at most once an hour).
 
-The older `API_TOKEN` secret still works if you set it, sent the same way (`Authorization: Bearer …`). By default it can read, create links and import new ones; with `API_TOKEN_SCOPE` set to `"full"` it can do everything an owner can. New installs don't get one. If yours still uses it, move your scripts to a key and run `npx wrangler secret delete API_TOKEN`.
+The older `API_TOKEN` secret still works if you set it, sent the same way (`Authorization: Bearer …`). By default it can read links, statistics and destination checks, create links and import new ones. It can't read webhooks, shared-statistics addresses, payment connections or customers, and doesn't see where password-protected links go. With `API_TOKEN_SCOPE` set to `"full"` it can do everything an owner can. New installs don't get one. If yours still uses it, move your scripts to a key and run `npx wrangler secret delete API_TOKEN`.
 
 <a id="analytics"></a>
 ## Storage and analytics
@@ -427,7 +442,7 @@ No email; pick **Off** in the admin or the setup. Problems only show on the dash
 
 ### How keys are protected
 
-API keys, the custom and webhook URLs and the webhook secret are Wrangler secrets; the admin shows only the provider names, whether each secret is set, and whether it's ready. The admin can pick a provider and the sender, never a URL, a key or the recipient. Which secrets are set is shown only to people signed in to the admin. An API key can change the choice only with the workspace settings permission; the older API token only with `API_TOKEN_SCOPE` set to `full`. Provider hosts are fixed in the code and each key only goes to its own provider; redirects are refused so credentials can't follow one, and requests time out after 10 seconds.
+API keys, the custom and webhook URLs and the webhook secret are Wrangler secrets; the admin shows only the provider names, whether each secret is set, and whether it's ready. The admin can pick a provider and the sender, never a URL, a key or the recipient. Which secrets are set is shown only to people signed in to the admin, and only they can change the choice: API keys and the older API token can't. Provider hosts are fixed in the code and each key only goes to its own provider; redirects are refused so credentials can't follow one, and requests time out after 10 seconds.
 
 Test it from the admin (Settings → Statistics & email → Weekly digest → **Send test**) or at the end of the setup.
 
@@ -443,8 +458,9 @@ Websites (in the admin's menu) tracks your own sites and the payments they bring
 ```
 
 - `data-sh-goal="signup"` on a button or link records a goal; extra `data-sh-goal-*` attributes become its properties. `data-sh-scroll="pricing_seen"` records one when an element comes into view (`-threshold`, `-delay`). From code: `shorthop("goal", "newsletter", { list: "weekly" })`.
-- `data-hash` counts `#/routes` as pages. `data-allow-localhost` counts visits from localhost. `data-consent-banner` (and `data-consent-text`) shows a small consent bar, for sites set to identify visitors after consent.
-- `shorthop("identify", { email, id, name })` after sign-in ties a visitor to a customer. From the browser it only fills in an email that isn't known yet; the server API below can set it for sure.
+- `data-hash` counts `#/routes` as pages. `data-allow-localhost` counts visits from localhost. `data-consent-banner` (and `data-consent-text`) shows a small consent bar, for sites set to identify visitors after consent. Its default sentence says only that a random ID recognises return visits, so set your own if your notice needs more.
+- `shorthop("identify", { email, id, name })` after sign-in ties a visitor to a customer. From the browser it only fills in an email that isn't known yet, and it's ignored for visitors sending Global Privacy Control or Do Not Track; the server API below can set it for sure.
+- `shorthop.ref()` returns the visit reference for a checkout you create yourself, or `null`. `shorthop.ref(callback)` waits for it and always calls back: with `null` when the browser sends Global Privacy Control or Do Not Track, tracking is off, the event wasn't stored, or no answer came within 3 seconds. Carry on with the checkout and leave the reference out. `POST /api/sites/<id>/payments` accepts `"ref": null` as no reference; `/identify` needs a `ref` or `visitorId`, so skip it when you have neither.
 - **Content Security Policy:** allow the short domain in `script-src` and `connect-src`, for example `script-src 'self' https://go.example.com; connect-src 'self' https://go.example.com`. The script sends events to `/_t/e` on the same host.
 - Visits are only accepted from the site's domains. Add `?sh_debug=1` to a page's address to see in the console why the script turned itself off.
 
@@ -457,6 +473,8 @@ https://go.example.com/_pay/<provider>/<connection>
 ```
 
 The exact URL is shown when you add the connection. Every webhook is verified with the provider's signing secret (PayPal's through its API) before anything is saved, and webhook calls are rate-limited per network (`PUBLIC_LIMITER`).
+
+Gumroad doesn't sign its pings, so its address carries a random token instead. Add a Gumroad **access token** with the `view_sales` scope too: each sale is then read back from Gumroad and stored as Gumroad reports it. Without one, Gumroad payments are labelled unverified in the Payments list and in System status, and so is an event Gumroad didn't confirm when it arrived, until a later delivery or an import does. With a token, an unverified refund or dispute of a confirmed sale counts as 0 until then, and an unconfirmed cancellation leaves the subscription as it was. Gumroad's Ping setting sends only sales: refunds, disputes and cancellations need the resource subscriptions shown in the site's setup guide. If the address gets out, **New address** in the connection's setup replaces its token.
 
 **Connection secrets** (webhook signing secrets and API keys) can be kept two ways, chosen per field:
 
@@ -473,7 +491,7 @@ Names of the Worker's own secrets (`SESSION_SECRET` and the like) are refused. O
 | Secret | Created by | Rotate with |
 |---|---|---|
 | `API_TOKEN` | optional: older installs (40 random characters) | `npm run setup -- secrets --rotate`, then update scripts and the iOS Shortcut. Better: switch them to [personal API keys](#api-keys) and delete it |
-| `SESSION_SECRET` | the setup (button installs: generated in D1) | `npm run setup -- secrets --rotate`. This logs everyone out and also signs visitors out of password-protected links. Without `ENCRYPTION_KEY` it also makes stored webhook, share and payment secrets unreadable: replace each one afterwards |
+| `SESSION_SECRET` | the setup (button installs: generated in D1) | `npm run setup -- secrets --rotate`. This logs everyone out and also signs visitors out of password-protected links. Without `ENCRYPTION_KEY` it also makes stored webhook, share and payment secrets unreadable: replace each one afterwards. Erasure-ledger entries made with the old value stop matching, so those browser IDs are accepted again and **Re-apply erasures** can't find those people |
 | `ENCRYPTION_KEY` | you, optional (32+ random characters, such as `openssl rand -base64 32`) | Encrypts stored webhook, share and payment secrets instead of `SESSION_SECRET`. Recommended for button installs, whose `SESSION_SECRET` is kept in D1. Once set, the daily cleanup moves existing secrets over (25 per kind per day); after that, `SESSION_SECRET` can be rotated without touching them. Removing or changing it makes them unreadable |
 | `VISITOR_SALT` | the setup | `npm run setup -- secrets --rotate --salt` (visitors already counted today may be counted again) |
 | `ADMIN_PASSWORD_HASH` | the setup | `npm run setup -- password` |
@@ -537,7 +555,9 @@ npm test
 npm run setup -- upgrade
 ```
 
-`upgrade` re-renders `wrangler.jsonc` with the new version's template (your values are kept, and you see the diff before it's written), applies new database migrations and deploys. Run it **before** `npm run deploy`: a plain deploy refuses a `wrangler.jsonc` that lacks bindings the new version uses. Read the [changelog](../CHANGELOG.md)'s Upgrading notes too.
+`upgrade` re-renders `wrangler.jsonc` with the new version's template, applies new database migrations and deploys. You see the diff before it's written. Your values are kept, and so is what you added by hand: `ai`, `r2_buckets` and other settings the template doesn't write, `KV_CACHE_TTL` and your own vars, `workers_dev`, extra bindings and routes, and the `PEOPLE_MAIL` sender. Crons, rate limiters and logging come from the new version, except invocation logs or traces you turned on after 2.0.3 added the setting.
+
+Run it **before** `npm run deploy`: a plain deploy refuses a `wrangler.jsonc` that lacks what the new version needs, including one from before 2.0.3 that doesn't yet say whether Cloudflare's invocation logs are on. Read the [changelog](../CHANGELOG.md)'s Upgrading notes too.
 
 Installed with the button? Run the **Update Shorthop** workflow ([updates](#update-button)).
 
@@ -546,7 +566,7 @@ Installed with the button? Run the **Update Shorthop** workflow ([updates](#upda
 <a id="backup"></a>
 ## Backups
 
-Settings → General → **Backup** downloads everything as one ZIP: every table as JSON, your links with their settings (`links.json`), and the not-found and "no longer working" pages (`kv.json`). Secrets are never in it: passwords, API keys, and webhook and payment secrets. People's details (emails, names) are left out unless you tick them, which needs the **See revenue** permission.
+Settings → General → **Backup** downloads everything as one ZIP: every table as JSON, your links with their settings (`links.json`), and the not-found and "no longer working" pages (`kv.json`). Secrets are never in it: passwords, API keys, and webhook and payment secrets. Customers' emails and ids and visitor ids are left out unless you tick **Include people's details**, which needs the **See revenue** permission. Your team's emails and names are always in it (the people list, API keys, and who changed what in link history and shares), so keep every backup as safely as the workspace.
 
 For a copy every week without doing anything, bind an R2 bucket as `BACKUPS`:
 
@@ -554,19 +574,47 @@ For a copy every week without doing anything, bind an R2 bucket as `BACKUPS`:
 npx wrangler r2 bucket create shorthop-backups
 ```
 
-then uncomment the `r2_buckets` entry in `wrangler.jsonc` (a Deploy-button copy: add `[[r2_buckets]]` with `binding = "BACKUPS"` and `bucket_name = "shorthop-backups"` to `wrangler.toml`) and deploy. On Sundays from 04:00 UTC the half-hourly runs write a backup to the bucket, a few pages at a time, and keep the newest eight. R2 needs an R2 subscription in the dashboard; its free allowance covers this many times over.
+then uncomment the `r2_buckets` entry in `wrangler.jsonc` (a Deploy-button copy: add `[[r2_buckets]]` with `binding = "BACKUPS"` and `bucket_name = "shorthop-backups"` to `wrangler.toml`) and deploy. On Sundays from 04:00 UTC the half-hourly runs write a backup to the bucket, a few pages at a time, and keep the newest eight. Links, settings, people and payments go first and visit records last. A backup too big for one morning carries on at 04:00 UTC the following days, from where it stopped, and System status says when one is late or failing, or when backups ran before and the bucket is no longer bound. Each page costs about 1,000 rows of D1's daily read allowance, however deep into a table it is. R2 needs an R2 subscription in the dashboard; its free allowance covers this many times over.
 
 <a id="restore"></a>
 ### Restore a backup
 
-- **Links and their settings:** import `links.json` from the ZIP (Import links → a file). Slugs that already exist are skipped unless you choose Overwrite.
-- **Everything, into an empty database:** apply the migrations, then load each `tables/<name>.json` in the order `manifest.json` lists them (restore order), for example with a small script that turns each file into `INSERT` statements and runs them with `npx wrangler d1 execute <your-db-name> --remote --file=restore.sql`. Put `kv.json`'s two entries back with `npx wrangler kv key put --binding LINKS cfg:not-found '<json>'` (and `cfg:dead-link`), then run Settings → General → **Republish all links**.
-- **Secrets aren't in backups:** set `ADMIN_PASSWORD_HASH`, `SESSION_SECRET`, `ENCRYPTION_KEY` and the mail and payment secrets again, create new API keys, re-enter webhook secrets, and send people new invites so they choose new passwords.
+- **Links and their settings:** import `links.json` from the ZIP (Import links → a file). Slugs that already exist are skipped unless you choose Overwrite. It brings back bio pages, "no longer working" marks and replacements, where a turned-off link sends visitors, and destination-check settings. Three things differ from the link you backed up:
+  - A link that had a password comes back **turned off**, because passwords are never in a backup. Set a new one, then turn it on.
+  - A destination still on `http://` (from an import before 2.0.3) is refused, and that row is listed with the reason, unless the link already exists with that same destination. Change the file to `https://`, or use the full restore, which keeps it.
+  - Click counts come back as "clicks before import".
+- **Everything, into an empty database:** works from a ZIP (unzip it first) or a backup folder copied from R2 with an S3 client such as rclone.
+
+  ```sh
+  npx wrangler d1 migrations apply <your-db-name> --remote    # on the new, empty database
+  npx tsx scripts/restore-backup.ts --backup <folder>         # writes restore-sql/restore-0001.sql, ...
+  npx wrangler d1 execute <your-db-name> --remote --file=restore-sql/restore-0001.sql    # each file, in order
+  ```
+
+  The script prints what needs you afterwards. Files can be loaded again if one fails. Loading counts against D1's writes, 100,000 rows a day on Workers Free with each index counting too, so a large backup takes several days there: load what fits, and go on with the next file the next day. A ZIP's `kv.json` holds the not-found and "no longer working" pages: put them back with `npx wrangler kv key put --binding LINKS cfg:not-found '<json>'` (and `cfg:dead-link`). Then run Settings → General → **Republish all links**.
+
+  What comes back differently, by design:
+
+  | | After a full restore |
+  |---|---|
+  | People | Listed, without passwords: send each a new invite. Everyone is signed out. |
+  | Links with a password | Turned off until you set a new one |
+  | API keys | Listed as expired: create new ones |
+  | Webhooks | Turned off: make a new secret, give it to the receiver, turn it on |
+  | Shared statistics pages | Revoked: share again |
+  | Payment connections | Enter their secrets again, unless they come from Worker secrets |
+  | Visits, from an R2 copy or a ZIP without people's details | Come back with their source, campaign and revenue credit, each as its own anonymous visitor, so older unique-visitor counts go up |
+  | Customer emails and ids, identified visitors, from the same backups | Not in them, so they don't come back. Use a ZIP with people's details if you need them |
+  | Login lockouts, webhook delivery logs, raw payment events | Never backed up |
+
+  A backup from before 2.0.3 doesn't record which links had a password. The script refuses it unless you add `--accept-lost-passwords`; those links are then open until you protect them again, so do that before anyone can reach the Worker.
+- **People you erased:** a backup, and D1 going back in time, bring back whatever was there then. After any restore, open each website's Settings & setup → Privacy and press **Re-apply erasures** (or call `POST /api/sites/<id>/privacy/reapply` with the returned `cursor` until `done`). It reads the erasure ledger, including a copy kept in KV that a D1 restore doesn't touch, and erases those people again, leaving anything first stored after their erasure. This works for 400 days after each erasure, and only with the same `SESSION_SECRET` or `ENCRYPTION_KEY` as when the erasure was made: restore those first, and it tells you if entries can't be read. A Deploy to Cloudflare copy without its own `SESSION_SECRET` keeps a generated one in D1, which backups leave out: before moving to a new database, read `generated_session_secret` from the `settings` table of the old one and set it as `SESSION_SECRET`. Restored visits with no visitor can't be matched to anyone, so they stay, without a person attached. Older archives keep what they hold until you delete them, so delete ZIPs you no longer need.
+- **Secrets aren't in backups:** set `ADMIN_PASSWORD_HASH`, `SESSION_SECRET`, `ENCRYPTION_KEY` and the mail and payment secrets again (keep your existing values where you can, or stored secrets and the erasure ledger can't be read), create new API keys, re-enter webhook secrets, and send people new invites so they choose new passwords.
 
 <a id="import"></a>
 ## Moving from another shortener
 
-Imported links keep `http://` destinations and get no UTM tags, so they behave as before; their old click counts are shown as "Clicks before import". Mind the KV write allowance on Workers Free: 1,000 links a day.
+Imported links get no UTM tags, so they behave as before; their old click counts are shown as "Clicks before import". Destinations must be `https://`: a row with `http://` is refused with that reason, and the rest of the import goes on. Change those to `https://` in your file and import them again. Mind the KV write allowance on Workers Free: 1,000 links a day.
 
 **1. Rehearse locally.** Save your links as a JSON array of `{ "domain", "slug", "target" }` (see `ExportRow` in `scripts/lib.ts`), then import them into the local dev server and compare every slug with the old service:
 

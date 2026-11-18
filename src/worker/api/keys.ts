@@ -76,15 +76,18 @@ export const keysApi = new Hono<AppEnv>()
     const actor = c.get("actor");
     const { id } = c.req.valid("param");
     const owners = [...ownerEmails(c.env), PASSWORD_IDENTITY];
-    const res =
+    const remove =
       actor.role === "admin" && actor.owner
-        ? await c.env.DB.prepare("DELETE FROM api_keys WHERE id = ?").bind(id).run()
+        ? c.env.DB.prepare("DELETE FROM api_keys WHERE id = ?").bind(id)
         : actor.role === "admin"
-          ? await c.env.DB.prepare("DELETE FROM api_keys WHERE id = ?1 AND (owner = ?2 OR owner NOT IN (SELECT value FROM json_each(?3)))")
-              .bind(id, actor.email, JSON.stringify(owners))
-              .run()
-          : await c.env.DB.prepare("DELETE FROM api_keys WHERE id = ? AND owner = ?").bind(id, actor.email).run();
-    if (!res.meta.changes) return c.json({ error: "Not found" }, 404);
+          ? c.env.DB.prepare("DELETE FROM api_keys WHERE id = ?1 AND (owner = ?2 OR owner NOT IN (SELECT value FROM json_each(?3)))").bind(id, actor.email, JSON.stringify(owners))
+          : c.env.DB.prepare("DELETE FROM api_keys WHERE id = ? AND owner = ?").bind(id, actor.email);
+    // Webhooks it set up keep running, but someone should look at them: only if the key really went.
+    const [res] = await c.env.DB.batch([
+      remove,
+      c.env.DB.prepare("UPDATE webhooks SET key_revoked_at = ?1 WHERE key_id = ?2 AND key_revoked_at IS NULL AND NOT EXISTS (SELECT 1 FROM api_keys WHERE id = ?2)").bind(nowSec(), id),
+    ]);
+    if (!res?.meta.changes) return c.json({ error: "Not found" }, 404);
     console.log(JSON.stringify({ message: "api key revoked", id, by: actor.email }));
     return c.json({ revoked: true });
   });

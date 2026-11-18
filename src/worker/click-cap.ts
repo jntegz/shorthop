@@ -15,8 +15,16 @@ export class ClickCap extends DurableObject<Env> {
     return this.ctx.storage.kv.get<number>("count") ?? 0;
   }
 
+  /** `since` newer than the last one seen: the link came back through an import, and clicks counted before don't apply. */
+  private startFrom(since: number): void {
+    if (since <= (this.ctx.storage.kv.get<number>("since") ?? 0)) return;
+    this.ctx.storage.kv.put("since", since);
+    this.ctx.storage.kv.put("count", 0);
+  }
+
   /** Counts one click if the limit allows it. */
-  admit(limit: number): CapResult {
+  admit(limit: number, since = 0): CapResult {
+    this.startFrom(since);
     const count = this.read();
     if (count >= limit) return { ok: false, count };
     this.ctx.storage.kv.put("count", count + 1);
@@ -24,7 +32,8 @@ export class ClickCap extends DurableObject<Env> {
   }
 
   /** Whether a click would be allowed, without counting it (bots, previews). */
-  peek(limit: number): CapResult {
+  peek(limit: number, since = 0): CapResult {
+    this.startFrom(since);
     const count = this.read();
     return { ok: count < limit, count };
   }
@@ -53,9 +62,9 @@ function stub(env: Env, domain: string, slug: string) {
  * click, it is given back in the background so the limit isn't spent on
  * someone who never got through.
  */
-export async function capAdmit(env: Env, domain: string, slug: string, limit: number, countIt: boolean, ctx?: { waitUntil(p: Promise<unknown>): void }): Promise<CapResult> {
+export async function capAdmit(env: Env, domain: string, slug: string, limit: number, countIt: boolean, ctx?: { waitUntil(p: Promise<unknown>): void }, since = 0): Promise<CapResult> {
   const s = stub(env, domain, slug);
-  const work = countIt ? s.admit(limit) : s.peek(limit);
+  const work = countIt ? s.admit(limit, since) : s.peek(limit, since);
   let timer: ReturnType<typeof setTimeout> | undefined;
   let timedOut = false;
   try {
@@ -77,8 +86,8 @@ export async function capAdmit(env: Env, domain: string, slug: string, limit: nu
   }
 }
 
-export async function capCount(env: Env, domain: string, slug: string): Promise<number> {
-  return (await stub(env, domain, slug).peek(Number.MAX_SAFE_INTEGER)).count;
+export async function capCount(env: Env, domain: string, slug: string, since = 0): Promise<number> {
+  return (await stub(env, domain, slug).peek(Number.MAX_SAFE_INTEGER, since)).count;
 }
 
 export async function capReset(env: Env, domain: string, slug: string): Promise<void> {

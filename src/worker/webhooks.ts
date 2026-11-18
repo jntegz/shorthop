@@ -7,15 +7,16 @@
 // encrypted (AES-GCM, key derived from SESSION_SECRET) and shown only once.
 // Endpoints must be public https addresses, and redirects aren't followed.
 
+import { linkKey } from "../shared/domains";
 import { diffSnapshots, snapshotOf, type HistoryField } from "../shared/history";
 import { isFetchableUrl } from "../shared/link-check";
 import { fromBase64Url, toBase64Url } from "../shared/password";
 import type { WebhookDTO, WebhookDeliveryDTO } from "../shared/types";
-import { DELIVERY_RETENTION_DAYS, DELIVERY_TIMEOUT_MS, milestoneFor, RETRY_DELAYS_SEC, type WebhookEvent } from "../shared/webhooks";
+import { DELIVERY_RETENTION_DAYS, DELIVERY_TIMEOUT_MS, milestoneFor, RETRY_DELAYS_SEC, type WebhookEvent, type WebhookFieldSet } from "../shared/webhooks";
 import { getSetting, nowSec, setSettingStmt, type LinkRow } from "./db";
 import { webhookSignature } from "./mailer";
 import { planLimits } from "./plan";
-import { ipBucket } from "./session";
+import { limiterKey } from "./session";
 
 // ---- Secrets ------------------------------------------------------------------
 
@@ -153,19 +154,73 @@ interface HookRow {
   events: string;
   secret: string;
   active: number;
-  /** JSON {"tags": [...]}: narrows link.clicked. */
+  /** JSON {"tags": [...], "hideProtected": true}: narrows link.clicked; leaves out where password-protected links go. */
   filters?: string | null;
+  /** "minimal" leaves personal details out of what it is sent. */
+  fields?: string | null;
   created_at: number;
   updated_at: number;
+  /** Who created or last changed it: an identity as history records one. */
+  changed_by: string | null;
+  /** The API key that did, if one did. */
+  key_id: string | null;
+  /** When that key was revoked: until someone saves the webhook again, it's flagged for review. */
+  key_revoked_at: number | null;
+}
+
+function filtersOf(h: Pick<HookRow, "filters">): { tags?: unknown; hideProtected?: unknown } {
+  try {
+    return (JSON.parse(h.filters ?? "null") as { tags?: unknown; hideProtected?: unknown } | null) ?? {};
+  } catch {
+    return {};
+  }
 }
 
 function clickTagsOf(h: Pick<HookRow, "filters">): string[] {
+  const { tags } = filtersOf(h);
+  return Array.isArray(tags) ? tags.filter((t): t is string => typeof t === "string") : [];
+}
+
+/**
+ * Whether this webhook's address was set by someone who can't edit links. Where
+ * password-protected links go takes that permission, so such an address isn't
+ * sent it, until someone who can edit links saves the webhook.
+ */
+export const hidesProtected = (h: Pick<HookRow, "filters">): boolean => filtersOf(h).hideProtected === true;
+
+/** The password-protected links, as linkKeys. */
+export async function protectedLinks(db: D1Database): Promise<Set<string>> {
+  const { results } = await db.prepare("SELECT domain, slug FROM links WHERE password_hash IS NOT NULL").all<{ domain: string; slug: string }>();
+  return new Set(results.map((r) => linkKey(r.domain, r.slug)));
+}
+
+type PayloadLink = { domain: string; slug: string; target?: string; password_protected?: boolean };
+
+/**
+ * A stored event without where password-protected links go: those that had a
+ * password when it happened, and those in `hidden` (which have one now). A
+ * destination other links share stays, without the protected ones among them.
+ */
+export function withoutProtected(type: string, payload: string, hidden: ReadonlySet<string>): string {
+  if (!type.startsWith("link.")) return payload;
+  let event: { data?: { link?: PayloadLink; destination?: string; links?: PayloadLink[] } };
   try {
-    const tags = (JSON.parse(h.filters ?? "null") as { tags?: unknown } | null)?.tags;
-    return Array.isArray(tags) ? tags.filter((t): t is string => typeof t === "string") : [];
+    event = JSON.parse(payload) as typeof event;
   } catch {
-    return [];
+    return "{}";
   }
+  const data = event.data;
+  const isHidden = (l: PayloadLink) => hidden.has(linkKey(l.domain, l.slug));
+  if (data?.link && "target" in data.link && (data.link.password_protected || isHidden(data.link))) {
+    data.link.target = "";
+    return JSON.stringify(event);
+  }
+  if (data && Array.isArray(data.links) && data.links.some(isHidden)) {
+    data.links = data.links.filter((l) => !isHidden(l));
+    if (!data.links.length) data.destination = "";
+    return JSON.stringify(event);
+  }
+  return payload;
 }
 
 interface DeliveryRow {
@@ -210,7 +265,11 @@ export async function emit(env: Env, type: WebhookEvent, data: Record<string, un
 export interface Event {
   type: WebhookEvent;
   data: Record<string, unknown>;
+  /** What endpoints set to "minimal" receive instead, when it differs. */
+  minimal?: Record<string, unknown>;
 }
+
+const fieldsOf = (h: Pick<HookRow, "fields">): WebhookFieldSet => (h.fields === "minimal" ? "minimal" : "full");
 
 /**
  * Queues several events in one D1 round trip (an import creates many links at
@@ -229,15 +288,17 @@ export async function emitAll(env: Env, events: readonly Event[], opts: { ctx?: 
     );
     const writes: D1PreparedStatement[] = [];
     const ids: string[] = [];
-    for (const { type, data } of events) {
+    for (const { type, data, minimal } of events) {
       const hooks = results.filter((h) => (opts.only === undefined ? subscribed(h, type) : h.id === opts.only));
       if (!hooks.length) continue;
       const eventId = randomId("evt");
-      const body = JSON.stringify({ id: eventId, type, created_at: iso(now), api_version: 1, data });
+      const bodyOf = (d: Record<string, unknown>) => JSON.stringify({ id: eventId, type, created_at: iso(now), api_version: 1, data: d });
+      const body = bodyOf(data);
+      const small = minimal ? bodyOf(minimal) : body;
       for (const h of hooks) {
         const id = randomId("dlv");
         ids.push(id);
-        writes.push(stmt.bind(id, h.id, eventId, type, body, now, now));
+        writes.push(stmt.bind(id, h.id, eventId, type, fieldsOf(h) === "minimal" ? small : body, now, now));
       }
     }
     if (!writes.length) return [];
@@ -255,8 +316,10 @@ export async function emitAll(env: Env, events: readonly Event[], opts: { ctx?: 
 
 // ---- Delivery ---------------------------------------------------------------------
 
-async function attempt(env: Env, d: DeliveryRow, hook: HookRow | undefined, fetcher: typeof fetch): Promise<void> {
+async function attempt(env: Env, d: DeliveryRow, hook: HookRow | undefined, fetcher: typeof fetch, hidden: ReadonlySet<string> | null): Promise<void> {
   const now = nowSec();
+  // Decided when sending, so a retry or a resend to a changed address follows the rule too.
+  const body = hook && hidden && hidesProtected(hook) ? withoutProtected(d.event_type, d.payload, hidden) : d.payload;
   // Claim it first, so the cron and a background send can't both deliver it.
   const claim = await env.DB.prepare("UPDATE webhook_deliveries SET next_at = ?1 WHERE id = ?2 AND status = 'pending' AND next_at <= ?3")
     .bind(now + 600, d.id, now)
@@ -288,9 +351,9 @@ async function attempt(env: Env, d: DeliveryRow, hook: HookRow | undefined, fetc
             "User-Agent": "ShorthopWebhooks/1.0",
             "X-Shorthop-Event": d.event_type,
             "X-Shorthop-Delivery": d.id,
-            "X-Shorthop-Signature": await webhookSignature(secret, d.payload, Math.floor(Date.now() / 1000)),
+            "X-Shorthop-Signature": await webhookSignature(secret, body, Math.floor(Date.now() / 1000)),
           },
-          body: d.payload,
+          body,
           signal: AbortSignal.timeout(DELIVERY_TIMEOUT_MS),
         });
         status = res.status;
@@ -325,20 +388,34 @@ async function attempt(env: Env, d: DeliveryRow, hook: HookRow | undefined, fetc
     .run();
 }
 
+/**
+ * What a cron run sends: payments first, then the oldest of the rest with
+ * traffic spikes (whose sources visitors can make up) behind everything else.
+ * One place stays for the rest, so a run of payments can't hold it back for good.
+ */
+async function dueDeliveries(db: D1Database, now: number, budget: number): Promise<DeliveryRow[]> {
+  const [payments, others] = await db.batch<DeliveryRow>([
+    db.prepare("SELECT * FROM webhook_deliveries WHERE status = 'pending' AND next_at <= ?1 AND event_type = 'site.payment' ORDER BY next_at LIMIT ?2").bind(now, budget),
+    db.prepare("SELECT * FROM webhook_deliveries WHERE status = 'pending' AND next_at <= ?1 AND event_type != 'site.payment' ORDER BY event_type = 'site.traffic_spike', next_at LIMIT ?2").bind(now, budget),
+  ]);
+  const rest = others?.results ?? [];
+  const first = (payments?.results ?? []).slice(0, rest.length && budget > 1 ? budget - 1 : budget);
+  return [...first, ...rest.slice(0, budget - first.length)];
+}
+
 /** Sends the given deliveries, or whatever is due (the cron) within the plan's budget: each costs a fetch and two D1 writes. */
 export async function deliver(env: Env, opts: { ids?: string[]; budget?: number; fetcher?: typeof fetch } = {}): Promise<number> {
   const now = nowSec();
-  const { results } = opts.ids
-    ? await env.DB.prepare("SELECT * FROM webhook_deliveries WHERE id IN (SELECT value FROM json_each(?1)) AND status = 'pending'").bind(JSON.stringify(opts.ids)).all<DeliveryRow>()
-    : await env.DB.prepare("SELECT * FROM webhook_deliveries WHERE status = 'pending' AND next_at <= ?1 ORDER BY next_at LIMIT ?2")
-        .bind(now, opts.budget ?? planLimits(env).cronDeliveries)
-        .all<DeliveryRow>();
+  const results = opts.ids
+    ? (await env.DB.prepare("SELECT * FROM webhook_deliveries WHERE id IN (SELECT value FROM json_each(?1)) AND status = 'pending'").bind(JSON.stringify(opts.ids)).all<DeliveryRow>()).results
+    : await dueDeliveries(env.DB, now, opts.budget ?? planLimits(env).cronDeliveries);
   if (!results.length) return 0;
   const { results: hooks } = await env.DB.prepare("SELECT * FROM webhooks WHERE id IN (SELECT value FROM json_each(?1))")
     .bind(JSON.stringify([...new Set(results.map((d) => d.webhook_id))]))
     .all<HookRow>();
   const byId = new Map(hooks.map((h) => [h.id, h]));
-  await Promise.all(results.map((d) => attempt(env, d, byId.get(d.webhook_id), opts.fetcher ?? fetch).catch((err) => console.error(JSON.stringify({ message: "webhook delivery crashed", id: d.id, error: String(err) })))));
+  const hidden = hooks.some(hidesProtected) ? await protectedLinks(env.DB) : null;
+  await Promise.all(results.map((d) => attempt(env, d, byId.get(d.webhook_id), opts.fetcher ?? fetch, hidden).catch((err) => console.error(JSON.stringify({ message: "webhook delivery crashed", id: d.id, error: String(err) })))));
   return results.length;
 }
 
@@ -428,7 +505,11 @@ export async function listWebhooks(env: Env): Promise<WebhookDTO[]> {
         events: JSON.parse(h.events) as string[],
         active: h.active === 1,
         clickTags: clickTagsOf(h),
+        fields: fieldsOf(h),
         createdAt: h.created_at,
+        changedBy: h.changed_by,
+        keyRevokedAt: h.key_revoked_at,
+        hidesProtected: hidesProtected(h),
         secretReadable: (await decryptSecret(env, "webhook", h.secret)) !== null,
         retrying: h.retrying,
         failedRecent: h.failed_recent,
@@ -505,7 +586,7 @@ export async function sendClickWebhooks(env: Env, click: ClickEvent, fetcher: ty
   if (!hooks.length) return 0;
   if (ip && env.PUBLIC_LIMITER) {
     try {
-      if (!(await env.PUBLIC_LIMITER.limit({ key: `clickhook:${ipBucket(ip)}` })).success) return 0;
+      if (!(await env.PUBLIC_LIMITER.limit({ key: await limiterKey(env, "clickhook", ip) })).success) return 0;
     } catch (err) {
       console.error(JSON.stringify({ message: "click webhook limiter failed", error: String(err) }));
     }
@@ -520,7 +601,12 @@ export async function sendClickWebhooks(env: Env, click: ClickEvent, fetcher: ty
     return !only.length || (tags ?? []).some((t) => only.includes(t));
   });
   if (!wanted.length) return 0;
-  const body = JSON.stringify({ id: randomId("evt"), type: "link.clicked", created_at: iso(click.at), api_version: 1, data: { link: { domain: click.domain, slug: click.slug }, ...click, at: iso(click.at) } });
+  const id = randomId("evt");
+  const envelope = (data: Record<string, unknown>) => JSON.stringify({ id, type: "link.clicked", created_at: iso(click.at), api_version: 1, data });
+  const link = { domain: click.domain, slug: click.slug };
+  const full = envelope({ link, ...click, at: iso(click.at) });
+  // No city, device, source or referrer: which link, when, and the country.
+  const minimal = envelope({ link, domain: click.domain, slug: click.slug, at: iso(click.at), country: click.country });
   let sent = 0;
   await Promise.all(
     wanted.map(async (h) => {
@@ -528,6 +614,7 @@ export async function sendClickWebhooks(env: Env, click: ClickEvent, fetcher: ty
         const secret = await decryptSecret(env, "webhook", h.secret);
         const url = new URL(h.url);
         if (!secret || url.protocol !== "https:" || !isFetchableUrl(url)) return;
+        const body = fieldsOf(h) === "minimal" ? minimal : full;
         const res = await fetcher(url.href, {
           method: "POST",
           redirect: "manual",

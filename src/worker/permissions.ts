@@ -3,13 +3,15 @@
 // check can never disagree with routing. A route without a rule is refused,
 // and test/permissions.test.ts fails until it has one.
 
-import type { MiddlewareHandler } from "hono";
+import type { Context, MiddlewareHandler } from "hono";
 import { matchedRoutes } from "hono/route";
-import type { Actor, Permission } from "../shared/permissions";
+import { readsLinks, type Actor, type Permission } from "../shared/permissions";
 import type { AppEnv } from "./hono";
 
 type Need =
   | "signed-in"
+  /** Anyone holding a permission, and signed-in managers and admins (readsLinks). */
+  | "links.read"
   | Permission
   | { any: Permission[] }
   | { all: Permission[] }
@@ -27,34 +29,36 @@ export interface Rule {
 }
 
 const signedIn: Rule = { need: "signed-in" };
+const linkReader: Rule = { need: "links.read" };
 const need = (p: Need): Rule => ({ need: p });
 const session = (p: Need): Rule => ({ need: p, sessionOnly: true });
 
 export const RULES: Record<string, Rule> = {
-  // Links: everyone can view and copy them.
-  "GET /links": signedIn,
+  // Links: viewing and copying them takes some permission, whichever it is. Destinations
+  // and notes of password-protected links also need links.edit (checked in the handlers).
+  "GET /links": linkReader,
   "POST /links": need("links.create"),
-  "GET /links/:domain/:slug": signedIn,
+  "GET /links/:domain/:slug": linkReader,
   "PATCH /links/:domain/:slug": need("links.edit"),
-  "GET /links/:domain/:slug/dependents": signedIn,
+  "GET /links/:domain/:slug/dependents": linkReader,
   "DELETE /links/:domain/:slug": need("links.delete"),
-  "GET /links/:domain/:slug/history": signedIn,
+  "GET /links/:domain/:slug/history": linkReader,
   "POST /links/:domain/:slug/history/:id/restore": need("links.edit"),
-  "GET /links/:domain/:slug/cap": signedIn,
+  "GET /links/:domain/:slug/cap": linkReader,
   "POST /links/:domain/:slug/cap/reset": need("links.edit"),
-  "GET /deleted": signedIn,
+  "GET /deleted": linkReader,
   "POST /deleted/:domain/:slug/restore": need("links.delete"),
-  "GET /tags": signedIn,
+  "GET /tags": linkReader,
   "POST /tags/rename": need("links.edit"),
   "DELETE /tags/:tag": need("links.edit"),
-  "GET /links/by-target": signedIn,
+  "GET /links/by-target": linkReader,
   // Enable, disable and tags need links.edit, delete links.delete (checked in the handler).
   "POST /links/bulk": need({ any: ["links.edit", "links.delete"] }),
   // Overwriting existing links also needs links.edit (checked in the handler).
   "POST /import": need("links.create"),
   // Takes another service's API key: only from a signed-in session, never from a script's key.
   "POST /import/pull": session("links.create"),
-  "GET /export/links.json": signedIn,
+  "GET /export/links.json": linkReader,
   // Everything the workspace holds (without secrets): admins, from a signed-in session.
   // MCP for AI assistants: any signed-in key; each tool's own route then checks its permission.
   "POST /mcp": signedIn,
@@ -63,7 +67,7 @@ export const RULES: Record<string, Rule> = {
   "GET /backup": session("admin"),
   "GET /backup/:table": session("admin"),
   "POST /resync": need({ any: ["links.edit", "settings.manage"] }),
-  "GET /export/links.csv": signedIn,
+  "GET /export/links.csv": linkReader,
   // Shared statistics pages: they publish a link's stats, so both are needed.
   "GET /links/:domain/:slug/shares": need({ all: ["stats.view", "links.edit"] }),
   "POST /links/:domain/:slug/shares": need({ all: ["stats.view", "links.edit"] }),
@@ -97,7 +101,7 @@ export const RULES: Record<string, Rule> = {
   "PUT /checks/settings": need("settings.manage"),
   "POST /checks/recheck": need("health.manage"),
   "PUT /checks/confirmed": need("health.manage"),
-  "GET /checks/links/:domain/:slug": signedIn,
+  "GET /checks/links/:domain/:slug": linkReader,
   "POST /checks/links/:domain/:slug": need("health.manage"),
 
   // Link editor helpers.
@@ -139,10 +143,10 @@ export const RULES: Record<string, Rule> = {
   // The digest shows click statistics.
   "GET /settings/digest/preview": need({ all: ["settings.manage", "stats.view"] }),
   "POST /settings/digest/test": need("settings.manage"),
-  // Which email secrets are set: never for a key or token that may sit in a script.
+  // Which email secrets are set, and whether security email goes out at all: never for a key or token that may sit in a script.
   "GET /settings/mail": session("settings.manage"),
-  "PUT /settings/mail": need("settings.manage"),
-  "DELETE /settings/mail": need("settings.manage"),
+  "PUT /settings/mail": session("settings.manage"),
+  "DELETE /settings/mail": session("settings.manage"),
   "GET /settings/domains/check": need("settings.manage"),
   // Deletes a domain's links and stats: admins in the admin only, never a leaked key.
   "POST /settings/domains/purge": session("admin"),
@@ -163,6 +167,7 @@ export const RULES: Record<string, Rule> = {
   "POST /users/:email/pause": session("people"),
   "POST /users/:email/resume": session("people"),
   "POST /users/:email/sign-out": session("people"),
+  "POST /users/:email/revoke-keys": session("people"),
   "GET /keys": session("api.use"),
   "POST /keys": session("api.use"),
   "DELETE /keys/:id": session("api.use"),
@@ -187,12 +192,16 @@ export const RULES: Record<string, Rule> = {
   "GET /sites/:id/install-status": need("stats.view"),
   "GET /sites/:id/payments": need("revenue.view"),
   "GET /sites/:id/payments.csv": need("revenue.view"),
+  // Searches: POST so that an email searched for stays out of URLs. They change nothing.
+  "POST /sites/:id/payments/search": need("revenue.view"),
+  "POST /sites/:id/payments/search.csv": need("revenue.view"),
   "GET /sites/:id/subscriptions": need("revenue.view"),
   "GET /sites/:id/visitors/:visitor": need("revenue.view"),
   // One person's records: finding, exporting and erasing them touches customers' details, so both are needed.
   "POST /sites/:id/privacy/lookup": need({ all: ["sites.manage", "revenue.view"] }),
   "POST /sites/:id/privacy/export": need({ all: ["sites.manage", "revenue.view"] }),
   "POST /sites/:id/privacy/erase": need({ all: ["sites.manage", "revenue.view"] }),
+  "POST /sites/:id/privacy/reapply": need({ all: ["sites.manage", "revenue.view"] }),
   "GET /sites/:id/privacy/requests": need({ all: ["sites.manage", "revenue.view"] }),
   "POST /sites/:id/rematch": need("sites.manage"),
   "GET /sites/:id/funnels": need("stats.view"),
@@ -209,10 +218,48 @@ export const RULES: Record<string, Rule> = {
   "POST /sites/:id/identify": need("sites.manage"),
 };
 
+/**
+ * What the API_TOKEN secret may read unless API_TOKEN_SCOPE is "full": links,
+ * statistics and the workspace basics. A list, so a new route stays closed until
+ * it is added here. Never add a route that returns a value granting further
+ * access (webhook addresses, share addresses, payment connections) or customer
+ * data. Its writes are in src/worker/app.ts.
+ */
+export const TOKEN_READS: ReadonlySet<string> = new Set([
+  "GET /me",
+  "GET /openapi.json",
+  "GET /links",
+  "GET /links/by-target",
+  "GET /links/:domain/:slug",
+  "GET /links/:domain/:slug/dependents",
+  "GET /links/:domain/:slug/history",
+  "GET /links/:domain/:slug/cap",
+  "GET /deleted",
+  "GET /tags",
+  "GET /export/links.json",
+  "GET /export/links.csv",
+  "GET /stats/overview",
+  "GET /stats/account",
+  "GET /stats/live",
+  "GET /stats/peak-hours",
+  "GET /stats/recent",
+  "GET /stats/export.csv",
+  "GET /stats/links/:domain/:slug",
+  "GET /stats/links/:domain/:slug/peak-hours",
+  "GET /checks",
+  "GET /checks/links/:domain/:slug",
+  "GET /utm-presets",
+  "GET /qr/default",
+  "GET /settings",
+  "GET /settings/health",
+  "GET /settings/version",
+]);
+
 export function allowed(actor: Actor, rule: Rule): boolean {
   if (rule.sessionOnly && actor.via !== "session") return false;
   const n = rule.need;
   if (n === "signed-in") return true;
+  if (n === "links.read") return readsLinks(actor);
   if (n === "admin") return actor.role === "admin";
   if (n === "people") return actor.role === "admin" || actor.role === "manager";
   if (n === "self-non-owner") return !actor.owner;
@@ -222,20 +269,22 @@ export function allowed(actor: Actor, rule: Rule): boolean {
 
 const MOUNTS = ["/_admin/api", "/api"];
 
-/** The rule for a matched route ("GET /_admin/api/links/:domain/:slug"), whichever mount it came through. */
-export function ruleFor(method: string, path: string): Rule | undefined {
-  const mount = MOUNTS.find((m) => path.startsWith(`${m}/`));
-  return mount ? RULES[`${method} ${path.slice(mount.length)}`] : undefined;
-}
-
 export const FORBIDDEN = { error: "You don't have permission to do this.", code: "forbidden" } as const;
+
+/** The route the router chose, as "METHOD /path" with the mount taken off; null when only middleware matched. */
+export function routeKey(c: Context<AppEnv>): string | null {
+  // The router has already chosen the handler; ALL entries are middleware.
+  const route = matchedRoutes(c).find((r) => r.method !== "ALL");
+  if (!route) return null;
+  const mount = MOUNTS.find((m) => route.path.startsWith(`${m}/`));
+  return `${route.method} ${mount ? route.path.slice(mount.length) : route.path}`;
+}
 
 /** Runs after the auth guard: refuses what the actor may not do, and any route without a rule. */
 export const authorize: MiddlewareHandler<AppEnv> = async (c, next) => {
-  // The router has already chosen the handler; ALL entries are middleware.
-  const route = matchedRoutes(c).find((r) => r.method !== "ALL");
-  if (!route) return next(); // nothing but middleware matched: the app's 404
-  const rule = ruleFor(route.method, route.path);
+  const key = routeKey(c);
+  if (!key) return next(); // nothing but middleware matched: the app's 404
+  const rule = RULES[key];
   if (!rule || !allowed(c.get("actor"), rule)) return c.json(FORBIDDEN, 403);
   await next();
 };

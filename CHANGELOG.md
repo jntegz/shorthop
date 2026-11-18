@@ -3,6 +3,125 @@
 What changed in each Shorthop release, and what to do when you upgrade.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## [2.0.3] - 2026-11-18
+
+### Upgrading
+
+Work through this in order. Read the list of breaking changes at the end of this section before you start.
+
+1. **On every install, check retention first.** Open each website's Settings & setup → Privacy and look at **Customer data retention**. A period set there now covers visit history too, and old visits start being deleted at the first daily cleanup after the upgrade. Choose **Keep until the site is deleted** if you don't want that.
+2. **Update, depending on how you installed.**
+   - **With `npm run setup`:** run `git pull`, then `npm ci`, then `npm run setup -- upgrade`. `upgrade` rewrites `wrangler.jsonc` for this version, applies the migrations and deploys. It keeps what you added by hand: `ai`, `r2_buckets`, `KV_CACHE_TTL`, your own vars, `workers_dev`, extra bindings and routes, the `PEOPLE_MAIL` sender. A plain `npm run deploy` stops on a `wrangler.jsonc` from before 2.0.3, because that file doesn't say whether Cloudflare's invocation logs are on, and sends you to `upgrade`. It never applies migrations itself.
+   - **With the Deploy to Cloudflare button:**
+     1. In your copy on GitHub, replace `.github/workflows/update-shorthop.yml` with [this release's file](https://github.com/jntegz/shorthop/blob/v2.0.3/.github/workflows/update-shorthop.yml): open the file → Edit, paste, commit. If your copy has none: Add file → Create new file.
+     2. Run **Actions → Update Shorthop → Run workflow**, with the version left at `latest`.
+     3. Read the pull request, then merge it. Workers Builds deploys, and the deploy applies the migrations.
+
+     The workflow goes first because a workflow can't update itself and an update never touches `.github/workflows`: the run uses the file your copy has when it starts. With the new one, the release is only read as files, your copy's own updater does the work with install scripts off (a copy from before 1.2.0 uses the updater from 2.0.2, fixed by commit), and the token that can write appears only in the last step. If you skip step 1 the update still works, the old way: the new release's install scripts and code run in a job that can write to your repository.
+
+     Keep **non-production branch builds** off (Workers Builds → Settings → Build → Branch control). An update branch that does reach `npm run deploy` now stops before touching the database.
+   - **A copy you update with git:** pull as before and keep the new entries when `wrangler.toml` conflicts.
+3. **What gets applied.** Migrations `0038`–`0046` add columns, an index and two tables and rebuild one view. No row is deleted, but three change existing data: Gumroad payments on connections without an access token are labelled unverified, PayPal subscriptions already canceled or ended get the date Shorthop stored that (past churn can move to a later month), and only matches through an email your server reported still count as proof of who paid.
+4. **One new setting, `WORKERS_DEV_ADMIN`.** `"off"` stops the workers.dev address serving the admin, the API and shared statistics pages once `SHORT_DOMAINS` has a domain. Short links keep working there. `setup -- upgrade` writes `"off"`, except where `workers_dev` is on: there it writes `""`, so the admin you may rely on at that address stays. Your value is kept from then on. Deploy-button copies get `""`.
+5. **Then, by hand:**
+   - **Give a permission** to everyone, and every API key, that should keep reading links (see below).
+   - **Change your scripts** for anything in the list below.
+   - **Gumroad:** the Ping setting sends only sales. To record refunds, disputes and cancellations, add the resource subscriptions shown in the site's setup guide. The access token needs the `view_sales` scope: **Check connection** now tests this.
+   - **Deploy-button copies without `ENCRYPTION_KEY`:** the "Stored secrets" notice is now a real System status warning, and is included in alert emails if email is set up. Add the secret (32+ random characters) and keep a copy.
+   - **A plain `ADMIN_PASSWORD` under 16 characters without Cloudflare Access** now gets a System status warning too. It keeps working: replace it with a long random one.
+   - **Take a new backup.** Backups from before 2.0.3 don't record which links had a password: `scripts/restore-backup.ts` refuses them unless you add `--accept-lost-passwords`, and those links then come back open until you protect them again.
+   - **After any restore,** or after rolling D1 back, press **Re-apply erasures** in each website's Privacy section.
+
+#### Changes that can break scripts or habits
+
+- **The `API_TOKEN` secret reads less by default.** Unless `API_TOKEN_SCOPE` is `"full"` it can read only `/me`, `/openapi.json`, links (`/links` and each link's dependents, history and click limit), `/deleted`, `/tags`, the link exports, statistics, `/checks`, `/utm-presets`, `/qr/default`, `/settings`, `/settings/health` and `/settings/version`. Everything else answers 403, including webhooks, shared-statistics lists, all of `/sites/*`, `/settings/not-found`, `/settings/dead-link` and the digest preview. Missed visits are closed too: `/stats/misses` and `/stats/recent?event=miss` answer 403, and a plain `/stats/recent` leaves them out. Use a personal API key, or set `API_TOKEN_SCOPE` to `"full"`.
+- **No permission means no links.** A person with no permission ticked can still sign in, but sees a notice instead of links; admins and managers are unaffected. An API key needs a permission other than Personal API keys, or link routes answer 403. Existing people and keys aren't changed for you: tick what each should have.
+- **The "View only" preset is now "View links and statistics"** and grants See statistics. There is no links-only role any more.
+- **Where a password-protected link goes needs Edit links.** Without it, `target`, notes, UTM template, routing and bio come back empty and `links.json` leaves those links out. This also applies to the default API token.
+- **Mail settings are session-only.** `PUT` and `DELETE /api/settings/mail` no longer work with a key or token. For those, `digestProblem` is `null` and `POST /settings/digest/test` no longer gives the failure reason.
+- **`/api/settings/health` says less to keys and the default token.** Every check keeps its status, but `detail`, `fix` and `docs` come only for storage, analytics, rollup, destination checks, website events, domains and the fallback URL, and not when a check is in error. `lastAlert` is `null`.
+- **API keys pause with their owner.** A key stops working while its owner waits on a new invite link after a password reset, and every non-owner's key stops while `ADMIN_AUTH` is `password`. They work again once the person has a password or Access is back.
+- **Searching payments moved to POST.** `GET /sites/:id/payments` and `payments.csv` answer 400 when given `q`. Use `POST /sites/:id/payments/search` or `/search.csv` with the term in the JSON body.
+- **`http://` destinations are refused on import,** row by row with the reason, and no edit can set a new one, on imported links too. A link that already has that exact `http://` address keeps it, and a full restore keeps it.
+- **Importing `links.json` turns off a link that had a password,** unless the existing link still has one. Set a new password, then turn it on.
+- **Restoring a version keeps the link's current password.** To take the version's password, or its lack of one, tick the box in History or add `?password=version` to the restore call.
+- **`X-Shorthop-Domain` works on localhost only.** `check-slugs --base` against workers.dev now reads the primary domain: use `--per-domain`.
+- **Payment webhooks answer 503 instead of 429 when rate limited** (`/_pay/`, with `Retry-After`), because Gumroad doesn't retry a 429. They also answer 503 after storing an event that still needs a retry. Adjust monitoring that watches for either.
+- **`site.traffic_spike` is capped at three webhooks per site and run,** biggest first. The first carries `other_sources` and `other_sources_visits`. The alert email lists ten sources.
+- **Retention now removes visits** on sites that set a period: those last seen before it are deleted, up to 2,000 a day across all sites on Workers Free and 20,000 on Paid. A visit a payment is credited to stays only as its source, channel, referring host, campaign tags, short link and day: its visitor, pages, exact times, location and device go, so revenue by page, country or device shows it under an empty value. Older visit and visitor counts go down.
+- **Global Privacy Control and Do Not Track now apply whatever the site's setting says.** For such a browser, `identify` is ignored, there is no checkout reference (`shorthop.ref()` gives `null`, and `shorthop.ref(callback)` calls back with `null`), return-page references and checkout clicks aren't used for matching, and a short link to a hosted checkout adds no reference. **Respect Global Privacy Control and Do Not Track** still decides only whether the browser gets a visitor ID. Checkouts should go on without a reference.
+- **A checkout reference no longer says who paid.** It still credits the visit, but copies no email to the visitor and doesn't widen a privacy request. Only an email your server reported, or `visitorId` sent with `POST /sites/:id/payments`, counts as proof. Visitors linked only by a browser-claimed email or a reference are left out of lookups, exports and erasures unless you tick them (`"include": ["claimed_email", "payment_reference"]`); responses may carry `unproven` and `otherPayments`.
+- **Erasing someone changes ids.** A stored `session_id` or `credited_session_id` of their payments no longer matches, and `POST /sites/:id/identify` answers `{ "ok": true, "ignored": "erased" }` for a refused browser ID.
+- **Payment details:** `POST /sites/:id/payments` answers 409 for an id another site holds. On a connection with a product filter, a charge naming no product counts only if it carries a visit of that site, or no other site has an enabled connection for the provider without a filter. Pasted Gumroad webhook tokens need 24 characters. Payment CSVs gain `flag` and `unverified` at the end, and negative amounts are plain numbers.
+- **Pass-through links:** a parameter the destination already has keeps the destination's value. Before, both were sent.
+- **Link history** shows `admin · session 1a2b3c4d` and `api-token · network 1a2b3c4d` instead of `admin` and `api-token`.
+- **Bio pages:** buttons and social links follow the rules for link destinations, and a button can't be a pasted address on your own short domains (pick the link). A saved page keeps working until its next save, but a button or social link that breaks the rules, for example with a username or password in its address, is left out of it.
+- **Workers Free:** the collector's daily limit is now 60,000 database rows written, about 5,000 to 6,000 typical visits, instead of 15,000 events. A site can stop recording earlier or later in the day than before.
+- **Tracker:** `data-api` must be https or the page's own scheme, or tracking stays off. With `data-hash`, only `#/route` and `#!/route` count as pages. Paths, goals, UTM tags and `ref` values that look like emails or tokens are stored as `[email]` or `[redacted]`. The built-in banner no longer says "No ads, no sharing": set `data-consent-text` if you relied on it.
+- **MCP:** `tools/list` shows only what the key may use. `fetch_preview` is no longer marked read-only, takes https addresses of up to 512 characters, drops query strings and returns short fields.
+- **Logs:** Cloudflare's invocation logs and traces are turned off in the config, because addresses can hold secrets. The Worker's own logs stay. Turn them on in the dashboard while debugging; `"invocation_logs": true` set in `wrangler.jsonc` after this upgrade is kept.
+- **Backups:** `GET /_admin/api/backup/:table` pages with `cursor` (the previous page's `next`) instead of `offset`. Manifests are version 2.
+
+### Security
+
+- **Browsers have less say over payment credit.** A return-page reference counts only from an hour before the payment to 24 hours after it, or around the time the provider says the checkout began (Stripe Checkout, Paddle). It is a low-confidence match, and the buyer's own return page replaces one sent earlier from another visit. Visitors can't set the reference on a pass-through link to a hosted checkout. Short-link click tokens are tied to their site, count only exactly as issued, and one credits at most three visitors per ten minutes per Worker instance.
+- **Gumroad pings are checked against Gumroad.** With an access token, a sale is stored as Gumroad's API reports it, and a ping is refused only when Gumroad says the sale doesn't exist. A refund, dispute or cancellation counts as confirmed only when Gumroad's answer says so. Otherwise it is kept and labelled unverified until a later delivery or an import confirms it: an unverified refund or dispute of a confirmed sale counts as 0 in revenue, and an unconfirmed cancellation leaves the subscription as it was and shows in System status. Without a token, payments are labelled unverified.
+- **Payments stay with their site and in order.** A payment or subscription id held by another site isn't overwritten and is never announced under the wrong site. An older subscription event can't overwrite newer state.
+- **Erasure reaches further.** A kept visit gets new ids, so it can't be joined to Analytics Engine events. A payment credited to a visit that stays moves to an anonymous copy of it, so revenue by source doesn't change. Return-page references and short-link clicks of the payment go, and its provider ids can't be tied to a visit again. Erased browser IDs are refused for 400 days, as keyed hashes only.
+- **Withdrawing consent reaches the server,** which refuses that browser ID for 90 days, up to 1,000 IDs per site and day on Workers Free and 20,000 on Paid. Past that the browser still drops its ID.
+- **A password-protected link can't come back open** from a backup restore or a `links.json` import: it returns turned off. Restoring a version can't silently change its password.
+- **Admin:** state changes from another site's page are refused. Invite and reset pages no longer load the bot check's script. Preview images on other sites load only when you ask. Forms filled in by a link, and text taken from a destination page or written by AI from it, are labelled.
+- **MCP:** tool arguments can no longer reach other API routes, and results holding other people's text are labelled as untrusted. Labels don't stop prompt injection: limit what an assistant's key can do.
+- **Logs and limiters:** logs of unexpected errors no longer contain share, invite, reset or payment webhook addresses, and rate limiters get a keyed hash of the network instead of its address.
+- **Outbound requests** also refuse the documentation and benchmarking address ranges when written as IP addresses. `HEAD` on a link flagged as malware or phishing no longer reveals the destination.
+- **The new Update Shorthop workflow** checks that the release's version matches its tag and refuses a version older than yours unless you tick **allow downgrade**.
+- **CSV exports** share one formula-safety rule, including the QR code ZIP.
+
+### Permissions
+
+- **Password-protected links:** without Edit links, the destination and notes are hidden in lists, search, history, the deleted list, exports, top links, destination checks and "Check now", and a webhook's delivery log. Search and same-destination lookups don't match the hidden values.
+- **Webhooks:** one created, or pointed at a new address, by someone without Edit links isn't sent where protected links go, until someone with Edit links saves it. Existing webhooks keep receiving what they did.
+- **Adding a tag that feeds a shared report** needs See statistics, plus See revenue if the report shows revenue. An expired report counts, because extending it brings back every link with its tag. A revoked one doesn't.
+- **Visitor IDs in a website's live view** need See revenue.
+
+### Fixed
+
+- **Weekly backups** read about 1,000 rows per page however deep the table is, copy links, settings, people and payments first and visits last, and carry on from where they stopped on the following days instead of starting over.
+- **A full restore works.** `scripts/restore-backup.ts` turns a downloaded or R2 backup into SQL for a migrated database. API keys, webhooks and shares come back switched off, people need new invites, and visits without a visitor ID come back as anonymous visits, so older unique-visitor counts go up.
+- **`npm run setup` keeps your hand-added settings,** such as R2 backups, Workers AI and `KV_CACHE_TTL`.
+- **`links.json`** carries bio pages, "no longer working" marks and replacements, where a turned-off link sends visitors, and destination-check settings.
+- **Overlapping edits** no longer overwrite each other's fields, and the published link ends up matching the database when saves finish out of order.
+- **Login:** failed attempts from many networks no longer lock you out of a network you signed in from in the last 30 days. That network keeps its own limit.
+- **D1 writes:** attempts refused anyway (a locked network, a link's brake) write nothing, and on Workers Free wrong API keys and tokens are recorded up to about 5,000 a day. Past that they are still refused.
+- **Gumroad partial refunds** are stored at the refunded amount. When it can't be worked out, the refund counts as 0 and is flagged.
+- **Refunds and exchange rates:** a refund above its charge is capped and flagged, also when it arrives before the charge, and refunds together can't exceed it. One in another currency or without a charge is kept and flagged. Impossible exchange rates aren't stored, and jumps of 3x or more are reported.
+- **Sites sharing a provider account:** a charge goes to the site whose visit it names and a refund to the site with its charge, in either webhook order. A row another site stored first moves only if that site's copy of the event agrees, and without the email and customer ID stored with it. Otherwise the first site keeps it and the other's is counted in System status.
+- **Slow payments and trials:** a return page matches a Stripe bank debit or Paddle payment that settles days after checkout, and a subscription reference stored before the upgrade still matches, at low confidence, until it expires after 90 days.
+- **FastSpring batches on Workers Free** are stored in steps across FastSpring's retries. The connection shows what is waiting.
+- **PayPal cancellations** are dated when they happened, not when the subscription began.
+- **Webhook queue:** payments go first, traffic spikes last.
+- **Re-imported links with a click limit** start counting from zero.
+- **Imports from other shorteners:** one malformed Bitly address no longer stops a page, and answers over 5 MB are refused.
+- **`shorthop.ref(callback)`** always calls back, with `null` when there is no reference or no answer within 3 seconds. `ref` and `visitorId` may be `null` on `/payments` and `/identify`.
+- **Withdrawing consent** takes effect in every open tab of a consent site.
+- **Day-salt deletion** is retried.
+
+### Changed
+
+- **The admin's link form** sends only the fields you changed.
+- **Turning off or protecting a link** now says it can take a minute or two to apply everywhere.
+- **Payment alert emails** shorten source and campaign and mark them as reported by the visit.
+- **Documentation** says what events hold, what erasure can't reach, and that backups always include your team's emails and names.
+
+### Added
+
+- **Full or Minimal webhooks.** Minimal leaves out customer emails and visit details. Existing webhooks and API-created ones stay Full unless told otherwise; new ones in the admin start at Minimal. `site.payment` gains `match.proves_identity` and `visitor_supplied`.
+- **`version` on links.** Send it with `PATCH /links/...` and a stale one answers 409 `version_conflict`.
+- **Re-apply erasures** in a website's Privacy section, and `POST /sites/:id/privacy/reapply`. Fuller privacy exports, up to 50,000 visits, listing what they leave out.
+- **Revoke API keys** in the People menu. Revoking a key flags the webhooks it last changed, in Settings and System status, until someone saves them.
+- **Payment labels:** unverified and flagged payments in the Payments list, the overview and the CSV. **New address** replaces a Gumroad connection's webhook token.
+- **System status:** weekly backup state, payment checks, visitor salts past their time, generated secrets still in D1, webhooks from revoked keys and the admin answering on workers.dev. The Security panel lists accounts signed in from several networks.
+
 ## [2.0.2] - 2026-11-13
 
 ### Upgrading
@@ -344,6 +463,7 @@ A new admin, and the features that make Shorthop a place to move your links to.
 
 First release.
 
+[2.0.3]: https://github.com/jntegz/shorthop/compare/v2.0.2...v2.0.3
 [2.0.2]: https://github.com/jntegz/shorthop/compare/v2.0.1...v2.0.2
 [2.0.1]: https://github.com/jntegz/shorthop/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/jntegz/shorthop/compare/v1.3.0...v2.0.0

@@ -7,7 +7,7 @@ import { Activity, BarChart3, ChevronRight, ChevronsUpDown, Ellipsis, Globe, Lay
 import { useEffect, useState } from "react";
 import { Link, Outlet, useLocation, useNavigate } from "react-router";
 import { APP_NAME, AUTHOR_NAME, AUTHOR_URL, REPO_URL } from "../../shared/brand";
-import type { Permission } from "../../shared/permissions";
+import { readsLinks, type Permission } from "../../shared/permissions";
 import { LinkForm } from "../components/LinkForm";
 import { useSystemHealth } from "./hits/SystemStatus";
 import { linkPath, useDomains } from "../lib/links";
@@ -328,7 +328,17 @@ export function Shell() {
       </header>
 
       <main id="ui-main" className="ui-main" tabIndex={-1}>
-        <Outlet />
+        {/* Nothing ticked: every page would only say no. Their own account stays reachable under Settings. */}
+        {me && !readsLinks(me) && !pathname.startsWith("/settings") ? (
+          <div className="ui-page">
+            <div className="ui-state">
+              <p className="ui-state-title">You don’t have any permissions yet.</p>
+              <p className="ui-state-body">Ask an admin or manager to give you what you need. Until then there are no links to show here.</p>
+            </div>
+          </div>
+        ) : (
+          <Outlet />
+        )}
       </main>
 
       <nav aria-label="Main, phone" className="ui-tabbar" style={{ "--n": tabs.length + (rest.length ? 1 : 0) } as React.CSSProperties}>
