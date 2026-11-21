@@ -18,6 +18,7 @@ import { BackupSection, CloudflareSection, DomainsSection, ExportsSection, Publi
 import { ApiKeysSection, ApiSection, WebhooksSection } from "./integrations";
 import { DeadLinkSection, NotFoundSection } from "./pages";
 import { DigestSection, StatisticsSection } from "./reports";
+import { TrackingRulesSection } from "./tracking";
 import { UtmSection } from "./utm";
 
 /** Republishes links to KV, page by page: all of them, or only those on the default UTM template. */
@@ -66,6 +67,7 @@ const TAB_OF: Record<string, SettingsTab> = {
   people: "access",
   security: "access",
   "bot-check": "access",
+  "tracking-rules": "access",
 };
 
 function SettingsSkeleton() {
@@ -222,6 +224,7 @@ export function SettingsPage() {
                   {me.authMode === "password" ? <PasswordOnlyPeople /> : admin || me.role === "manager" ? <PeopleSection me={me} /> : null}
                   {admin && s?.security ? <SecuritySection me={me} security={s.security} /> : null}
                   {admin ? <BotCheckSection /> : null}
+                  {admin ? <TrackingRulesSection /> : null}
                 </>
               ) : null}
             </div>

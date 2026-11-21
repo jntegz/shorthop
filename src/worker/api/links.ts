@@ -16,13 +16,15 @@ import { generateSlug, validateSlug } from "../../shared/slug";
 import { normalizeTarget, validateUtmTemplate } from "../../shared/target";
 import type { BulkResult, CapDTO, ImportResult, ImportRowResult, LinkDTO, LinkListItem } from "../../shared/types";
 import { fullTokenScope, TOKEN_SCOPE_ERROR } from "../auth";
-import { getDefaultUtm, getLink, kvKey, nowSec, OFF_HOME, publish, splitKey, toDTO, toKv, type LinkRow } from "../db";
+import { getDefaultUtm, getLink, kvKey, nowSec, OFF_HOME, publish, published, publishLatest, publishSaved, samePublished, splitKey, toDTO, type LinkRow } from "../db";
 import { configuredDomains, domainsOf, isConfiguredDomain, NO_DOMAIN_ERROR, selfHosts, shortOrigin } from "../domains";
 import { csv, validate, type AppEnv } from "../hono";
 import { planLimits } from "../plan";
 import { changedFields, emit, emitAll, linkPayload, type Event } from "../webhooks";
 import { deletedLinks, getVersion, listVersions, savedVersionStmt, SNAPSHOT_SQL, versionStmt } from "../history";
 import { clicksByLink } from "../stats-data";
+import { deleteLinkClicksStmts, trackingPolicy } from "../tracking";
+import { fetchNetworkListsOnce, resolveTracking } from "./tracking";
 import { checkedSql, getCheckSettings } from "../link-check";
 
 function isUniqueViolation(err: unknown): boolean {
@@ -32,8 +34,10 @@ function isUniqueViolation(err: unknown): boolean {
 /** A link as the API returns it, with the short URL of its own domain. */
 function dto(c: Context<AppEnv>, row: LinkRow): LinkDTO {
   const link = toDTO(row, shortOrigin(c.env, c.req.raw, row.domain));
+  // Who accepted the GDPR warning for IP addresses (an email) belongs with the click log.
+  const tracked = link.tracking && !can(c.get("actor"), "clicks.view") ? { ...link, tracking: { ...link.tracking, ackBy: null } } : link;
   // Clicks counted before an import are statistics too.
-  const shown = seesStats(c) ? link : { ...link, importedClicks: null };
+  const shown = seesStats(c) ? tracked : { ...tracked, importedClicks: null };
   return link.protected && !seesProtected(c) ? { ...shown, target: "", notes: "", utmTemplate: null, routing: null, bio: null } : shown;
 }
 
@@ -84,10 +88,11 @@ const notConfigured = (domain: string) => `domain: "${domain}" is not one of you
 function insertStmt(db: D1Database, r: LinkRow): D1PreparedStatement {
   return db
     .prepare(
-      `INSERT INTO links (domain, slug, target, active, expires_at, utm, utm_template, pass_query, title, tags, notes, source, imported_clicks, broken, replacement, off_redirect, monitor, routing, preview, qr, password_hash, max_clicks, unsafe, unsafe_at, bio, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO links (domain, slug, target, active, expires_at, utm, utm_template, pass_query, title, tags, notes, source, imported_clicks, broken, replacement, off_redirect, monitor, routing, preview, qr, password_hash, max_clicks, unsafe, unsafe_at, bio, tracking, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .bind(r.domain, r.slug, r.target, r.active, r.expires_at, r.utm, r.utm_template, r.pass_query, r.title, r.tags, r.notes, r.source, r.imported_clicks, r.broken, r.replacement, r.off_redirect, r.monitor, r.routing, r.preview, r.qr, r.password_hash, r.max_clicks, r.unsafe ?? 0, r.unsafe_at ?? null, r.bio ?? null, r.created_at, r.updated_at);
+    // tracking: only a new link created with it on sets it; a restored link starts without (snapshots never carry it).
+    .bind(r.domain, r.slug, r.target, r.active, r.expires_at, r.utm, r.utm_template, r.pass_query, r.title, r.tags, r.notes, r.source, r.imported_clicks, r.broken, r.replacement, r.off_redirect, r.monitor, r.routing, r.preview, r.qr, r.password_hash, r.max_clicks, r.unsafe ?? 0, r.unsafe_at ?? null, r.bio ?? null, r.tracking ?? null, r.created_at, r.updated_at);
 }
 
 /** What an edit can change on a link, column by column. */
@@ -120,42 +125,6 @@ function updateStmt(db: D1Database, before: LinkRow, r: LinkRow, rev: string, ex
   binds.push(r.domain, r.slug);
   if (expected !== undefined) binds.push(expected);
   return db.prepare(`UPDATE links SET ${sets.join(", ")} WHERE domain = ? AND slug = ?${expected !== undefined ? " AND COALESCE(rev, '0') = ?" : ""} RETURNING *`).bind(...binds);
-}
-
-/** Publishes a saved link to KV; false when that failed (it's saved in D1 either way: answer 502 with the link). */
-async function published(env: Env, row: LinkRow): Promise<boolean> {
-  try {
-    await publishSaved(env, row);
-    return true;
-  } catch (err) {
-    console.error(JSON.stringify({ message: "kv publish failed", domain: row.domain, slug: row.slug, error: String(err) }));
-    return false;
-  }
-}
-
-/** Whether two states of a link publish the same record ("" stands in for the default UTM template on both sides). */
-const samePublished = (a: LinkRow, b: LinkRow) => JSON.stringify(toKv(a, "")) === JSON.stringify(toKv(b, ""));
-
-/**
- * Publishes a saved link and reads it back. Two saves can reach KV in the
- * opposite order from D1; whoever publishes last then sees that D1 holds
- * something else and publishes that, so KV ends up matching D1. "gone": the
- * link was deleted meanwhile, and its record is removed again.
- */
-async function publishLatest(env: Env, saved: LinkRow): Promise<"ok" | "failed" | "gone"> {
-  let row = saved;
-  for (let round = 0; round < 3; round++) {
-    if (!(await published(env, row))) return "failed";
-    const latest = await getLink(env.DB, row.domain, row.slug);
-    if (!latest) {
-      // Together with the delete's second KV pass, KV ends up matching D1 whichever way the two interleave.
-      await env.LINKS.delete(kvKey(row.domain, row.slug));
-      return "gone";
-    }
-    if (samePublished(latest, row)) return "ok";
-    row = latest;
-  }
-  return "ok";
 }
 
 /** The answer when `version` no longer matches. It names the current version so a client can read the link and decide. */
@@ -380,17 +349,6 @@ const PUBLISH_FAILED = "Saved, but publishing to KV failed. Save it again in a m
 /** Rows GET /links returns at most. */
 const LIST_LIMIT = 5000;
 
-/** Publishes a link D1 already holds, trying once more after a short pause (KV writes can fail transiently). */
-async function publishSaved(env: Env, row: LinkRow): Promise<void> {
-  const defaultUtm = await getDefaultUtm(env.DB);
-  try {
-    await publish(env, row, defaultUtm);
-  } catch {
-    await new Promise((r) => setTimeout(r, 300));
-    await publish(env, row, defaultUtm);
-  }
-}
-
 export const linksApi = new Hono<AppEnv>()
   .get("/links", validate("query", listQuerySchema), async (c) => {
     const { domain, q, tag, status, sort, period } = c.req.valid("query");
@@ -522,6 +480,8 @@ export const linksApi = new Hono<AppEnv>()
             c.env.DB.prepare("DELETE FROM links WHERE domain = ? AND slug = ?").bind(r.domain, r.slug),
             versionStmt(c.env.DB, r, "delete", identity),
             c.env.DB.prepare("UPDATE stat_shares SET revoked_at = ? WHERE domain = ? AND slug = ? AND revoked_at IS NULL").bind(now, r.domain, r.slug),
+            // Its click log (Advanced tracking) goes with it: a restored link starts without one.
+            ...deleteLinkClicksStmts(c.env.DB, r.domain, r.slug),
           ]),
         );
         await emitAll(c.env, gone.map((r) => ({ type: "link.deleted", data: { link: linkPayload(r) } })), { ctx: c.executionCtx });
@@ -600,6 +560,14 @@ export const linksApi = new Hono<AppEnv>()
     if (!bio.ok) return c.json({ error: bio.error }, 400);
     const refusedTag = await refusedTags(c, body.tags ?? []);
     if (refusedTag) return c.json({ error: refusedTag, code: "forbidden" }, 403);
+    // Advanced tracking switched on from the start: the same rules as PUT …/tracking, which also needs See click logs.
+    let tracking: string | null = null;
+    if (body.tracking) {
+      if (!can(c.get("actor"), "clicks.view")) return c.json({ error: "Switching on Advanced tracking needs the See click logs permission.", code: "forbidden" }, 403);
+      const resolved = resolveTracking(c, body.tracking, null, await trackingPolicy(c.env));
+      if (!resolved.ok) return c.json({ error: `tracking: ${resolved.error}`, code: resolved.code }, resolved.status);
+      tracking = JSON.stringify(resolved.config);
+    }
 
     const now = nowSec();
     // Malware or phishing, per Cloudflare's security DNS: saved, but visitors are warned first.
@@ -630,6 +598,7 @@ export const linksApi = new Hono<AppEnv>()
       qr: null,
       password_hash: body.password ? await hashLinkPassword(c.env, body.password) : null,
       max_clicks: body.maxClicks ?? null,
+      tracking,
       created_at: now,
       updated_at: now,
     };
@@ -655,6 +624,7 @@ export const linksApi = new Hono<AppEnv>()
     if (!row) return c.json({ error: "Could not generate a free slug. Try again." }, 500);
     // A deleted link with this slug may have left a count behind.
     if (row.max_clicks) await resetCounter(c.env, row);
+    if (tracking) await fetchNetworkListsOnce(c);
 
     try {
       await publishSaved(c.env, row);
@@ -800,6 +770,8 @@ export const linksApi = new Hono<AppEnv>()
       c.env.DB.prepare("DELETE FROM links WHERE domain = ? AND slug = ? RETURNING *").bind(domain, slug),
       // Its shared statistics pages end for good, even if the link is restored.
       c.env.DB.prepare("UPDATE stat_shares SET revoked_at = ? WHERE domain = ? AND slug = ? AND revoked_at IS NULL").bind(nowSec(), domain, slug),
+      // Its click log (Advanced tracking) goes with it: a restored link starts without one.
+      ...deleteLinkClicksStmts(c.env.DB, domain, slug),
     ]);
     // Again, for an edit that published between the two steps above (its own check covers later ones).
     await c.env.LINKS.delete(kvKey(domain, slug));

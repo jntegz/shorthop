@@ -1,6 +1,6 @@
 import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { isCleanupRun, isRevenueRun, isWebRollupRun, lastJobRun } from "../src/worker/health";
+import { isCleanupRun, isRevenueRun, isTrackingRun, isWebRollupRun, lastJobRun } from "../src/worker/health";
 import worker from "../src/worker/index";
 import { RUNS_PER_DAY } from "../src/worker/link-check";
 import { enableChecks, resetData } from "./helpers";
@@ -102,8 +102,8 @@ describe("cron dispatch", () => {
   it("counts the runs a day that check destinations", () => {
     const day = Array.from({ length: 48 }, (_, i) => new Date(Date.UTC(2026, 10, 9, 0, i * 30)));
     // The slots the half-hourly cron gives to other work (src/worker/index.ts), on a weekday.
-    const other = day.filter((d) => isCleanupRun(d) || isWebRollupRun(d) || isRevenueRun(d));
-    expect(other).toHaveLength(3);
+    const other = day.filter((d) => isCleanupRun(d) || isWebRollupRun(d) || isRevenueRun(d) || isTrackingRun(d));
+    expect(other).toHaveLength(4);
     expect(RUNS_PER_DAY).toBe(day.length - other.length);
   });
 });

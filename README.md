@@ -6,7 +6,7 @@
 
 **Short links on your own domain, and the paying customers they bring, in one Cloudflare Worker you own.**
 
-Put a link in a LinkedIn post or on a printed QR code, then see the clicks, the visits and the Stripe payment it led to. Shorthop runs in your own Cloudflare account, so no shortener's plan decides whether your links keep working or how much history you keep. It stores no IP addresses and sets no cookies. For most people it fits in Cloudflare's free allowances.
+Put a link in a LinkedIn post or on a printed QR code, then see the clicks, the visits and the Stripe payment it led to. Shorthop runs in your own Cloudflare account, so no shortener's plan decides whether your links keep working or how much history you keep. It sets no cookies and stores no IP addresses, unless you switch on Advanced tracking for a link. For most people it fits in Cloudflare's free allowances.
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/jntegz/shorthop)
 <br><sub>You don't need a terminal: Cloudflare's setup page asks only for an admin password. [What each field means](docs/SETUP.md#deploy-form) · Coming from Bitly, Rebrandly, Short.io or Dub? [Bring your links](#leaving-another-shortener)</sub>
@@ -33,12 +33,13 @@ What users of hosted shorteners keep running into, and what Shorthop does instea
 
 - **Revenue per link.** A short link takes someone to your site, and Shorthop follows that visit to the payment it led to. A link straight to a Stripe, Lemon Squeezy, Dodo, Creem or Gumroad checkout is credited too, with no website in between. Revenue is broken down by link, channel, campaign and landing page.
 - **Everything in your account.** Links live on `go.yourdomain.com`, and every number stays in your Cloudflare account. Back it all up as one ZIP whenever you like.
-- **Cookieless.** Nothing is stored in the visitor's browser, and Shorthop keeps no IP addresses. Unique visitors are counted with a daily hash that can't be traced back afterwards.
+- **Cookieless.** Nothing is stored in the visitor's browser, and Shorthop keeps no IP addresses (only Advanced tracking can, on links where an admin allows it). Unique visitors are counted with a daily hash that can't be traced back afterwards.
 - **Reports you can send.** Send a sponsor or client a live, read-only page for one link, or a campaign report for a tag or a set of links, with revenue if you choose. They never see your login or your destinations.
 - **Free to run.** One Worker on Cloudflare's free tier covers most personal use (100,000 requests a day). Install it with one button.
 
 ## What's new in 2.0
 
+- **Advanced tracking (2.0.3):** switch on a click log for one link, like an IP logger but on your own Cloudflare account and without any outside service. Each click shows the exact time, city and postal code, network and its name, Tor, VPN and hosting hints, device model and versions, languages, the full referrer and numbered repeat visits, in a list or on a map. Optionally the IP address (encrypted), a few values from the browser, an email-open pixel and an email on the first click. Admins set the rules, a purpose is required, and a guide in the admin walks through the GDPR side. [How it works](docs/ADVANCED-TRACKING.md)
 - **A new admin.** Every page is rebuilt: analytics, links, websites, live hits and settings, in light and dark, with ⌘K to jump anywhere, `c` to create a link, and a layout made for phones.
 - **Revenue from links straight to a checkout:** Stripe Payment Links, Lemon Squeezy, Dodo, Creem and Gumroad.
 - **Campaign reports:** one read-only page for a tag or a set of links, optionally with revenue, for sponsors and clients.
@@ -80,8 +81,9 @@ Earlier releases are in the [changelog](CHANGELOG.md).
 
 - **Per click:** country, region, city, device, OS, browser, referrer, source tag and language. Humans, bots and misses are counted separately.
 - **Live map:** a globe of the latest human clicks, at city level, with the top countries and links.
+- **Advanced tracking (opt-in per link):** a log of each click with every detail Cloudflare has: exact time, city, postal code, coordinates and time zone, network and its reverse-DNS name, Tor, VPN-provider, hosting and relay hints, device model, system and browser versions, languages, the full referrer and numbered repeat visitors, as a list or a map, with CSV export. Optionally the IP address (AES-GCM encrypted, visible only with **See IP addresses**), browser details (screen, time zone and a "VPN?" hint when it disagrees with the IP), an email-open pixel that tells Gmail's proxy and Outlook from scanners, emails on the first or every click, and a `link.tracked_click` webhook with the IP masked. Workspace rules for admins (IP off by default, the longest retention, a required purpose), retention of 7 days to a year, and finding or erasing one person's clicks by IP. No WebRTC leaks, GPS prompts or fingerprinting, on purpose. See [Advanced tracking](docs/ADVANCED-TRACKING.md).
 - **When people click:** a weekday × hour heatmap in your own time zone, per link and for the whole account.
-- **Private by design:** Shorthop stores no IP addresses or cookies (Cloudflare, which runs it, sees them to deliver the request). Unique visitors are counted with a daily hash whose random salt is deleted once the day is over. See [visitor privacy](docs/PRIVACY.md).
+- **Private by design:** Shorthop stores no IP addresses or cookies (Cloudflare, which runs it, sees them to deliver the request). The exception is Advanced tracking in IP mode, which an admin has to allow. Unique visitors are counted with a daily hash whose random salt is deleted once the day is over. See [visitor privacy](docs/PRIVACY.md).
 - **Any period:** today, 7, 30 or 90 days, 12 months, all time or any dates, compared with the previous period.
 - **Kept for good:** a daily job saves each day into D1, so stats outlive Analytics Engine's 90-day retention.
 
@@ -230,6 +232,7 @@ Read the [changelog](CHANGELOG.md)'s Upgrading notes for each version first.
 - **[Cloudflare free tier](docs/CLOUDFLARE-FREE-TIER.md):** what each service allows and what Shorthop uses
 - **[iOS Shortcut](docs/ios-shortcut.md):** shorten a link from the share sheet
 - **[Visitor privacy](docs/PRIVACY.md):** what Shorthop records about visitors, for your privacy notice
+- **[Advanced tracking](docs/ADVANCED-TRACKING.md):** the per-link click log, its rules, permissions, API and design
 - **[Design system](docs/DESIGN.md):** the admin's tokens, components and layout rules, for contributors
 - **[Security](SECURITY.md):** reporting a vulnerability, protections and a hardening checklist
 - **[Contributing](CONTRIBUTING.md):** reporting bugs, running it locally and opening a pull request, under the [Code of Conduct](CODE_OF_CONDUCT.md)
@@ -332,6 +335,8 @@ npm run types            # then regenerate worker-configuration.d.ts
 | `/_t/script.js` | The website analytics script, on every host (CORS `*`, cached an hour) |
 | `/_t/e` | Its collector: one event per POST. The Origin and page must belong to the site, bots are dropped, and `COLLECT_LIMITER` brakes floods per network |
 | `/_pay/<provider>/<connection>` | Payment webhooks, checked with the connection's secret; each event is processed once. `PUBLIC_LIMITER` per network before any lookup |
+| `/_p/<slug>(.gif)` | The email-open pixel of a tracked link: always the same transparent GIF, for any slug. An open is recorded only for a live link with Advanced tracking and the pixel on, `PUBLIC_LIMITER` per network |
+| `/_k` | The browser-details report of a tracked link: a signed, 10-minute token per click, one report each, `PUBLIC_LIMITER` per network |
 | `/_share/<id>.<secret>` | A shared statistics page, on the admin host only. Read-only, optionally password-protected, `PUBLIC_LIMITER` per network |
 | `/` | 302 to `FALLBACK_URL` (or to `/_admin/` on a separate admin host) |
 | `/_admin` | 301 to `/_admin/` |

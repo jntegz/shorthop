@@ -6,7 +6,7 @@
 // the More menu.
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Copy, Ellipsis, ExternalLink, History, Pencil, Power, QrCode, Share2, Trash2 } from "lucide-react";
+import { ArrowLeft, Copy, Ellipsis, ExternalLink, History, Pencil, Power, QrCode, Radar, Share2, Trash2 } from "lucide-react";
 import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router";
 import { toast } from "sonner";
@@ -27,6 +27,7 @@ import { Badge, Button, Columns, Dialog, ErrorState, errorText, IconButton, Menu
 import { isNotFound, useDependents, useLink, useLinkCheck, useLinkMoney, useLinkRecent, useLinkStats } from "./data";
 import { Facts } from "./Facts";
 import { LinkPageHistory } from "./History";
+import { ClickLog, TrackingDialog } from "./Tracking";
 import { DevicesPanel, EmptyPeriod, LatestHits, LinkChart, LinkKpis, MoneyPanel, OtherPanel, PlacesPanel, rangeText, RoutingPanel, SourcesPanel, useLinkBuckets } from "./Stats";
 
 // QR rendering and scan testing load only when the studio opens.
@@ -161,6 +162,8 @@ function Loaded({ link }: { link: LinkDTO }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [power, setPower] = useState(false);
   const [sharing, setSharing] = useState(false);
+  const [tracking, setTracking] = useState(false);
+  const canTrack = edits && can("clicks.view");
   useFocusFirstField(editing);
 
   const stats = useLinkStats(domain, slug, period, showStats);
@@ -176,7 +179,7 @@ function Loaded({ link }: { link: LinkDTO }) {
 
   // "Statistics" on the links list opens this page at #stats; Link health's "Fix" at #edit.
   useEffect(() => {
-    if (hash === "#stats" || hash === "#history" || hash === "#settings") requestAnimationFrame(() => scrollToId(hash.slice(1)));
+    if (hash === "#stats" || hash === "#history" || hash === "#settings" || hash === "#clicks") requestAnimationFrame(() => scrollToId(hash.slice(1)));
     if (hash === "#edit") {
       if (edits) setEditing(true);
       navigate({ hash: "" }, { replace: true });
@@ -208,6 +211,7 @@ function Loaded({ link }: { link: LinkDTO }) {
     { label: "QR code", icon: QrCode, onSelect: () => setQr(true) },
     ...(canShare ? [{ label: "Share statistics…", icon: Share2, onSelect: () => setSharing(true) }] : []),
     ...(edits ? [{ label: link.active ? "Disable…" : "Enable…", icon: Power, onSelect: () => setPower(true) }] : []),
+    ...(canTrack ? [{ label: "Advanced tracking…", icon: Radar, onSelect: () => setTracking(true) }] : []),
     { label: "History", icon: History, onSelect: () => scrollToId("history") },
     ...(can("links.delete") ? ["separator" as const, { label: "Delete link…", icon: Trash2, danger: true, onSelect: () => setConfirmDelete(true) }] : []),
   ];
@@ -378,6 +382,8 @@ function Loaded({ link }: { link: LinkDTO }) {
         </div>
       ) : null}
 
+      <ClickLog link={link} onSettings={canTrack ? () => setTracking(true) : undefined} />
+
       <Facts link={link} onEdit={edits ? () => setEditing(true) : undefined} onMarkBroken={markAsBroken} onShare={canShare ? () => setSharing(true) : undefined} activeShares={activeShares} />
 
       <LinkPageHistory link={link} />
@@ -394,6 +400,7 @@ function Loaded({ link }: { link: LinkDTO }) {
         />
       ) : null}
       {edits && power ? <LinkPower link={link} open={power} onOpenChange={setPower} /> : null}
+      {canTrack ? <TrackingDialog link={link} open={tracking} onOpenChange={setTracking} /> : null}
       {canShare && sharing ? <ShareStats link={link} label={label} open={sharing} onOpenChange={setSharing} /> : null}
       {qr ? (
         <Suspense fallback={null}>

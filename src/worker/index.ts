@@ -5,7 +5,7 @@ import { app } from "./app";
 import { SERVED_BY_HEADER } from "./dns-check";
 import { resolveSite } from "./domains";
 import { runSiteAlerts } from "./web/alerts";
-import { isCleanupRun, isRevenueRun, isWebRollupRun, scheduledCleanup, scheduledDaily, scheduledDigest, scheduledLinkChecks, scheduledRevenue, scheduledWebRollup } from "./health";
+import { isCleanupRun, isRevenueRun, isTrackingRun, isWebRollupRun, scheduledCleanup, scheduledDaily, scheduledDigest, scheduledLinkChecks, scheduledRevenue, scheduledWebRollup } from "./health";
 import { backupPending, isBackupRun, scheduledBackup } from "./backup";
 import { planLimits } from "./plan";
 import { PREVIEW_IMAGE_PATH } from "../shared/preview";
@@ -13,13 +13,15 @@ import { servePreviewImage } from "./preview";
 import { loginApp } from "./login";
 import { notFoundResponse, serveNotFoundImage } from "./not-found";
 import { serveShare, SHARE_PREFIX } from "./share";
-import { handleRedirect, redirectTo } from "./redirect";
+import { handleRedirect, publicLimit, redirectTo } from "./redirect";
 import { handlePaymentWebhook, PAY_PREFIX } from "./revenue/ingest";
 import { redactSecrets, safePath } from "./redact";
 import { withHsts } from "./hsts";
 import { withGeneratedSecrets } from "./secrets";
 import { COLLECT_PATH, handleCollect } from "./web/collect";
 import { SCRIPT_PATH, serveScript } from "./web/script";
+import { PIXEL_PREFIX, TRACKING_BEACON_PATH } from "../shared/tracking";
+import { handleBeacon, handlePixel, scheduledTracking } from "./tracking";
 
 /** Server-rendered password pages (src/worker/login.ts). */
 const LOGIN_PATHS = new Set(["/_admin/login", "/_admin/logout", "/_admin/forgot", "/_admin/bot-check"]);
@@ -61,6 +63,11 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
   if (path === "/health") return new Response("ok", { headers: { "Cache-Control": "no-store", [SERVED_BY_HEADER]: "ok" } });
   if (isPreviewImage && (request.method === "GET" || request.method === "HEAD")) return servePreviewImage(env, url, ctx);
 
+  // The browser-details page of a link with Advanced tracking reports here (src/worker/tracking.ts). Each report is a D1 write: braked per network.
+  if (path === TRACKING_BEACON_PATH) return (await publicLimit(request, env)) ?? handleBeacon(request, env);
+  // The email-open pixel of a tracked link (src/worker/tracking.ts). The image always loads; past the brake, opens aren't recorded.
+  if (path.startsWith(PIXEL_PREFIX)) return handlePixel(request, env, ctx, url, site.domain, async () => !(await publicLimit(request, env)));
+
   // Everything else is a slug on this domain. No framework on this path.
   return handleRedirect(request, env, ctx, url, site.domain);
 }
@@ -98,6 +105,7 @@ export default {
       if (isCleanupRun(now)) run("cleanup run", scheduledCleanup(env, now));
       else if (isWebRollupRun(now)) run("website rollup run", scheduledWebRollup(env, now));
       else if (isRevenueRun(now)) run("revenue run", scheduledRevenue(env));
+      else if (isTrackingRun(now)) run("tracking run", scheduledTracking(env));
       // Early mornings copy the weekly backup to R2, when a bucket is bound (BACKUPS) and one is due or unfinished.
       // Once it is complete, the remaining slots check destinations as on any other day.
       else if (isBackupRun(now) && (env as { BACKUPS?: unknown }).BACKUPS && (await backupPending(env, now))) run("backup run", scheduledBackup(env, now, planLimits(env).backupCalls));

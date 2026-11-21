@@ -3,7 +3,7 @@
 // same definitions to show only what someone can do.
 
 /** Everything someone can be allowed to do. Holding any of them also lets a person view and copy links (readsLinks). */
-export const PERMISSIONS = ["links.create", "links.edit", "links.delete", "stats.view", "revenue.view", "sites.manage", "health.manage", "settings.manage", "api.use"] as const;
+export const PERMISSIONS = ["links.create", "links.edit", "links.delete", "stats.view", "clicks.view", "clicks.ip", "revenue.view", "sites.manage", "health.manage", "settings.manage", "api.use"] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 
 export const ROLES = ["admin", "manager", "user"] as const;
@@ -14,6 +14,8 @@ export const PERMISSION_INFO: Record<Permission, { label: string; description: s
   "links.edit": { label: "Edit links", description: "Change any setting, turn links on or off, retire them and restore older versions." },
   "links.delete": { label: "Delete links", description: "Delete links and bring deleted ones back." },
   "stats.view": { label: "See statistics", description: "Overview, Full statistics and each link's statistics." },
+  "clicks.view": { label: "See click logs", description: "Each click on links with Advanced tracking: time, location, network, device, browser details. Without IP addresses." },
+  "clicks.ip": { label: "See IP addresses", description: "IP addresses on links that record them, finding and erasing a person's clicks by IP, and switching IP recording on." },
   "revenue.view": { label: "See revenue", description: "Payments, revenue and customers of tracked websites, and revenue per short link." },
   "sites.manage": { label: "Manage websites", description: "Add tracked websites, change their settings and connect payment providers." },
   "health.manage": { label: "Link health & misses", description: "Check destinations and see and clear missed visits." },

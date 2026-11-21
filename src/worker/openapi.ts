@@ -26,6 +26,7 @@ import {
   utmPresetSchema,
 } from "../shared/schemas";
 import { apiIdentifySchema, apiPaymentSchema, breakdownQuerySchema, createSiteSchema, eventListQuerySchema, funnelSchema, goalPropsQuerySchema, paymentsQuerySchema, paymentsSearchSchema, peakQuerySchema, siteQuerySchema, updateSiteSchema } from "../shared/sites";
+import { clicksQuerySchema, ipSchema, trackingSchema } from "../shared/tracking";
 import { RULES } from "./permissions";
 
 interface Route {
@@ -51,6 +52,18 @@ export const CATALOG: Record<string, Route> = {
   "POST /links/:domain/:slug/history/:id/restore": { tag: "Links", summary: "Put a link back the way it was in a version. Its password stays as it is now unless you add ?password=version" },
   "GET /links/:domain/:slug/cap": { tag: "Links", summary: "A capped link's click counter (the count needs stats.view; without it only the limit)" },
   "POST /links/:domain/:slug/cap/reset": { tag: "Links", summary: "Start a capped link's count again" },
+  "PUT /links/:domain/:slug/tracking": {
+    tag: "Advanced tracking",
+    summary: "Switch a link's click log on (mode details or ip), change it, or send null to switch it off. ip needs clicks.ip and acknowledged: true (the GDPR warning). The workspace's rules (GET /tracking/policy) apply: a purpose may be required, and IP, browser details, the pixel and long retention may be refused",
+    body: trackingSchema,
+  },
+  "GET /tracking/policy": { tag: "Advanced tracking", summary: "The workspace's rules: whether tracking, IP addresses, browser details and the pixel are allowed, the longest retention, and whether a purpose is required" },
+  "GET /links/:domain/:slug/clicks": { tag: "Advanced tracking", summary: "A tracked link's click log, newest first: location, network flags, device, browser details. IP addresses only with clicks.ip", query: clicksQuerySchema },
+  "GET /links/:domain/:slug/clicks.csv": { tag: "Advanced tracking", summary: "The click log as CSV", query: clicksQuerySchema, produces: "text/csv" },
+  "DELETE /links/:domain/:slug/clicks": { tag: "Advanced tracking", summary: "Delete a link's whole click log" },
+  "DELETE /links/:domain/:slug/clicks/:id": { tag: "Advanced tracking", summary: "Delete one tracked click" },
+  "POST /clicks/by-ip": { tag: "Advanced tracking", summary: "Every tracked click from one IP address, on any link (a person's access request)", body: ipSchema },
+  "POST /clicks/by-ip/erase": { tag: "Advanced tracking", summary: "Erase every tracked click from one IP address (a person's erasure request)", body: ipSchema },
   "GET /links/by-target": { tag: "Links", summary: "Links that already go to a destination", query: byTargetQuerySchema },
   "POST /links/bulk": { tag: "Links", summary: "Enable, disable, tag, untag or delete many links (20 per request on Workers Free, 100 on Paid)", body: bulkSchema },
   "GET /deleted": { tag: "Links", summary: "Recently deleted links" },
@@ -148,6 +161,7 @@ export const CATALOG: Record<string, Route> = {
 
 /** Routes left out of the public reference: admin-only settings, people, keys, secrets and other sign-in-only tools. */
 export const INTERNAL = new Set([
+  "PUT /tracking/policy",
   "GET /mcp",
   "GET /openapi.json",
   "POST /import/pull",

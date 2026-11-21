@@ -3,7 +3,26 @@
 What changed in each Shorthop release, and what to do when you upgrade.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
-## [2.0.3] - 2026-11-18
+## [2.0.3] - 2026-11-21
+
+The headline is **Advanced tracking**: an opt-in click log for a single link, with every detail Cloudflare knows about each click and, if an admin allows it, the IP address. It comes with workspace rules, two new permissions and a guide for the people who use it. The release also has a large set of security and privacy fixes across API access, MCP, payments, website analytics, erasure, backups and the update workflow; read **Upgrading** before you update.
+
+### Added: Advanced tracking
+
+Off for every link until someone switches it on: in **Create a new link** (a new Advanced tracking section) or on the link page → More → **Advanced tracking…**. Everything comes from the request Cloudflare already handles and, optionally, the visitor's browser. No outside service is asked about anyone. [docs/ADVANCED-TRACKING.md](docs/ADVANCED-TRACKING.md) has the full reference.
+
+- **The click log** on the link page: each click with its exact time, city, region, postal code, coordinates and time zone, network operator and its reverse-DNS name (kept only when it resolves back to the same address), Tor, VPN-provider, hosting and relay flags, device model, system and browser versions, every accepted language, the full referrer and source, and a number for repeat visits from the same browser and network (V1, V2…). Filter people, email opens or bots, expand any click for every detail, switch to a **map**, export CSV, delete one click or the whole log. It refreshes every 30 seconds.
+- **Two modes:** **Without IP**, or **With IP addresses**, AES-GCM encrypted and shown only to people with the new **See IP addresses** permission. IP mode needs a GDPR warning accepted once per link; who accepted it and when is kept.
+- **Browser details (optional):** people see a page for 100 to 300 ms that reads screen and window size, time zone, languages, cores, memory, touch, connection type, colour scheme, DNT / GPC and Client Hints, then goes on. A browser clock that disagrees with the IP's time zone gets a "VPN?" hint. Bots, previews and HEAD requests always get the plain redirect.
+- **Email-open pixel (optional):** `/_p/<slug>.gif` records each open of an email as an `open`. Gmail's and Yahoo's image proxies and Outlook are told apart from link scanners, and a pixel embedded on a web page counts as a bot. Opens stay out of the statistics, click limits and routing.
+- **Notifications:** an email on the first click (and first open) by a person, or on every one at most every 10 minutes, and a new `link.tracked_click` webhook with the IP address only masked.
+- **Workspace rules** in Settings → Access & security, for admins: allow tracking at all, IP addresses (**off by default**), browser details, the pixel, the longest retention (90 days by default) and a required written purpose (on by default). Tightening a rule changes the links that break it at once and deletes what is no longer allowed, and every click is checked against the rules as it is recorded.
+- **Retention** of 7, 30 or 90 days or a year per link, deleted by a new 03:30 UTC run. **Requests from people:** find or erase one IP address's clicks on every link (`POST /api/clicks/by-ip`, `/erase`).
+- **A guide in the admin** at `/_admin/tracking-guide`: what each setting records, a checklist before switching it on, reading the log, email opens and their limits, answering access and erasure requests, and what not to use it for.
+- **API and MCP:** `PUT /links/:domain/:slug/tracking`, `tracking` on `POST /links`, `GET …/clicks` and `clicks.csv`, `DELETE …/clicks` and `…/clicks/:id`, `GET /tracking/policy`, all in the OpenAPI reference under Advanced tracking. A read-only MCP tool, `click_log`, never returns IP addresses.
+- **Two permissions:** **See click logs** (`clicks.view`) and **See IP addresses** (`clicks.ip`). Admins have both; nobody else gets them until you tick them.
+
+Deliberately not built: WebRTC address leaks, GPS prompts and canvas / WebGL / audio fingerprinting.
 
 ### Upgrading
 
@@ -21,10 +40,11 @@ Work through this in order. Read the list of breaking changes at the end of this
 
      Keep **non-production branch builds** off (Workers Builds → Settings → Build → Branch control). An update branch that does reach `npm run deploy` now stops before touching the database.
    - **A copy you update with git:** pull as before and keep the new entries when `wrangler.toml` conflicts.
-3. **What gets applied.** Migrations `0038`–`0046` add columns, an index and two tables and rebuild one view. No row is deleted, but three change existing data: Gumroad payments on connections without an access token are labelled unverified, PayPal subscriptions already canceled or ended get the date Shorthop stored that (past churn can move to a later month), and only matches through an email your server reported still count as proof of who paid.
+3. **What gets applied.** Migrations `0038`–`0049` add columns, indexes and four tables and rebuild one view (`0047`–`0049` are Advanced tracking: a `tracking` column on links and the click log's two tables). No row is deleted, but three change existing data: Gumroad payments on connections without an access token are labelled unverified, PayPal subscriptions already canceled or ended get the date Shorthop stored that (past churn can move to a later month), and only matches through an email your server reported still count as proof of who paid.
 4. **One new setting, `WORKERS_DEV_ADMIN`.** `"off"` stops the workers.dev address serving the admin, the API and shared statistics pages once `SHORT_DOMAINS` has a domain. Short links keep working there. `setup -- upgrade` writes `"off"`, except where `workers_dev` is on: there it writes `""`, so the admin you may rely on at that address stays. Your value is kept from then on. Deploy-button copies get `""`.
 5. **Then, by hand:**
    - **Give a permission** to everyone, and every API key, that should keep reading links (see below).
+   - **To use Advanced tracking,** tick **See click logs** for the people who should see click logs (and **See IP addresses** only for those who need them). Recording IP addresses stays off until an admin allows it in Settings → Access & security → Advanced tracking rules. Describe tracked links in your privacy notice: [docs/PRIVACY.md](docs/PRIVACY.md#advanced-tracking) has wording to start from.
    - **Change your scripts** for anything in the list below.
    - **Gumroad:** the Ping setting sends only sales. To record refunds, disputes and cancellations, add the resource subscriptions shown in the site's setup guide. The access token needs the `view_sales` scope: **Check connection** now tests this.
    - **Deploy-button copies without `ENCRYPTION_KEY`:** the "Stored secrets" notice is now a real System status warning, and is included in alert emails if email is set up. Add the secret (32+ random characters) and keep a copy.
@@ -108,6 +128,7 @@ Work through this in order. Read the list of breaking changes at the end of this
 
 ### Changed
 
+- **Destination checks run 44 times a day** instead of 45: the half-hourly cron's 03:30 UTC run now does Advanced tracking's retention and VPN lists. It costs one query while no link is tracked.
 - **The admin's link form** sends only the fields you changed.
 - **Turning off or protecting a link** now says it can take a minute or two to apply everywhere.
 - **Payment alert emails** shorten source and campaign and mark them as reported by the visit.

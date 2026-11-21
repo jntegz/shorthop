@@ -14,8 +14,12 @@ import { runLinkChecks } from "../src/worker/link-check";
 import { FREE } from "../src/worker/plan";
 import { mockAeSql } from "./ae-mock";
 import { API, bearer, call, enableChecks, json, resetData } from "./helpers";
+import { adminCall } from "./people";
+import { resetNetworkLists, resetTrackingPolicy } from "../src/worker/tracking";
 
 const FREE_MAX = 45;
+/** A link's Advanced tracking settings, as stored (365 days, so a 30-day rule changes it). */
+const TRACKED = JSON.stringify({ mode: "details", retentionDays: 365, browser: false, notify: "off", ackAt: null, ackBy: null, since: 1, pixel: false, purpose: "A purpose for the test" });
 const HOOK = "https://hooks.example.com/shorthop";
 const AE_ENV = { CF_ACCOUNT_ID: "acc", CF_ANALYTICS_TOKEN: "tok" };
 const MAIL_ENV = { DIGEST_PROVIDER: "resend", DIGEST_API_KEY: "re_key" };
@@ -205,6 +209,32 @@ describe("Workers Free: at most 45 subrequests per invocation", () => {
     expect(c.calls.filter((x) => x === "KV delete")).toHaveLength(FREE.prunedUploads);
     expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM link_milestones").first<{ n: number }>())?.n).toBe(5);
     expect(c.count(), c.calls.join("\n")).toBeLessThanOrEqual(FREE_MAX);
+  });
+
+  it("runs Advanced tracking's 03:30 housekeeping: retention and both list downloads", async () => {
+    await addLinks(3, "t");
+    await env.DB.batch([
+      env.DB.prepare("UPDATE links SET tracking = ?1").bind(TRACKED),
+      env.DB.prepare("INSERT INTO tracked_clicks (id, domain, slug, at, expires_at, event, visitor) VALUES ('expired', 'sh.example', 't0', 1, 2, 'click', 'v')"),
+    ]);
+    fetchRoute = (url) => new Response(url.includes("/vpn/") ? "AS9009 # NordVPN\n" : "AS64500 # Hosting\n");
+    const c = counting({ TRACKING_NET: "" } as Partial<Env>);
+    await cron(c.env, "*/30 * * * *", todayAt(3, 30));
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM tracked_clicks").first<{ n: number }>()).toEqual({ n: 0 });
+    expect(c.calls.filter((x) => x.startsWith("fetch https://raw.githubusercontent.com/"))).toHaveLength(2);
+    expect(c.count(), c.calls.join("\n")).toBeLessThanOrEqual(FREE_MAX);
+  });
+
+  it("brings every tracked link within tighter Advanced tracking rules, republishing a share of them", async () => {
+    resetTrackingPolicy();
+    await addLinks(25, "r");
+    await env.DB.prepare("UPDATE links SET tracking = ?1").bind(TRACKED).run();
+    const c = counting();
+    const res = await adminCall("", "/tracking/policy", { method: "PUT", body: { enabled: true, allowIp: false, allowBrowser: true, allowPixel: true, maxRetentionDays: 30, requirePurpose: true } }, { ...c.env, DEV_AUTH_BYPASS: "1", DEV_AUTH_EMAIL: "" });
+    expect(await res.json()).toMatchObject({ changed: 25, republishPending: 25 - FREE.policyPublishes });
+    expect(c.count(), c.calls.join("\n")).toBeLessThanOrEqual(FREE_MAX);
+    resetTrackingPolicy();
+    resetNetworkLists();
   });
 
   it("catches the rollup up two weeks at a time", async () => {

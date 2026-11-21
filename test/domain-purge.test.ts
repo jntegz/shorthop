@@ -63,6 +63,20 @@ beforeEach(resetData);
 afterEach(() => vi.restoreAllMocks());
 
 describe("removing a domain", () => {
+  it("takes the domain's Advanced tracking click logs with its links", async () => {
+    await addLinks("sh.example", ["kept"]);
+    await addLinks("alt.example", ["gone"]);
+    await env.DB.batch([
+      env.DB.prepare("DELETE FROM tracked_clicks"),
+      env.DB.prepare("DELETE FROM tracked_click_details"),
+      env.DB.prepare("INSERT INTO tracked_clicks (id, domain, slug, at, expires_at, event, visitor) VALUES ('a', 'alt.example', 'gone', 1, 9999999999, 'click', 'v'), ('b', 'sh.example', 'kept', 1, 9999999999, 'click', 'v')"),
+      env.DB.prepare("INSERT INTO tracked_click_details (click_id, data, created_at) VALUES ('a', '{}', 1), ('b', '{}', 1)"),
+    ]);
+    await purgeAll("alt.example");
+    expect(await rows("SELECT id FROM tracked_clicks")).toEqual([{ id: "b" }]);
+    expect(await rows("SELECT click_id FROM tracked_click_details")).toEqual([{ click_id: "b" }]);
+  });
+
   it("deletes the domain's links, KV records, stats and misses, and nothing else", async () => {
     await addLinks("sh.example", ["guide"]);
     await addLinks("alt.example", ["guide", "cv"]);

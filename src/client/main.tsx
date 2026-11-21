@@ -125,6 +125,7 @@ const router = createBrowserRouter(
             { path: "import", lazy: async () => { const [{ gate }, { ImportPage }] = await Promise.all([import("./app/Gate"), import("./app/import/Import")]); return gate(ImportPage, "links.create"); } },
             { path: "settings", lazy: async () => ({ Component: (await import("./app/settings/Settings")).SettingsPage }) },
             { path: "api-docs", lazy: async () => ({ Component: (await import("./app/docs/ApiDocs")).ApiDocsPage }) },
+            { path: "tracking-guide", lazy: async () => ({ Component: (await import("./app/docs/TrackingGuide")).TrackingGuidePage }) },
             { path: "*", lazy: async () => ({ Component: (await import("./app/PageNotFound")).PageNotFound }) },
           ],
         },

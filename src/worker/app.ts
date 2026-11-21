@@ -20,6 +20,7 @@ import { settingsApi } from "./api/settings";
 import { backupApi } from "./api/backup";
 import { mcpApi } from "./mcp";
 import { sharesApi } from "./api/shares";
+import { trackingApi } from "./api/tracking";
 import { sitesApi } from "./api/sites";
 import { statsApi } from "./api/stats";
 import { usersApi } from "./api/users";
@@ -35,6 +36,7 @@ const MAX_API_BODY = PREVIEW_IMAGE_MAX_BYTES + 64 * 1024;
 export const api = new Hono<AppEnv>()
   .route("/", linksApi)
   .route("/", sharesApi)
+  .route("/", trackingApi)
   .route("/stats", statsApi)
   .route("/settings", settingsApi)
   .route("/", backupApi)

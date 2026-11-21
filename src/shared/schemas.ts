@@ -9,6 +9,7 @@ import { PERMISSIONS, ROLES } from "./permissions";
 import { LINK_PASSWORD_MAX, LINK_PASSWORD_MIN, MAX_CLICK_LIMIT } from "./protection";
 import { ROUTE_DEVICES } from "./routing";
 import { IMPORT_SLUG_RE } from "./slug";
+import { trackingSchema } from "./tracking";
 import { BULK_ACTIONS, DIGEST_PROVIDERS, IMPORT_SOURCES, IMPORT_VENDORS, MAX_REPORT_LINKS, LIST_PERIODS, MISS_RETENTION_DAYS, NOISE_LIMITS, RANGES, REAL_MISS_LIMITS, SHARE_RANGES } from "./types";
 
 /** A short domain as typed: trimmed and lowercased; membership is checked by the API. */
@@ -129,6 +130,8 @@ export const createLinkSchema = z
     maxClicks: z.number().int().min(1).max(MAX_CLICK_LIMIT).nullish(),
     /** A link-in-bio page shown instead of redirecting (validateBio checks it); target stays as the fallback. */
     bio: bioSchema.nullish(),
+    /** Advanced tracking on from the start (as PUT /links/:domain/:slug/tracking takes it); needs See click logs. */
+    tracking: trackingSchema.optional(),
   })
   .refine((v) => v.target || v.url, { message: "target is required", path: ["target"] });
 

@@ -17,6 +17,8 @@ const EVENT_PERMISSION: Partial<Record<string, Permission>> = {
   "link.clicked": "stats.view",
   // What the destination checks found, as on Link health.
   "link.health_changed": "health.manage",
+  // A tracked click's full detail (src/worker/tracking.ts).
+  "link.tracked_click": "clicks.view",
 };
 
 function forbiddenEvent(actor: Actor, events: string[]): string | null {

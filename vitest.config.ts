@@ -33,6 +33,8 @@ export default defineConfig(async () => {
             SESSION_SECRET: "test-session-secret-0123456789abcdef",
             // No lookups at Cloudflare's security DNS from tests; test/unsafe-links.test.ts turns them on with a mock.
             SAFETY_DNS: "off",
+            // No reverse DNS or VPN-list downloads from tests; test/tracking.test.ts mocks them where it needs them.
+            TRACKING_NET: "off",
           },
         },
       }),

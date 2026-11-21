@@ -22,6 +22,7 @@ import { app } from "./app";
 import { openApiDocument } from "./openapi";
 import type { AppEnv } from "./hono";
 import { allowed, RULES } from "./permissions";
+import { hostDomain } from "./tracking";
 
 /** Protocol versions this server speaks; it answers in the client's when it can. */
 const VERSIONS = ["2026-07-28", "2025-11-25", "2025-06-18", "2025-03-26"];
@@ -228,6 +229,25 @@ export const TOOLS: Tool[] = [
     readOnly: true,
     untrusted: true,
     call: (a) => ({ method: "GET", path: `/stats/recent${query({ domain: a.domain, slug: a.slug, limit: a.limit, hours: a.hours, event: "click" })}` }),
+  },
+  {
+    name: "click_log",
+    route: "GET /links/:domain/:slug/clicks",
+    title: "Tracked clicks of a link",
+    description:
+      "Each click on a link with Advanced tracking on, newest first: exact time, city and postal code, network, Tor / VPN / hosting hints, device and versions, referrer, the visitor's number (V1, V2…) and browser details. IP addresses are never included (see them in the admin). Empty when tracking is off.",
+    inputSchema: { type: "object", properties: { ...LINK, event: { type: "string", enum: ["all", "click", "open", "bot"], description: "People, email opens, bots or all (default click)" }, limit: { type: "number", description: "1 to 500, default 50" } }, required: ["domain", "slug"] },
+    readOnly: true,
+    untrusted: true,
+    call: (a) => ({ method: "GET", path: `${linkPath(a)}/clicks${query({ event: a.event ?? "click", limit: a.limit ?? 50 })}` }),
+    // IP addresses stay in the admin: an assistant's conversation isn't the place for them, whatever the key may see.
+    shape: (body) => {
+      const b = body as { clicks?: Record<string, unknown>[] } | null;
+      // The whole reverse DNS name can spell the address out ("ip-203-0-113-45.example.net"): only its domain.
+      return b && Array.isArray(b.clicks)
+        ? { ...b, clicks: b.clicks.map(({ ip: _ip, ...rest }) => ({ ...rest, hostname: typeof rest.hostname === "string" ? hostDomain(rest.hostname) : rest.hostname })) }
+        : body;
+    },
   },
   {
     name: "missed_links",

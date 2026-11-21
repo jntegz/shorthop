@@ -1,4 +1,4 @@
-import { ChevronDown, Link2, MessageSquareText, ShieldCheck, Sparkles, Split } from "lucide-react";
+import { ChevronDown, Link2, MessageSquareText, Radar, ShieldCheck, Sparkles, Split } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router";
@@ -23,6 +23,7 @@ import { LinkProtection, type PasswordMode } from "./LinkProtection";
 import { LinkUtm } from "./LinkUtm";
 import { PreviewEditor } from "./PreviewEditor";
 import { RoutingEditor } from "./RoutingEditor";
+import { draftSummary, trackingDraft, trackingPayload, trackingProblem, TrackingFields, useTrackingPolicy, type TrackingDraft } from "../app/link/Tracking";
 import { Button, Combobox, Dialog, Field, InfoTip, Input, Notice, Segmented, Select, Switch, Textarea } from "./ui";
 
 interface Props {
@@ -151,7 +152,13 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
   const editing = Boolean(link);
   const { domains, primary, multiple } = useDomains();
   const label = useLinkLabel();
-  const manageSettings = useCan()("settings.manage");
+  const can = useCan();
+  const manageSettings = can("settings.manage");
+  // Advanced tracking from the start (creating only; on an existing link it's on the link page).
+  const canTrack = !editing && can("clicks.view");
+  const [tracking, setTracking] = useState<TrackingDraft>(() => trackingDraft());
+  const [trackingOpen, setTrackingOpen] = useState(false);
+  const policyQ = useTrackingPolicy(open && canTrack);
   const checkAll = useMe().data?.workspace.checkScope === "all";
   const fallbackUrl = useMe().data?.workspace.fallbackUrl ?? "";
   const [f, setF] = useState<FormState>(() => initial(link, initialSlug, initialDomain, initialTarget, initialTitle));
@@ -179,6 +186,8 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
       setRoutingOpen(Boolean(link?.routing));
       setPreviewOpen(false);
       setProtectionOpen(false);
+      setTracking(trackingDraft());
+      setTrackingOpen(false);
     }
   }, [open, link, initialSlug, initialDomain, initialTarget, initialTitle, asBio, markBroken]);
 
@@ -238,7 +247,9 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
   const capError = f.capOn && (!Number.isInteger(capNumber) || capNumber < 1 || capNumber > MAX_CLICK_LIMIT) ? `Enter a whole number from 1 to ${MAX_CLICK_LIMIT.toLocaleString("en")}.` : null;
   const bioCheck = f.bio ? validateBio(f.bio, { selfHosts: domains }) : null;
   const bioProblems = bioCheck && !bioCheck.ok ? bioCheck.problems.map((p) => p.message) : [];
+  const trackingError = canTrack ? trackingProblem(tracking, policyQ.data?.policy, can("clicks.ip")) : null;
   const valid =
+    !trackingError &&
     bioProblems.length === 0 &&
     !errors.target && !errors.slug && !errors.utmTemplate && !errors.replacement && routingErrors.length === 0 && previewProblems.length === 0 && !passwordError && !capError;
 
@@ -256,7 +267,8 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
       }
       // On create a redirect sends no bio.
       const { bio, ...fields } = fieldsOf(f);
-      return (await call(api.links.$post({ json: { ...fields, ...(bio ? { bio } : {}), ...password, domain: domain || undefined, slug: f.slug.trim() || undefined } }))).link;
+      const track = canTrack ? trackingPayload(tracking) : null;
+      return (await call(api.links.$post({ json: { ...fields, ...(bio ? { bio } : {}), ...password, domain: domain || undefined, slug: f.slug.trim() || undefined, ...(track ? { tracking: track } : {}) } }))).link;
     },
     onSuccess: (saved) => {
       void qc.invalidateQueries({ queryKey: keys.allLinks });
@@ -290,6 +302,7 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
     if (routingErrors.length) setRoutingOpen(true);
     if (previewProblems.length) setPreviewOpen(true);
     if (passwordError || capError) setProtectionOpen(true);
+    if (trackingError) setTrackingOpen(true);
     if (valid && !save.isPending) save.mutate();
   };
 
@@ -532,6 +545,33 @@ export function LinkForm({ open, onOpenChange, link, initialSlug, initialDomain,
             />
           </div>
         </details>
+
+        {canTrack ? (
+          <details open={trackingOpen} onToggle={(e) => setTrackingOpen(e.currentTarget.open)} className="group/tracking rounded-md border border-line bg-bg">
+            <summary className="flex list-none items-center gap-2 px-4 py-3 text-sm font-medium [&::-webkit-details-marker]:hidden">
+              <Radar className="size-4 shrink-0 text-accent" aria-hidden />
+              <span className="whitespace-nowrap">Advanced tracking</span>
+              <span className={cn("mr-3 ml-auto hidden min-w-0 truncate text-xs font-normal sm:block", trackingError && touched ? "text-danger" : "text-muted")}>
+                {trackingError && touched ? "Needs attention" : draftSummary(tracking)}
+              </span>
+              <ChevronDown className="ml-auto size-4 shrink-0 transition-transform group-open/tracking:rotate-180 sm:ml-0" />
+            </summary>
+            <div className="border-t border-line p-4">
+              <TrackingFields
+                value={tracking}
+                onChange={setTracking}
+                policy={policyQ.data?.policy}
+                policyError={policyQ.isError ? <p className="text-xs text-danger">This workspace’s tracking rules couldn’t load, so tracking can’t be switched on here. Close and reopen to retry.</p> : null}
+                onLeave={() => onOpenChange(false)}
+              />
+              {touched && trackingError ? (
+                <p role="alert" className="mt-3 text-xs text-danger">
+                  Advanced tracking: {trackingError}
+                </p>
+              ) : null}
+            </div>
+          </details>
+        ) : null}
 
         <details open={advanced} onToggle={(e) => setAdvanced(e.currentTarget.open)} className="group rounded-md border border-line bg-bg">
           <summary className="flex list-none items-center justify-between px-4 py-3 text-sm font-medium [&::-webkit-details-marker]:hidden">Link settings <span className="ml-auto mr-3 text-xs font-normal text-muted">Tracking, expiry & notes</span><ChevronDown className="size-4 transition-transform group-open:rotate-180" /></summary>

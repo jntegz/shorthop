@@ -1,7 +1,7 @@
 // Pieces of the links list: one link row and the skeleton rows. The sortable
 // head, the pager and the tick box are ui/ components (SortTH, Pager, Checkbox).
 
-import { BarChart3, Copy, Ellipsis, ExternalLink, Gauge, LayoutList, Lock, Power, QrCode, Split } from "lucide-react";
+import { BarChart3, Copy, Ellipsis, ExternalLink, Gauge, LayoutList, Lock, Power, QrCode, Radar, Split } from "lucide-react";
 import type { MouseEvent, ReactNode } from "react";
 import { Link, useNavigate } from "react-router";
 import { IMPORT_SOURCE_LABEL, type LinkListItem } from "../../../shared/types";
@@ -130,6 +130,7 @@ export function LinkRow({ l, first, bios, canSelect, checked, onCheck, seesClick
           {l.source === "import" ? <span className="links-mark-text" title={l.importFrom && l.importFrom !== "csv" ? `Imported from ${IMPORT_SOURCE_LABEL[l.importFrom]}` : undefined}>Imported</span> : null}
           {l.protected ? <span className="links-mark" title="Password protected"><Lock aria-hidden /><span className="ui-sr">Password protected</span></span> : null}
           {l.maxClicks ? <span className="links-mark" title={`Opens at most ${l.maxClicks.toLocaleString("en")} times`}><Gauge aria-hidden /><span className="ui-sr">Visit limit</span></span> : null}
+          {l.tracking ? <span className="links-mark" title={l.tracking.mode === "ip" ? "Advanced tracking, with IP addresses" : "Advanced tracking"}><Radar aria-hidden /><span className="ui-sr">Advanced tracking</span></span> : null}
           {l.routing ? <span className="links-mark" title={`Smart routing: ${describeRouting(l.routing)}`}><Split aria-hidden /><span className="ui-sr">Smart routing</span></span> : null}
           {l.bio && !bios ? <span className="links-mark" title={`A link-in-bio page with ${bioButtonCount(l.bio)} ${bioButtonCount(l.bio) === 1 ? "button" : "buttons"}`}><LayoutList aria-hidden /><span className="ui-sr">Bio page</span></span> : null}
           <span className="links-status-inline"><StatusBadges l={l} /></span>

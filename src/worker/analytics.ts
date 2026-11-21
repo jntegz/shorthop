@@ -39,7 +39,7 @@ const BOT_PATTERNS: ReadonlyArray<readonly [string, RegExp]> = [
  * preview fetchers do. Cloudflare (13335) and Akamai (36183) are left out on
  * purpose, because iCloud Private Relay exits through them.
  */
-const DATACENTER_ASNS: ReadonlySet<number> = new Set([
+export const DATACENTER_ASNS: ReadonlySet<number> = new Set([
   16509, 14618, // AWS
   8075, // Microsoft / Azure (also Safe Links scanners)
   15169, 396982, // Google / GCP

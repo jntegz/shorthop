@@ -6,6 +6,7 @@ import { MONITOR_NEVER, MONITOR_ON } from "../shared/link-check";
 import { parsePreview, PREVIEW_IMAGE_PATH } from "../shared/preview";
 import { parseQrStyle } from "../shared/qr";
 import { parseRouting, type RouteDevice } from "../shared/routing";
+import { parseTracking } from "../shared/tracking";
 import type { KvPreview } from "./preview";
 import { IMPORT_SOURCES, type ImportSource, type LinkDTO, type LinkSource } from "../shared/types";
 
@@ -56,6 +57,8 @@ export interface LinkRow {
   rev?: string | null;
   /** When an imported link's click limit began: a counter from before starts again. */
   cap_since?: number | null;
+  /** Advanced tracking JSON (src/shared/tracking.ts), or null when off. Saved by its own route; edits leave it. */
+  tracking?: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -94,6 +97,16 @@ export interface KvLink {
   w?: 1;
   /** a link-in-bio page, shown instead of redirecting (u stays as the fallback) */
   bio?: BioPage;
+  /** advanced tracking (src/worker/tracking.ts): 1 every detail but the IP, 2 with the IP address */
+  tk?: 1 | 2;
+  /** advanced tracking: days a click is kept */
+  tr?: number;
+  /** advanced tracking: show the browser-details page first */
+  tj?: 1;
+  /** advanced tracking: email the owner on the first person's click (1) or on every one (2) */
+  tn?: 1 | 2;
+  /** advanced tracking: the email-open pixel records opens */
+  tp?: 1;
 }
 
 /** A routing rule as the redirect needs it: no names, enabled rules only. */
@@ -163,6 +176,14 @@ export function toKv(row: LinkRow, defaultUtm: string): KvLink {
   if (row.unsafe === 1) kv.w = 1;
   const bio = parseBio(row.bio);
   if (bio) kv.bio = bio;
+  const tracking = parseTracking(row.tracking);
+  if (tracking) {
+    kv.tk = tracking.mode === "ip" ? 2 : 1;
+    kv.tr = tracking.retentionDays;
+    if (tracking.browser) kv.tj = 1;
+    if (tracking.notify !== "off") kv.tn = tracking.notify === "first" ? 1 : 2;
+    if (tracking.pixel) kv.tp = 1;
+  }
   const preview = parsePreview(row.preview);
   if (preview) {
     const img = preview.image;
@@ -212,6 +233,7 @@ export function toDTO(row: LinkRow, origin: string): LinkDTO {
     protected: Boolean(row.password_hash),
     maxClicks: row.max_clicks,
     version: row.rev ?? "0",
+    tracking: parseTracking(row.tracking),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -246,6 +268,53 @@ export async function getLink(db: D1Database, domain: string, slug: string): Pro
 
 export async function publish(env: Env, row: LinkRow, defaultUtm: string): Promise<void> {
   await env.LINKS.put(kvKey(row.domain, row.slug), JSON.stringify(toKv(row, defaultUtm)));
+}
+
+/** Publishes a link D1 already holds, trying once more after a short pause (KV writes can fail transiently). */
+export async function publishSaved(env: Env, row: LinkRow): Promise<void> {
+  const defaultUtm = await getDefaultUtm(env.DB);
+  try {
+    await publish(env, row, defaultUtm);
+  } catch {
+    await new Promise((r) => setTimeout(r, 300));
+    await publish(env, row, defaultUtm);
+  }
+}
+
+/** Publishes a saved link to KV; false when that failed (it's saved in D1 either way: answer 502 with the link). */
+export async function published(env: Env, row: LinkRow): Promise<boolean> {
+  try {
+    await publishSaved(env, row);
+    return true;
+  } catch (err) {
+    console.error(JSON.stringify({ message: "kv publish failed", domain: row.domain, slug: row.slug, error: String(err) }));
+    return false;
+  }
+}
+
+/** Whether two states of a link publish the same record ("" stands in for the default UTM template on both sides). */
+export const samePublished = (a: LinkRow, b: LinkRow) => JSON.stringify(toKv(a, "")) === JSON.stringify(toKv(b, ""));
+
+/**
+ * Publishes a saved link and reads it back. Two saves can reach KV in the
+ * opposite order from D1; whoever publishes last then sees that D1 holds
+ * something else and publishes that, so KV ends up matching D1. "gone": the
+ * link was deleted meanwhile, and its record is removed again.
+ */
+export async function publishLatest(env: Env, saved: LinkRow): Promise<"ok" | "failed" | "gone"> {
+  let row = saved;
+  for (let round = 0; round < 3; round++) {
+    if (!(await published(env, row))) return "failed";
+    const latest = await getLink(env.DB, row.domain, row.slug);
+    if (!latest) {
+      // Together with the delete's second KV pass, KV ends up matching D1 whichever way the two interleave.
+      await env.LINKS.delete(kvKey(row.domain, row.slug));
+      return "gone";
+    }
+    if (samePublished(latest, row)) return "ok";
+    row = latest;
+  }
+  return "ok";
 }
 
 /** Seconds since the epoch. */

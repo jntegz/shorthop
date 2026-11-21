@@ -46,6 +46,18 @@ export const RULES: Record<string, Rule> = {
   "POST /links/:domain/:slug/history/:id/restore": need("links.edit"),
   "GET /links/:domain/:slug/cap": linkReader,
   "POST /links/:domain/:slug/cap/reset": need("links.edit"),
+  // Advanced tracking: the click log. Switching IP recording on also needs clicks.ip (checked in the handler).
+  "PUT /links/:domain/:slug/tracking": need({ all: ["links.edit", "clicks.view"] }),
+  "GET /links/:domain/:slug/clicks": need("clicks.view"),
+  "GET /links/:domain/:slug/clicks.csv": need("clicks.view"),
+  "DELETE /links/:domain/:slug/clicks": need({ all: ["links.edit", "clicks.view"] }),
+  "DELETE /links/:domain/:slug/clicks/:id": need({ all: ["links.edit", "clicks.view"] }),
+  // The workspace's rules for Advanced tracking: readable by everyone signed in (the link editor shows them), set by admins.
+  "GET /tracking/policy": signedIn,
+  "PUT /tracking/policy": session("admin"),
+  // A person's clicks by IP address (access and erasure requests).
+  "POST /clicks/by-ip": need({ all: ["clicks.view", "clicks.ip"] }),
+  "POST /clicks/by-ip/erase": need({ all: ["clicks.view", "clicks.ip", "links.edit"] }),
   "GET /deleted": linkReader,
   "POST /deleted/:domain/:slug/restore": need("links.delete"),
   "GET /tags": linkReader,

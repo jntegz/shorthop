@@ -62,6 +62,9 @@ export const BACKUP_TABLES = {
   preview_images: { order: "key" },
   link_versions: { order: "id" },
   link_clicks: { order: "ref" },
+  // Advanced tracking's click log: people's details as a whole; IP addresses never leave, not even encrypted.
+  tracked_clicks: { order: "id", personalTable: true, secret: ["ip_enc", "ip_key"] },
+  tracked_click_details: { order: "click_id", personalTable: true },
   site_spikes: { order: "site_id, source, detected_at" },
   web_daily_events: { order: "site_id, day, kind, name" },
   web_visitors: { order: "site_id, id", personalTable: true },

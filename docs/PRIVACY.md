@@ -20,7 +20,7 @@ Each request to a short domain becomes one Analytics Engine data point, written 
 
 ## What is not recorded
 
-- **IP addresses.** They're used during the request (Cloudflare derives the location from them) and for the visitor hash, but Shorthop never writes them to its database or analytics. Rate limiters receive a keyed hash of the network instead of the address. Cloudflare handles the address itself to run the service, under its own terms: Shorthop turns off Cloudflare's per-request invocation logs and traces in its config, so they aren't kept in Workers Logs unless you turn them back on. What Cloudflare records elsewhere isn't something Shorthop controls.
+- **IP addresses.** They're used during the request (Cloudflare derives the location from them) and for the visitor hash, but Shorthop doesn't write them to its database or analytics. The one exception is a link with [Advanced tracking](#advanced-tracking) in IP mode, which an admin has to allow first. Rate limiters receive a keyed hash of the network instead of the address. Cloudflare handles the address itself to run the service, under its own terms: Shorthop turns off Cloudflare's per-request invocation logs and traces in its config, so they aren't kept in Workers Logs unless you turn them back on. What Cloudflare records elsewhere isn't something Shorthop controls.
 - **Cookies.** Visitors get none: a short link is a redirect. The one exception is a password-protected link: after the right password, a functional cookie for that link only (`sh_access`, scoped to the link's path) remembers it for 12 hours, so the visitor isn't asked again. It holds no personal data, only a signed expiry.
 - **Full referrer URLs.** Only the host name is kept.
 
@@ -49,6 +49,36 @@ A visitor hash is the first 16 hex characters of SHA-256 over the IP address, th
 | Export and erasure requests (who asked, when, how many records; never whom about) | Until the site is deleted |
 
 The daily totals contain counts only, no hashes.
+
+## Advanced tracking
+
+A link can keep a log of each visit instead of only counting it. It is off for every link until someone with the **See click logs** permission switches it on, and the workspace's rules (Settings → Access & security) limit what can be switched on. The defaults: no IP addresses, at most 90 days, and a written purpose for each link. [ADVANCED-TRACKING.md](ADVANCED-TRACKING.md) describes it in full.
+
+For each visit to a tracked link, one row in D1:
+
+| Data | Where it comes from |
+|---|---|
+| Time to the second, the link, bot or person | The request |
+| Country, region, city, postal code, the city's coordinates, time zone | Cloudflare's IP geolocation |
+| Network operator and its number, Cloudflare data center, TLS and HTTP version | Cloudflare |
+| The network's name for the address (reverse DNS), only its domain unless IP addresses are recorded | Cloudflare's public resolver, which asks the DNS servers of whoever runs the address |
+| Tor, VPN provider, hosting network or relay | Cloudflare, and a public list of VPN providers' networks |
+| The full user agent, device model, system and browser versions, every accepted language | Request headers |
+| The full address of the page that sent the visitor, and the source tag | The `Referer` header and the link |
+| A number for repeat visits from the same browser and network | A keyed hash of the IP address and user agent, per link |
+| **IP mode only:** the IP address, encrypted with `ENCRYPTION_KEY` and shown only to people with **See IP addresses** | The request |
+
+Optional, per link:
+
+- **Browser details:** a page shown for 100 to 300 ms reads screen and window size, time zone, languages, processor cores and memory, touch support, connection type, colour scheme, Do Not Track and Global Privacy Control, and goes on. Nothing is stored in the browser. In the EU, reading these values can need the visitor's consent (ePrivacy Directive Art. 5(3)).
+- **Email-open pixel:** an invisible image for your emails. Each time it loads, an "open" is recorded with the same details. A tracking pixel generally needs the recipient's consent in the EU.
+- **Email and webhook:** an email to `DIGEST_TO` on the first visit or every visit, and the `link.tracked_click` webhook, which carries the IP address only masked (`203.0.113.***`).
+
+Each record is deleted after the link's retention (7, 30, 90 or 365 days, at most what the rules allow) by the 03:30 UTC run. Switching tracking off keeps the records until then; delete them from the link's click log. Deleting a link deletes its log, and leaving IP mode clears the addresses already recorded. Without IP mode the log is pseudonymous rather than anonymous: someone holding both the database and `ENCRYPTION_KEY` or `SESSION_SECRET` could work out an IPv4 address behind a visit number.
+
+**Requests:** in IP mode, a person's visits on every tracked link can be found and erased with their IP address (`POST /api/clicks/by-ip`, `POST /api/clicks/by-ip/erase`, which need **See IP addresses**). Without it, find them in the click log by time, place and device, and delete them one by one or the whole log.
+
+Backups include the click log only with people's details, and never the IP addresses, not even encrypted.
 
 ## Visitors to your tracked websites
 
@@ -138,5 +168,9 @@ Adapt this to your service and your jurisdiction:
 If you track your website with Shorthop, add something like this, and choose the sentence that fits the site's visitor identification:
 
 > On this website we record the pages you view, where you came from, your approximate location (derived from your IP address by our hosting provider Cloudflare), your network operator, device, browser, language and screen size class, how long you read and how far you scroll, and how fast pages load. *(Cookieless:)* We don't store your IP address or anything in your browser; a code that changes every day tells visits apart. *(Recognise returning visitors / after consent:)* With your consent, we keep a random ID in your browser's local storage (`sh_vid`) to recognise you when you come back; you can withdraw consent at any time under Cookie settings. When you buy, we receive the purchase from our payment provider, including your email address, and connect it to the visit that led to it, to learn which pages and campaigns bring customers. Detailed page-view records are deleted after about 90 days; visit records, and your email and customer details on purchases, are kept for [N years, or: as long as we keep our website statistics]. *(If payment or click data goes to other services through webhooks or email, name them here.)* You can ask for a copy of your data or for its deletion at privacy@example.com.
+
+If any link has Advanced tracking, add something like this, keeping only the sentences for what you switched on:
+
+> Some of our links keep a detailed record of each visit, for [the purpose you wrote down]: the time to the second, your browser identification, languages, the full address of the page you came from, your network operator and its name for your address, your location as derived from your IP address (including postal code and time zone), and whether your network looks like Tor, a VPN or a hosting provider. Repeat visits from the same browser and network are numbered. *(IP mode:)* On these links we also store your IP address, encrypted. *(Browser details:)* Before sending you on, a page reads your screen and window size, time zone, languages, processor and memory, touch support, connection type and colour scheme. *(Email pixel:)* Our emails may contain an invisible image; when your mail program loads it, the same details are recorded as an opening of the email. These records are deleted after [N] days. You can ask for them, or for their deletion, at privacy@example.com; with your IP address they can be found and erased.
 
 The built-in consent banner only says that a random ID recognises return visits: set `data-consent-text` if your notice needs it to say more. Link the notice from your website. The not-found page's button can point to it (Settings → Not-found page).

@@ -70,12 +70,21 @@ export async function deleteLinks(env: Env, links: { domain: string; slug: strin
   if (!links.length) return 0;
   await Promise.all(links.map((l) => env.LINKS.delete(linkKey(l.domain, l.slug))));
   await env.DB.batch(
-    jsonChunks(links.map((l) => [l.domain, l.slug])).map((chunk) =>
+    jsonChunks(links.map((l) => [l.domain, l.slug])).flatMap((chunk) => [
+      // Their click logs (Advanced tracking) go with them, as on a single or bulk delete.
+      env.DB.prepare(
+        `DELETE FROM tracked_click_details WHERE click_id IN (SELECT id FROM tracked_clicks WHERE (domain, slug) IN
+         (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?1)))`,
+      ).bind(chunk),
+      env.DB.prepare(
+        `DELETE FROM tracked_clicks WHERE (domain, slug) IN
+         (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?1))`,
+      ).bind(chunk),
       env.DB.prepare(
         `DELETE FROM links WHERE (domain, slug) IN
          (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?1))`,
       ).bind(chunk),
-    ),
+    ]),
   );
   return links.length;
 }

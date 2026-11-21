@@ -26,6 +26,8 @@ const SCALE_MAX = 3;
 const FRESH_SEC = 120;
 
 type Click = { ts: number; domain: string; slug: string; country: string; city: string; device: string; lat: number; lon: number };
+/** What the globe needs of a click (the link page's click log uses it too). */
+export type GlobePoint = Pick<Click, "ts" | "lat" | "lon">;
 type Rgb = [number, number, number];
 
 const WINDOWS = [
@@ -322,7 +324,12 @@ export function LiveMap() {
  * the count, so a busy city stands out without covering its neighbours; places
  * clicked in the last two minutes take the accent.
  */
-function Globe({ clicks, scale, spinning }: { clicks: Click[]; scale: number; spinning: boolean }) {
+/** cobe's view angles that put a place in the middle of the globe. */
+function anglesFor([lat, lon]: [number, number]): { phi: number; theta: number } {
+  return { phi: Math.PI - ((lon * Math.PI) / 180 - Math.PI / 2), theta: Math.max(-1, Math.min(1, (lat * Math.PI) / 180)) };
+}
+
+export function Globe({ clicks, scale, spinning, focus, label }: { clicks: GlobePoint[]; scale: number; spinning: boolean; focus?: [number, number]; label?: string }) {
   const palette = usePalette();
   const canvas = useRef<HTMLCanvasElement>(null);
   const markersRef = useRef<Marker[]>([]);
@@ -330,7 +337,7 @@ function Globe({ clicks, scale, spinning }: { clicks: Click[]; scale: number; sp
   spinRef.current = spinning;
   // Dragging turns the globe: the offsets add to the spin.
   const drag = useRef<{ x: number; y: number; phi: number; theta: number } | null>(null);
-  const view = useRef({ phi: 0, theta: 0.25 });
+  const view = useRef(focus ? anglesFor(focus) : { phi: 0, theta: 0.25 });
 
   const markers = useMemo(() => {
     const now = Math.floor(Date.now() / 1000);
@@ -423,7 +430,7 @@ function Globe({ clicks, scale, spinning }: { clicks: Click[]; scale: number; sp
         className="hits-globe-canvas"
         role="img"
         tabIndex={0}
-        aria-label={`Globe with a dot for each place links were opened${markers.length ? ` (${markers.length} ${markers.length === 1 ? "place" : "places"})` : ""}. Drag it, or use the arrow keys, to turn it.`}
+        aria-label={`${label ?? "Globe with a dot for each place links were opened"}${markers.length ? ` (${markers.length} ${markers.length === 1 ? "place" : "places"})` : ""}. Drag it, or use the arrow keys, to turn it.`}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}

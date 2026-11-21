@@ -17,6 +17,7 @@ import { useCan } from "../../lib/me";
 import { Badge, Button, type BadgeTone, errorText, Section, Skeleton, TextButton } from "../ui";
 import { linkCheckKey, useCap, useLinkCheck, useLinkRevenueYear } from "./data";
 import { moneyShort } from "../parts";
+import { trackingFact } from "./Tracking";
 
 export const CHECK_TONE: Record<CheckState, BadgeTone> = { down: "danger", warning: "warn", ok: "good", blocked: "neutral", unchecked: "neutral" };
 
@@ -273,6 +274,7 @@ export function Facts({
           {link.utm ? (link.utmTemplate ? <>Custom template<span className="ui-ld-fact-sub ui-ld-fact-url">{link.utmTemplate}</span></> : "The workspace default") : <span className="ui-ld-fact-quiet">Off</span>}
         </Fact>
         <Fact label="Smart routing">{link.routing ? describeRouting(link.routing) : <span className="ui-ld-fact-quiet">Off: everyone goes to the destination</span>}</Fact>
+        {can("clicks.view") ? <Fact label="Advanced tracking">{trackingFact(link)}</Fact> : null}
         <Fact label="Password">{link.protected ? "Protected: visitors enter a password first" : <span className="ui-ld-fact-quiet">None</span>}</Fact>
         {link.maxClicks ? <CapFact link={link} /> : <Fact label="Visit limit"><span className="ui-ld-fact-quiet">No limit</span></Fact>}
         <Fact label="Expires">

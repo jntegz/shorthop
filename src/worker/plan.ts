@@ -27,6 +27,8 @@ export interface PlanLimits {
   inlineLookups: number;
   /** Webhook deliveries one request attempts right away after an action; the cron sends the rest. */
   deliveriesNow: number;
+  /** Tracked links one tracking-policy change republishes right away (a KV write and two D1 reads each); the click-time check covers the rest. */
+  policyPublishes: number;
   /** Outbound requests one destination-check run may spend (a redirect hop is one). */
   checkBudget: number;
   /** Most destinations one check run looks at. */
@@ -80,6 +82,7 @@ export const PAID: PlanLimits = {
   unsafePublishes: 100,
   inlineLookups: 100,
   deliveriesNow: 10,
+  policyPublishes: 200,
   checkBudget: 40,
   checkLimit: 25,
   cronDeliveries: 6,
@@ -114,6 +117,7 @@ export const FREE: PlanLimits = {
   // A full import leaves about a dozen calls; a link has at most 101 destinations.
   inlineLookups: 10,
   deliveriesNow: 2,
+  policyPublishes: 10,
   checkBudget: 20,
   checkLimit: 10,
   cronDeliveries: 2,

@@ -31,7 +31,7 @@ import { limiterKey } from "./session";
 // after which SESSION_SECRET can be rotated without losing them.
 
 /** What a stored secret is for. */
-export type SecretPurpose = "webhook" | "share" | "connection:webhook_secret" | "connection:api_key";
+export type SecretPurpose = "webhook" | "share" | "connection:webhook_secret" | "connection:api_key" | "tracking:ip";
 
 async function deriveKey(material: string, salt: string, info: string): Promise<CryptoKey> {
   const base = await crypto.subtle.importKey("raw", new TextEncoder().encode(material), "HKDF", false, ["deriveKey"]);

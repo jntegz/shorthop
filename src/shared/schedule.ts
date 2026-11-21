@@ -35,7 +35,12 @@ export function isRevenueRun(now: Date): boolean {
   return now.getUTCHours() === 3 && now.getUTCMinutes() < 30;
 }
 
+/** The half-hourly cron's 03:30 UTC slot does Advanced tracking's housekeeping: retention and the public VPN lists. */
+export function isTrackingRun(now: Date): boolean {
+  return now.getUTCHours() === 3 && now.getUTCMinutes() >= 30;
+}
+
 /** The half-hourly slots of a day that check destinations: the 48 without those above. */
 export const CHECK_RUNS_PER_DAY = Array.from({ length: 48 }, (_, i) => new Date(Date.UTC(2026, 0, 5, 0, i * 30))).filter(
-  (d) => !isCleanupRun(d) && !isWebRollupRun(d) && !isRevenueRun(d),
+  (d) => !isCleanupRun(d) && !isWebRollupRun(d) && !isRevenueRun(d) && !isTrackingRun(d),
 ).length;

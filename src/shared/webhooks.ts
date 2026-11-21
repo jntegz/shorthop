@@ -13,6 +13,11 @@ export const WEBHOOK_EVENTS = [
     label: "Link clicked",
     description: "Each human click, sent right away. Best effort: never retried and not in the delivery log, so a busy link costs nothing to store. For exact counts, use milestones or the statistics API.",
   },
+  {
+    type: "link.tracked_click",
+    label: "Tracked click",
+    description: "Each person's click on a link with Advanced tracking: location, network (Tor, VPN hints), device, referrer and visit number. The IP address only masked.",
+  },
   { type: "site.payment", label: "Website payment", description: "A payment, renewal, refund or dispute on a tracked website, with the visit it's credited to." },
   { type: "site.traffic_spike", label: "Website traffic spike", description: "A source sent at least 4x its usual hourly visits to a tracked website (checked hourly). At most three per site and run; the first says how many other sources spiked." },
 ] as const;

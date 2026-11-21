@@ -25,6 +25,7 @@ import { limiterKey } from "./session";
 import { connectedCheckoutProviders, trackedSiteFor } from "./web/sites";
 import { sendClickWebhooks } from "./webhooks";
 import { CLICK_PARAM, signClickToken } from "./web/token";
+import { browserDetailsAllowed, browserDetailsPage, isAutomated, newClickId, recordTrackedClick, signBeacon } from "./tracking";
 
 const MIN_CACHE_TTL = 30;
 const DEFAULT_CACHE_TTL = 60;
@@ -221,11 +222,18 @@ export async function handleRedirect(request: Request, env: Env, ctx: ExecutionC
   }
 
   const expired = link !== null && link.e !== null && link.e * 1000 <= Date.now();
+  // A visit to this link: the Analytics Engine data point, and with Advanced tracking the click log row. Returns the click's id.
+  const hit = (route?: string): string => {
+    const id = newClickId();
+    ctx.waitUntil(logHit(request, env, url, { domain, slug, kind: "hit", sourceTag: own.sourceTag, qr: own.qr, route }));
+    if (link?.tk) ctx.waitUntil(recordTrackedClick(request, env, url, { domain, slug, link, id, sourceTag: own.sourceTag, qr: own.qr }, ctx));
+    return id;
+  };
   if (link && link.a !== 1 && link.o && !expired) {
     // Turned off with somewhere to send visitors: still a visit to this link.
     const off = await offLocation(env, link.o);
     if (off) {
-      ctx.waitUntil(logHit(request, env, url, { domain, slug, kind: "hit", sourceTag: own.sourceTag, qr: own.qr }));
+      hit();
       return redirectTo(off);
     }
   }
@@ -237,7 +245,7 @@ export async function handleRedirect(request: Request, env: Env, ctx: ExecutionC
 
   if (link.b === 1) {
     // Still a visit to this link; the page points to the replacement, or on to a site.
-    ctx.waitUntil(logHit(request, env, url, { domain, slug, kind: "hit", sourceTag: own.sourceTag, qr: own.qr }));
+    hit();
     const target = splitKey(link.r);
     let replacement: KvLink | null = null;
     if (target) {
@@ -288,7 +296,7 @@ export async function handleRedirect(request: Request, env: Env, ctx: ExecutionC
       return unavailablePage(env, domain, slug);
     }
     if (lookOnly) {
-      ctx.waitUntil(logHit(request, env, url, { domain, slug, kind: "hit", sourceTag: own.sourceTag, qr: own.qr }));
+      hit();
       if (link.og && isPreviewCrawler(ua)) return previewResponse(link.og, shortUrl, shortUrl, domain, request.method === "HEAD");
       return new Response(null, { status: 204, headers: REDIRECT_HEADERS });
     }
@@ -304,7 +312,7 @@ export async function handleRedirect(request: Request, env: Env, ctx: ExecutionC
       console.error(JSON.stringify({ message: "bio page failed", domain, slug, error: String(err) }));
     }
     if (page) {
-      ctx.waitUntil(logHit(request, env, url, { domain, slug, kind: "hit", sourceTag: own.sourceTag, qr: own.qr }));
+      hit();
       return page;
     }
   }
@@ -352,16 +360,24 @@ export async function handleRedirect(request: Request, env: Env, ctx: ExecutionC
   // A flagged destination: people see a warning with a way through; nothing is sent on automatically.
   // HEAD gets the same answer without the page, so it can't read where the link goes.
   if (link.w === 1) {
-    ctx.waitUntil(logHit(request, env, url, { domain, slug, kind: "hit", sourceTag: own.sourceTag, qr: own.qr }));
+    hit();
     const page = await unsafePage(env, domain, slug, location);
     return request.method === "HEAD" ? new Response(null, { status: page.status, headers: page.headers }) : page;
   }
 
-  ctx.waitUntil(logHit(request, env, url, { domain, slug, kind: "hit", sourceTag: own.sourceTag, qr: own.qr, route: link.ro?.length ? (routed?.key ?? "-") : undefined }));
+  const clickId = hit(link.ro?.length ? (routed?.key ?? "-") : undefined);
   ctx.waitUntil(clickWebhooks(request, env, url, domain, slug, own.sourceTag, own.qr));
   // Preview crawlers read the owner's preview; everyone else is redirected.
   if (link.og && isPreviewCrawler(request.headers.get("User-Agent") ?? "")) {
     return previewResponse(link.og, shortUrl, location, domain, request.method === "HEAD");
+  }
+  // Advanced tracking with browser details: people see a short page that reports back, then goes on (src/worker/tracking.ts).
+  if (link.tk && link.tj === 1 && request.method === "GET" && env.SESSION_SECRET && !isAutomated(request) && (await browserDetailsAllowed(env))) {
+    try {
+      return browserDetailsPage(location, await signBeacon(env.SESSION_SECRET, clickId, Math.floor(Date.now() / 1000)));
+    } catch (err) {
+      console.error(JSON.stringify({ message: "browser details page failed", domain, slug, error: String(err) }));
+    }
   }
   return redirectTo(location);
 }

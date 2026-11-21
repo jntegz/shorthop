@@ -8,10 +8,13 @@ declare namespace Cloudflare {
     ADMIN_PASSWORD?: string;
     /** The key stored secrets are encrypted with; without it, one derived from SESSION_SECRET. */
     ENCRYPTION_KEY?: string;
+    /** "off": Advanced tracking makes no outbound lookups (reverse DNS, VPN lists). Tests set it. */
+    TRACKING_NET?: string;
   }
 }
 interface Env {
   CF_ANALYTICS_TOKEN?: string;
   ADMIN_PASSWORD?: string;
   ENCRYPTION_KEY?: string;
+  TRACKING_NET?: string;
 }

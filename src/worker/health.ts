@@ -7,7 +7,7 @@ import { rollupWebEvents } from "./web/rollup";
 import { addDays, daysBetween, isoWeek, utcDate } from "../shared/dates";
 import { isPlaceholderHost } from "../shared/domains";
 // The half-hourly slots that do other work, defined with the crons (src/worker/index.ts uses them).
-export { isCleanupRun, isRevenueRun, isWebRollupRun } from "../shared/schedule";
+export { isCleanupRun, isRevenueRun, isTrackingRun, isWebRollupRun } from "../shared/schedule";
 import { escapeHtml } from "../shared/html";
 import type { HealthCheck, HealthStatus, JobRun, SystemHealthDTO } from "../shared/types";
 import { MIN_ADMIN_PASSWORD_LENGTH, parsePasswordHash, PLAN_ITERATIONS } from "../shared/password";

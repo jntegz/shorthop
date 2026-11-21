@@ -2,7 +2,7 @@ import { createExecutionContext, env, waitOnExecutionContext } from "cloudflare:
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DOWN_AFTER_FAILS, everyText, isFetchableUrl, MAX_HOPS, nextRecord, OK_INTERVAL, okIntervalFor, spreadByHost, type CheckOutcome } from "../src/shared/link-check";
 import type { LinkChecksDTO, LinkListItem, TargetCheckDTO } from "../src/shared/types";
-import { isCleanupRun, isRevenueRun, isWebRollupRun, systemHealth } from "../src/worker/health";
+import { isCleanupRun, isRevenueRun, isTrackingRun, isWebRollupRun, systemHealth } from "../src/worker/health";
 import worker from "../src/worker/index";
 import { checkUrl, runLinkChecks } from "../src/worker/link-check";
 import { API, bearer, call, enableChecks, json, resetData } from "./helpers";
@@ -10,7 +10,7 @@ import { API, bearer, call, enableChecks, json, resetData } from "./helpers";
 /** Now, unless that's the half-hourly cron's 02:00 cleanup, 02:30 website rollup or 03:00 revenue slot (UTC): then two hours earlier, so the run checks destinations. */
 const checksRunTime = () => {
   const now = new Date();
-  return isCleanupRun(now) || isWebRollupRun(now) || isRevenueRun(now) ? Date.now() - 2 * 3600_000 : Date.now();
+  return isCleanupRun(now) || isWebRollupRun(now) || isRevenueRun(now) || isTrackingRun(now) ? Date.now() - 2 * 3600_000 : Date.now();
 };
 
 type Route = (url: string, init: RequestInit) => Response | Promise<Response>;

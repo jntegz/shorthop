@@ -7,6 +7,7 @@ import type { Actor, Permission, Role } from "./permissions";
 import type { LinkPreview } from "./preview";
 import type { QrStyle } from "./qr";
 import type { Routing } from "./routing";
+import type { TrackingConfig } from "./tracking";
 import type { WebhookFieldSet } from "./webhooks";
 
 /** "import" is every imported link (the name is older than the other sources). */
@@ -73,6 +74,8 @@ export interface LinkDTO {
   maxClicks: number | null;
   /** Changes with every saved edit. Send it back as `version` to refuse a change made on top of an older state. */
   version: string;
+  /** Advanced tracking (a click log with every detail, optionally IP addresses); null when off. */
+  tracking: TrackingConfig | null;
   createdAt: number;
   updatedAt: number;
 }
