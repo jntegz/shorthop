@@ -295,7 +295,7 @@ The owners are the emails in `ADMIN_EMAIL`. They can do everything, sign in with
 
 **Adding someone** creates a one-time invite link (`/_admin/invite/…`). It works for 24 hours and only for their Access email, and they choose their own password with it (at least 12 characters). Shorthop can email it to them, or you send it yourself. Also add their email to the Access policy ([Cloudflare Access](#access), step 4): Access lets them reach the admin, and their role decides what they can do there. Changes apply on their next click.
 
-- **Forgot their password:** they press **Forgot your password?** on the login page. A reset link goes to their Access address, works once for 1 hour, and their current password keeps working until they use it. Asking is limited: one link per 15 minutes, 3 a day per person, 5 an hour per network, and 20 an hour in all. If email can't reach them, an admin is told instead. An admin or manager can also reset it from the person's ⋯ menu, which signs them out.
+- **Forgot their password:** they press **Forgot your password?** on the login page. A reset link goes to their Access address, works once for 1 hour, and their current password keeps working until they use it. Asking is limited: one link per 15 minutes, 3 a day per person, 5 an hour per network, and 20 an hour in all. If email can't reach them, an admin is told instead. An admin or manager can also reset it from the person's ⋯ menu, which signs them out. Either way, a new password removes their [passkeys](#two-factor).
 - **Pausing someone:** stops their sign-in, sessions and API keys until a date, or until someone presses Resume, and keeps everything else. **Sign out everywhere** ends their sessions without pausing them.
 - **Removing someone:** ends their sessions and API keys at once. Take them out of the Access policy too.
 
@@ -314,6 +314,31 @@ People need Cloudflare Access: it's how they are told apart. With [password-only
 
 Locally, set `DEV_AUTH_EMAIL` in `.dev.vars` to someone's email to see the admin as they do.
 
+<a id="two-factor"></a>
+## Two-factor sign-in and passkeys
+
+Anyone with a password can add a second step in Settings → Access & security → **Two-factor sign-in**: owners, people, and the admin of [password-only sign-in](#password-only). It needs the admin password login to be set up.
+
+- **Authenticator app:** press **Set up**, scan the QR code with 1Password, Google Authenticator, Authy or a similar app, and enter the code it shows. From then on the login asks for a 6-digit code after the password.
+- **Recovery codes:** the first method comes with 10 one-time codes. Save them: each signs you in once without your phone. **Make new codes** replaces them.
+- **Passkeys:** **Add a passkey** saves one in your device or password manager. It signs you in on its own, with your fingerprint, face or device PIN and no password, on this admin host only. It also finishes the second step after a password. A new password removes your passkeys, so add them again after a reset.
+- **Changes** need a sign-in from the last 15 minutes (Settings sends you to sign in again if it's older), end your other sessions, and are emailed to you when email can reach you.
+- **Wrong codes:** 5 tries, then a lock of 1 minute that doubles up to 24 hours, counted per person on any network. You get an email when it locks, because someone had your password: change it. Failed passkeys lock only the network they came from: anyone can try one without the password, so they can't lock you out.
+
+**Requiring it for everyone:** Settings → Security → **Require two-factor sign-in for everyone**. Set it up for yourself first; the switch refuses otherwise. People who don't have it are signed out at their next click and set it up at their next login, before they get a session. Their personal API keys stop working until they have it; the `API_TOKEN` secret isn't anyone's, so it keeps working. Turning it off removes nobody's methods.
+
+**A lost phone:** sign in with a recovery code or a passkey on another device, then set the app up again. Without either, an admin or manager uses **Reset two-factor sign-in** in the person's ⋯ menu under People: it removes their app, passkeys and recovery codes and ends their sessions; their password stays. Make sure it's really them asking.
+
+**An owner who lost everything** can't be reset in People. Remove their methods in D1 and end their sessions, then sign in with the password and set it up again (`owner@example.com` is the owner's Access email; in password-only mode it's `admin`):
+
+```bash
+npx wrangler d1 execute DB --remote --command "DELETE FROM auth_factors WHERE email = 'owner@example.com'; DELETE FROM recovery_codes WHERE email = 'owner@example.com'; INSERT OR REPLACE INTO settings (key, value) VALUES ('owner_epoch:owner@example.com', lower(hex(randomblob(16))))"
+```
+
+The last part ends that owner's sessions, in case the phone was stolen rather than lost. To lift a lock from wrong codes instead: `npx wrangler d1 execute DB --remote --command "DELETE FROM auth_failures WHERE key = 'mfa:owner@example.com'"`.
+
+The authenticator secrets are encrypted with `ENCRYPTION_KEY`, or without it with a key derived from `SESSION_SECRET`: see [Secrets](#secrets) before changing either. Backups leave two-factor sign-in out (it's all secrets); after a restore, people set it up again.
+
 <a id="api-keys"></a>
 ## API keys
 
@@ -324,6 +349,9 @@ Scripts, the [iOS Shortcut](ios-shortcut.md), and tools such as Zapier or Make u
 - The key (`shp_…`) is shown once. Only a SHA-256 hash of it is stored.
 
 Revoke a key in the same place, or all of someone's keys from their menu under People. Keys stop working when their owner is removed or paused, loses the API permission, is waiting on a new invite link after a password reset, or (with Access off) isn't the owner. A key with nothing ticked can't read links. A revoked key's webhooks keep running and are flagged in Settings and System status: open one and save it once you've checked it. Keys can't manage people, other keys, sessions or the email setup. Settings shows when each was last used (updated at most once an hour).
+
+<a id="code-mode"></a>
+**Code Mode (optional, Workers Paid).** Besides the standard MCP server at `/api/mcp`, with a tool per task, `/api/mcp/code` offers two: `search` reads the API's description, and `execute` runs the assistant's JavaScript in a sandbox with no internet, whose only way out is your API, with the same key. A task over many links is then one step, not dozens. It uses Cloudflare's Dynamic Workers, which need the Workers Paid plan. To turn it on, uncomment `"worker_loaders": [{ "binding": "LOADER" }]` in `wrangler.jsonc` and deploy. Settings → API & webhooks → **Connect an AI assistant** → **Code Mode** then has the setup. Without the binding, `/api/mcp/code` tells the assistant it isn't available, and `/api/mcp` works as before. Runs are logged as `code mode run`: at most 50 API requests and 30 seconds each, and 30 runs a minute per person.
 
 The older `API_TOKEN` secret still works if you set it, sent the same way (`Authorization: Bearer …`). By default it can read links, statistics and destination checks, create links and import new ones. It can't read webhooks, shared-statistics addresses, payment connections or customers, and doesn't see where password-protected links go. With `API_TOKEN_SCOPE` set to `"full"` it can do everything an owner can. New installs don't get one. If yours still uses it, move your scripts to a key and run `npx wrangler secret delete API_TOKEN`.
 
@@ -360,7 +388,7 @@ Give it to the setup when asked, or later with `npm run setup -- analytics`. The
 
 Every Monday at 07:00 UTC, Shorthop emails a summary of the past week. When a check on the System status page starts failing (for example the nightly rollup), it emails an alert, and again once everything is OK. Email always goes to the single address in `DIGEST_TO`; nothing in the admin or the API can change the recipient.
 
-Choose a provider in the setup or with `npm run setup -- email`. You can also switch later without a deploy: Settings → Statistics & email → Weekly digest → **Set up email** lists every provider with what's missing, shows the steps and commands for each, and saves your choice. `DIGEST_PROVIDER` and `DIGEST_FROM` in `wrangler.jsonc` are the defaults; a choice saved in the admin overrides them until you press **Use wrangler.jsonc**. API keys still go in with `wrangler secret put`, which takes effect right away; press **Check again** after adding one.
+Choose a provider in the setup or with `npm run setup -- email`. You can also switch later without a deploy: Settings → Statistics & email → Weekly digest → **Set up email** lists every provider with what's missing, shows the steps and commands for each, and saves your choice (admins only: security notices go out the same way). `DIGEST_PROVIDER` and `DIGEST_FROM` in `wrangler.jsonc` are the defaults; a choice saved in the admin overrides them until you press **Use wrangler.jsonc**. API keys still go in with `wrangler secret put`, which takes effect right away; press **Check again** after adding one.
 
 ### Cloudflare Email Service (`cloudflare`)
 
@@ -491,8 +519,8 @@ Names of the Worker's own secrets (`SESSION_SECRET` and the like) are refused. O
 | Secret | Created by | Rotate with |
 |---|---|---|
 | `API_TOKEN` | optional: older installs (40 random characters) | `npm run setup -- secrets --rotate`, then update scripts and the iOS Shortcut. Better: switch them to [personal API keys](#api-keys) and delete it |
-| `SESSION_SECRET` | the setup (button installs: generated in D1) | `npm run setup -- secrets --rotate`. This logs everyone out and also signs visitors out of password-protected links. Without `ENCRYPTION_KEY` it also makes stored webhook, share and payment secrets unreadable: replace each one afterwards. Erasure-ledger entries made with the old value stop matching, so those browser IDs are accepted again and **Re-apply erasures** can't find those people |
-| `ENCRYPTION_KEY` | you, optional (32+ random characters, such as `openssl rand -base64 32`) | Encrypts stored webhook, share and payment secrets instead of `SESSION_SECRET`. Recommended for button installs, whose `SESSION_SECRET` is kept in D1. Once set, the daily cleanup moves existing secrets over (25 per kind per day); after that, `SESSION_SECRET` can be rotated without touching them. Removing or changing it makes them unreadable |
+| `SESSION_SECRET` | the setup (button installs: generated in D1) | `npm run setup -- secrets --rotate`, only if it leaked (to log everyone out, use Settings → Security → **Log out everyone**). This logs everyone out and also signs visitors out of password-protected links. Without `ENCRYPTION_KEY` it also makes authenticator apps unreadable (people sign in with a recovery code or a passkey and set the app up again) and stored webhook, share and payment secrets too: replace each one afterwards. Erasure-ledger entries made with the old value stop matching, so those browser IDs are accepted again and **Re-apply erasures** can't find those people |
+| `ENCRYPTION_KEY` | you, optional (32+ random characters, such as `openssl rand -base64 32`) | Encrypts authenticator-app secrets and stored webhook, share and payment secrets instead of `SESSION_SECRET`. Recommended for button installs, whose `SESSION_SECRET` is kept in D1. Once set, the daily cleanup moves existing secrets over (25 per kind per day); after that, `SESSION_SECRET` can be rotated without touching them. Removing or changing it makes them unreadable |
 | `VISITOR_SALT` | the setup | `npm run setup -- secrets --rotate --salt` (visitors already counted today may be counted again) |
 | `ADMIN_PASSWORD_HASH` | the setup | `npm run setup -- password` |
 | `ADMIN_PASSWORD` | the Deploy to Cloudflare button | the Worker's Settings → Variables and Secrets. Used only without `ADMIN_PASSWORD_HASH` |

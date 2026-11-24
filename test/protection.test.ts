@@ -99,6 +99,17 @@ describe("passwords", () => {
     expect((await submit("open sesame", "secret", "192.0.2.1")).status).toBe(429);
   });
 
+  it("counts a burst from many networks before checking, so it can't all get past the brake", async () => {
+    await create({ password: "open sesame" });
+    // Sixty networks at once, all of them before any brake was written.
+    const all = await Promise.all(Array.from({ length: 60 }, (_, i) => submit("wrong guess", "secret", `2001:db8:1:${(i + 1).toString(16)}::1`)));
+    const checked = all.filter((r) => r.status === 401).length;
+    expect(checked).toBeLessThanOrEqual(20);
+    expect(all.filter((r) => r.status === 429).length).toBe(60 - checked);
+    const brake = await env.DB.prepare("SELECT locked_until FROM auth_failures WHERE key = 'link:sh.example/secret'").first<{ locked_until: number }>();
+    expect(brake!.locked_until).toBeGreaterThan(Date.now() / 1000);
+  });
+
   it("caps the tries all networks together get while the brake is on", async () => {
     await create({ password: "open sesame" });
     for (let i = 0; i < 20; i++) expect((await submit("wrong guess", "secret", `192.0.2.${i + 1}`)).status).toBe(401);

@@ -21,7 +21,6 @@ import { APP_NAME } from "../shared/brand";
 import { escapeHtml } from "../shared/html";
 import { fromBase64Url, toBase64Url } from "../shared/password";
 import {
-  maskIp,
   NOTIFY_EVERY_MIN_SEC,
   parseTrackingPolicy,
   PIXEL_PREFIX,
@@ -639,8 +638,8 @@ async function notifyTrackedClick(env: Env, link: KvLink, row: TrackedRow, ctx?:
       at: new Date(row.at * 1000).toISOString(),
       visitor: row.visitor,
       visit,
+      // Not even a masked one: its /24 or /48 is part of an IP address, and the event needs only clicks.view.
       ip_recorded: ip !== null,
-      ip_masked: ip ? maskIp(ip) : null,
       location: { country: row.country, region: row.region, city: row.city, postal_code: row.postal_code, timezone: row.timezone, latitude: row.latitude, longitude: row.longitude },
       // Without IP addresses the host name is only the network's domain, so it is safe to send; with them it can spell the address out.
       network: { asn: row.asn, organization: row.as_org, host: row.hostname ? hostDomain(row.hostname) : "", vpn: row.vpn_name || null, tor: row.tor === 1, datacenter: row.datacenter === 1, relay: row.private_relay === 1 },

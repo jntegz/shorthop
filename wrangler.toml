@@ -71,6 +71,11 @@ name = "COLLECT_LIMITER"
 namespace_id = "1005"
 simple = { limit = 300, period = 60 }
 
+[[ratelimits]]
+name = "CODE_LIMITER"
+namespace_id = "1006"
+simple = { limit = 30, period = 60 }
+
 [durable_objects]
 bindings = [{ name = "CLICK_CAPS", class_name = "ClickCap" }]
 

@@ -15,21 +15,30 @@ import { arr, compact, currency, num, obj, parseJson, sec, str, visitRef, type O
 
 const base = (settings: Record<string, string>) => (settings.sandbox ? "https://api-m.sandbox.paypal.com" : "https://api-m.paypal.com");
 
+/**
+ * How far PAYPAL-TRANSMISSION-TIME may be from now. PayPal signs only a CRC32
+ * of the body, which can be forced back to its value after an edit, so one
+ * captured delivery could otherwise be rewritten and replayed for ever. PayPal
+ * retries a failed delivery for up to 3 days; an hour more for clocks.
+ */
+export const PAYPAL_TOLERANCE_SEC = 3 * 86400 + 3600;
+
+/** Per isolate, keyed by the secret too: a token got with one secret never answers for another. */
 const tokens = new Map<string, { token: string; until: number }>();
 /** Refusals, kept a minute: forged webhooks for a connection with wrong credentials don't each ask PayPal again. */
 const refused = new Map<string, { error: string; until: number }>();
 
 /** An OAuth access token, cached per isolate until shortly before it expires. */
 async function accessToken(clientId: string, secret: string, settings: Record<string, string>): Promise<string> {
-  const key = `${base(settings)}|${clientId}`;
+  const key = `${base(settings)}|${clientId}|${secret}`;
   const hit = tokens.get(key);
   if (hit && hit.until > Date.now()) return hit.token;
-  const no = refused.get(`${key}|${secret}`);
+  const no = refused.get(key);
   if (no && no.until > Date.now()) throw new Error(no.error);
   try {
     return await requestToken(key, clientId, secret, settings);
   } catch (err) {
-    refused.set(`${key}|${secret}`, { error: String(err instanceof Error ? err.message : err), until: Date.now() + 60_000 });
+    refused.set(key, { error: String(err instanceof Error ? err.message : err), until: Date.now() + 60_000 });
     throw err;
   }
 }
@@ -86,7 +95,7 @@ const SUB_STATUS: Record<string, NormalizedSubscription["status"]> = {
 export const paypal: ProviderAdapter = {
   provider: "paypal",
 
-  async verify(headers, body, _secret, _now, ctx) {
+  async verify(headers, body, _secret, now, ctx) {
     const { clientId, webhookId } = ctx.settings;
     if (!ctx.apiKey || !clientId || !webhookId) return "Set the client id, client secret and webhook id first";
     const h = (name: string) => headers.get(name) ?? "";
@@ -94,6 +103,8 @@ export const paypal: ProviderAdapter = {
     const missing = TRANSMISSION_HEADERS.filter((n) => !h(n));
     if (missing.length) return `Missing ${missing.join(", ")} header${missing.length === 1 ? "" : "s"}`;
     if (!isPayPalCertUrl(h("PAYPAL-CERT-URL"))) return "PAYPAL-CERT-URL isn't a PayPal address";
+    const sentMs = Date.parse(h("PAYPAL-TRANSMISSION-TIME"));
+    if (!Number.isFinite(sentMs) || Math.abs(now - Math.floor(sentMs / 1000)) > PAYPAL_TOLERANCE_SEC) return "PAYPAL-TRANSMISSION-TIME is too far from now";
     try {
       JSON.parse(body);
     } catch {

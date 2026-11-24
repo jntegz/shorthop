@@ -53,9 +53,16 @@
     { "name": "PUBLIC_LIMITER", "namespace_id": "1004", "simple": { "limit": 120, "period": 60 } },
     // Website analytics events per client network, all sites together (a page sends a
     // few per view; this only stops floods of made-up traffic).
-    { "name": "COLLECT_LIMITER", "namespace_id": "1005", "simple": { "limit": 300, "period": 60 } }
+    { "name": "COLLECT_LIMITER", "namespace_id": "1005", "simple": { "limit": 300, "period": 60 } },
+    // Code Mode runs (POST /api/mcp/code) per key or signed-in person.
+    { "name": "CODE_LIMITER", "namespace_id": "1006", "simple": { "limit": 30, "period": 60 } }
   ],
 
+  // Optional, Workers Paid only: Code Mode (/api/mcp/code, src/worker/mcp-code.ts)
+  // runs an AI assistant's JavaScript in a sandbox without internet, which can
+  // only call this API with the caller's own key. Uncomment, then deploy.
+  // Without it, /api/mcp/code says so and the standard /api/mcp works as before.
+  // "worker_loaders": [{ "binding": "LOADER" }],
   // Optional: Workers AI suggests slugs and writes social previews in the link
   // form (src/worker/ai.ts). 10,000 neurons a day are free on every plan; a
   // suggestion uses a few. Uncomment to turn it on.
@@ -147,7 +154,11 @@
   "secrets": {
     // Set by `npm run setup`. VISITOR_SALT: mixed into the visitor hash.
     // ADMIN_PASSWORD_HASH: the owners' password, a PBKDF2 hash. SESSION_SECRET:
-    // signs admin sessions (rotate it to log out everywhere).
+    // signs admin sessions. To log everyone out use Settings → Security → Log out
+    // everyone, not a new SESSION_SECRET: without ENCRYPTION_KEY it also encrypts
+    // authenticator-app secrets and the stored webhook, share and payment
+    // secrets, which a new value makes unreadable. ENCRYPTION_KEY (optional,
+    // recommended) encrypts them instead.
     // Optional, not listed: CF_ANALYTICS_TOKEN, the digest provider's keys,
     // API_TOKEN (a Bearer token for /api from before personal API keys) and
     // TURNSTILE_SECRET (the optional bot check, Settings → Access & security).

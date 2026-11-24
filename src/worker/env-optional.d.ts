@@ -10,6 +10,8 @@ declare namespace Cloudflare {
     ENCRYPTION_KEY?: string;
     /** "off": Advanced tracking makes no outbound lookups (reverse DNS, VPN lists). Tests set it. */
     TRACKING_NET?: string;
+    /** Code Mode's sandbox (worker_loaders, Workers Paid): commented out in the default config. */
+    LOADER?: WorkerLoader;
   }
 }
 interface Env {
@@ -17,4 +19,10 @@ interface Env {
   ADMIN_PASSWORD?: string;
   ENCRYPTION_KEY?: string;
   TRACKING_NET?: string;
+  LOADER?: WorkerLoader;
+}
+
+// The qrcode package's encoder alone (src/worker/qr-svg.ts); @types/qrcode covers only the entry.
+declare module "qrcode/lib/core/qrcode" {
+  export function create(text: string, options?: { errorCorrectionLevel?: "L" | "M" | "Q" | "H" }): { modules: { size: number; data: Uint8Array } };
 }

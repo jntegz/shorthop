@@ -479,10 +479,36 @@ export interface SecurityDTO {
   lockedNetworks: number;
   /** Unix seconds while every login is paused, otherwise null. */
   globalLockedUntil: number | null;
-  /** Newest first. email is null for logins recorded before it was kept. */
-  recent: { at: number; ok: boolean; country: string; email: string | null }[];
+  /** Newest first. email is null for logins recorded before it was kept; method, before it was. */
+  recent: { at: number; ok: boolean; country: string; email: string | null; method: "password" | "password+totp" | "password+recovery" | "passkey" | null }[];
   /** Accounts signed in from more than one network in the last 30 days: a shared password shows up here. */
   sharedSignIns: { email: string; networks: number }[];
+  /** "Require two-factor sign-in for everyone". */
+  require2fa: boolean;
+  /** Owners and people with a password who haven't set up two-factor sign-in. */
+  peopleWithout2fa: number;
+}
+
+/** One way someone completes sign-in besides their password. */
+export interface TwoFactorFactorDTO {
+  id: string;
+  kind: "totp" | "passkey";
+  name: string;
+  createdAt: number;
+  lastUsedAt: number | null;
+}
+
+/** GET /me/security: your own two-factor sign-in. */
+export interface TwoFactorDTO {
+  factors: TwoFactorFactorDTO[];
+  /** Unused recovery codes. */
+  recoveryLeft: number;
+  /** Whether an admin requires it for everyone. */
+  required: boolean;
+  /** Unix seconds this session signed in; null without a password session. */
+  signedInAt: number | null;
+  /** Changes need a sign-in at most this many seconds old. */
+  reauthWindowSec: number;
 }
 
 /** GET /me: who is signed in, what they may do, and what every page needs. */
@@ -519,6 +545,8 @@ export interface MeDTO {
     bulkRows: number;
     /** Workers AI is bound: slug and preview suggestions are offered. */
     aiAvailable: boolean;
+    /** The Worker Loader is bound (Workers Paid): Code Mode at /api/mcp/code works. */
+    codeMode: boolean;
     /** Which links Link health checks (the link form explains its switches by it). */
     checkScope: CheckScope;
     /** Where "the main site" sends visitors (FALLBACK_URL). */
@@ -545,6 +573,8 @@ export interface PersonDTO {
   createdBy: string | null;
   /** Personal API keys they hold. */
   keys: number;
+  /** Whether they have two-factor sign-in (an authenticator or a passkey). */
+  twoFactor: boolean;
   /** Whether the person asking may change or remove them. */
   manageable: boolean;
 }

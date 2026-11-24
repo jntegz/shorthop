@@ -28,11 +28,31 @@ claude mcp add --transport http shorthop "$SHORTHOP_URL/api/mcp" --header "Autho
 
 Its tools:
 - **Links:** `create_link`, `list_links`, `get_link`, `update_link`, `delete_link`, `list_tags`.
-- **Statistics:** `stats_overview`, `link_stats`, `recent_hits`, `missed_links`.
+- **Statistics:** `stats_overview`, `link_stats`, `recent_hits`, `click_log`, `missed_links`.
 - **Websites and revenue:** `list_sites`, `site_overview`, `link_revenue`.
 - **Previews:** `fetch_preview`.
 
 Use them instead of raw HTTP when they're available.
+
+### Code Mode, for tasks over many links
+
+On Workers Paid deployments with Code Mode turned on, `$SHORTHOP_URL/api/mcp/code` is a second MCP server with two tools. `search` runs JavaScript over the OpenAPI document (`await codemode.spec()`). `execute` runs JavaScript in a sandbox without internet, where `await codemode.request({ method, path, query, body })` calls the API with the same key and returns `{ status, ok, body }`. Do a whole task in one `execute` (find, filter, change a batch) instead of many tool calls. At most 50 requests and 30 seconds per run. Without it, the server answers that Code Mode isn't available: use `/api/mcp`.
+
+```bash
+claude mcp add --transport http shorthop-code "$SHORTHOP_URL/api/mcp/code" --header "Authorization: Bearer $SHORTHOP_KEY"
+```
+
+```js
+// execute: tag this week's five most-clicked links "top"
+async () => {
+  const { body } = await codemode.request({ method: "GET", path: "/links", query: { sort: "clicks", period: "7d" } });
+  const top = body.links.slice(0, 5);
+  for (const l of top) {
+    await codemode.request({ method: "PATCH", path: `/links/${l.domain}/${l.slug}`, body: { tags: [...new Set([...(l.tags ?? []), "top"])] } });
+  }
+  return top.map((l) => l.shortUrl);
+}
+```
 
 ## Common tasks with the HTTP API
 

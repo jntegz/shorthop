@@ -3,6 +3,69 @@
 What changed in each Shorthop release, and what to do when you upgrade.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## [2.0.4] - 2026-11-24
+
+The headline is **two-factor sign-in**: an authenticator app with recovery codes, and passkeys that sign in on their own. The release also adds **Code Mode**, an optional second MCP server for Workers Paid, and fixes from a security review of sign-in, payments and webhooks. Read **Upgrading** before you update.
+
+### Added: two-factor sign-in and passkeys
+
+Settings → Access & security → **Two-factor sign-in**, for owners, people and the admin of password-only sign-in. [docs/SETUP.md](docs/SETUP.md#two-factor) has the details.
+
+- **Authenticator app:** scan a QR code, and the login then asks for a 6-digit code after the password. No session exists until the code passes, after invite and reset links too. Each code works once.
+- **Recovery codes:** ten one-time codes come with the first method, for a lost phone. Only their SHA-256 is stored.
+- **Passkeys:** sign in with a fingerprint, face or device PIN, without the password. They also finish the second step. Only the public key is stored. The WebAuthn library loads only when it's used, so short-link cold starts don't carry it.
+- **Locks and notices:** wrong codes lock per person, like wrong passwords, and a lock is emailed to the person, because someone had their password. Failed passkeys lock per network: the passkey sign-in needs no password, so a per-person lock would let strangers lock someone out. Adding or removing a method, or making new codes, needs a sign-in from the last 15 minutes, ends the person's other sessions and is emailed.
+- **For admins:** **Require two-factor sign-in for everyone** in Settings → Security, a 2FA badge in People, and **Reset two-factor sign-in** in a person's ⋯ menu. Recent logins show how each one was completed.
+
+### Added: Code Mode (optional, Workers Paid)
+
+`POST /api/mcp/code` is a second MCP server with two tools. `search` reads the API's OpenAPI document. `execute` runs the assistant's JavaScript in a Dynamic Worker without internet, whose only way out is your API, with the caller's own key: every permission rule applies. At most 50 requests and 30 seconds per run, 30 runs a minute per person, and no IP-address lookups. Settings → API & webhooks → **Connect an AI assistant** has a **Standard tools / Code Mode** switch. `/api/mcp` is unchanged.
+
+### Security
+
+- **Payment claims:** the website collector accepts only the random, prefixed provider ids its script reads from a return page (`cs_…`, `pi_…`, `sub_…` and the like). Order numbers and numeric customer ids, which anyone could count through, no longer claim a payment.
+- **Deleting a website with payments, subscriptions, privacy requests or erasures** needs **See revenue**, like changing its retention. A site with only traffic still needs only **Manage websites**.
+- **The Gumroad webhook address** carries its secret token only for people with **See revenue**.
+- **The digest preview** leaves out websites' revenue for people without **See revenue**.
+- **`link.tracked_click` webhooks** carry no part of the IP address, not even masked: subscribing needs only **See click logs**, which is "without IP addresses".
+- **Password forms of protected links and shared statistics** refuse posts from other sites before anything is counted, so another site can't use up a visitor's tries.
+- **The people's login brake:** one person counts towards it at most 5 times an hour, from however many networks, so one account can't keep everyone else's logins paused.
+- **Passkeys go with a new password:** an admin's **Reset password**, a reset link and a password change remove the person's passkeys, and someone waiting on an invite can't sign in with one.
+- **The domain setup check** is limited per person, like the social-preview fetch.
+- **Admin static files** get `Cross-Origin-Resource-Policy: same-origin` and `nosniff` from `public/_headers`, since they don't pass through the Worker. HSTS comes from the admin page itself, as the `HSTS` setting says.
+- **Protected links' password brake** counts a guess against the link before checking it, so a burst from many networks at once can't all get past it.
+- **Tracked links** (Advanced tracking): past the public limiter's rate, one network's clicks still redirect but aren't logged, so a loop can't spend the day's D1 writes or flood webhook receivers.
+- **The digest preview** also leaves out missed visits and destinations that don't work for people without **Manage link health**.
+- **Payments sent over the API** (`POST /api/sites/:id/payments`) say how they matched a visitor only to callers with **See revenue**: a match by email told whether that address is a known visitor.
+- **Require two-factor sign-in** also holds back personal API keys: a key works only while its owner has a method.
+- **The email setup** (Settings → Weekly digest → Set up email) is changed by admins only. Turned off, it silenced everyone's security notices.
+- **PayPal webhooks** older than PayPal's 3-day retry window are refused: PayPal signs only a CRC32 of the body, so a captured delivery could be rewritten and replayed. Its access token is cached per client secret, so a changed secret takes effect at once.
+- **Stored secrets** are never encrypted with a key derived from an empty secret.
+- **Config comment:** `wrangler.jsonc` no longer suggests a new `SESSION_SECRET` to log everyone out. Without `ENCRYPTION_KEY`, that makes stored secrets unreadable; use Settings → Security → **Log out everyone**.
+
+### Fixed
+
+- The skill's API reference (`skills/shorthop/references/api.md`) lists the Advanced tracking routes from 2.0.3.
+
+### Upgrading
+
+1. **Update as usual** (`npm run setup -- upgrade`, the Update Shorthop workflow, or git). Migration `0050` adds three tables (`auth_factors`, `recovery_codes`, `auth_challenges`) and a `method` column on `login_events`. Nothing existing changes. `setup -- upgrade` also adds the new `CODE_LIMITER` rate limiter to `wrangler.jsonc`.
+2. **Nobody is signed out,** and nobody needs two-factor sign-in until they add it or an admin requires it. Before requiring it, set it up for yourself: the switch refuses otherwise. People without it are then signed out at their next click and set it up at their next login.
+3. **Code Mode is off** until you want it. On Workers Paid, uncomment `"worker_loaders": [{ "binding": "LOADER" }]` in `wrangler.jsonc` (in a Deploy-button copy, add `[[worker_loaders]]` with `binding = "LOADER"` to `wrangler.toml`), then deploy. On Workers Free, leave it as it is.
+4. **Without `ENCRYPTION_KEY`,** authenticator-app secrets are encrypted with a key derived from `SESSION_SECRET`, like the other stored secrets. Set `ENCRYPTION_KEY` before people add apps if you might ever change `SESSION_SECRET`.
+5. **Backups leave two-factor sign-in out:** after a restore, people set it up again.
+
+#### Changes that can break scripts or habits
+
+- **`link.tracked_click` no longer has `ip_masked`.** `ip_recorded` still says whether an address was stored.
+- **Return-page references (`k` in `/_t/e`)** must look like a provider's own id: `cs_`, `ch_`, `ord_`, `pay_`, `sub_`, `txn_`, `in_` or `pi_`, then 4 to 190 letters, digits or underscores. Anything else is ignored. Shorthop's own script sends only those.
+- **`DELETE /sites/:id`** answers 403 without **See revenue** for a site with payments, subscriptions, privacy requests or erasures.
+- **`GET`, `POST` and `PATCH /sites/:id/connections`** return Gumroad's `webhookUrl` without `?token=` for people and keys without **See revenue**.
+- **`GET /settings/digest/preview`** returns no websites without **See revenue**.
+- **`GET /settings/domains/check`** can answer 429 when asked too often.
+- **Password posts to protected links and shares** from another site (`Sec-Fetch-Site` other than `same-origin` or `none`, or a foreign `Origin`) are refused as bad requests.
+- **Site analytics errors** say "Analytics Engine query failed" instead of the upstream error text.
+
 ## [2.0.3] - 2026-11-21
 
 The headline is **Advanced tracking**: an opt-in click log for a single link, with every detail Cloudflare knows about each click and, if an admin allows it, the IP address. It comes with workspace rules, two new permissions and a guide for the people who use it. The release also has a large set of security and privacy fixes across API access, MCP, payments, website analytics, erasure, backups and the update workflow; read **Upgrading** before you update.
@@ -484,6 +547,7 @@ A new admin, and the features that make Shorthop a place to move your links to.
 
 First release.
 
+[2.0.4]: https://github.com/jntegz/shorthop/compare/v2.0.3...v2.0.4
 [2.0.3]: https://github.com/jntegz/shorthop/compare/v2.0.2...v2.0.3
 [2.0.2]: https://github.com/jntegz/shorthop/compare/v2.0.1...v2.0.2
 [2.0.1]: https://github.com/jntegz/shorthop/compare/v2.0.0...v2.0.1

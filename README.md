@@ -81,7 +81,7 @@ Earlier releases are in the [changelog](CHANGELOG.md).
 
 - **Per click:** country, region, city, device, OS, browser, referrer, source tag and language. Humans, bots and misses are counted separately.
 - **Live map:** a globe of the latest human clicks, at city level, with the top countries and links.
-- **Advanced tracking (opt-in per link):** a log of each click with every detail Cloudflare has: exact time, city, postal code, coordinates and time zone, network and its reverse-DNS name, Tor, VPN-provider, hosting and relay hints, device model, system and browser versions, languages, the full referrer and numbered repeat visitors, as a list or a map, with CSV export. Optionally the IP address (AES-GCM encrypted, visible only with **See IP addresses**), browser details (screen, time zone and a "VPN?" hint when it disagrees with the IP), an email-open pixel that tells Gmail's proxy and Outlook from scanners, emails on the first or every click, and a `link.tracked_click` webhook with the IP masked. Workspace rules for admins (IP off by default, the longest retention, a required purpose), retention of 7 days to a year, and finding or erasing one person's clicks by IP. No WebRTC leaks, GPS prompts or fingerprinting, on purpose. See [Advanced tracking](docs/ADVANCED-TRACKING.md).
+- **Advanced tracking (opt-in per link):** a log of each click with every detail Cloudflare has: exact time, city, postal code, coordinates and time zone, network and its reverse-DNS name, Tor, VPN-provider, hosting and relay hints, device model, system and browser versions, languages, the full referrer and numbered repeat visitors, as a list or a map, with CSV export. Optionally the IP address (AES-GCM encrypted, visible only with **See IP addresses**), browser details (screen, time zone and a "VPN?" hint when it disagrees with the IP), an email-open pixel that tells Gmail's proxy and Outlook from scanners, emails on the first or every click, and a `link.tracked_click` webhook (no IP address). Workspace rules for admins (IP off by default, the longest retention, a required purpose), retention of 7 days to a year, and finding or erasing one person's clicks by IP. No WebRTC leaks, GPS prompts or fingerprinting, on purpose. See [Advanced tracking](docs/ADVANCED-TRACKING.md).
 - **When people click:** a weekday × hour heatmap in your own time zone, per link and for the whole account.
 - **Private by design:** Shorthop stores no IP addresses or cookies (Cloudflare, which runs it, sees them to deliver the request). The exception is Advanced tracking in IP mode, which an admin has to allow. Unique visitors are counted with a daily hash whose random salt is deleted once the day is over. See [visitor privacy](docs/PRIVACY.md).
 - **Any period:** today, 7, 30 or 90 days, 12 months, all time or any dates, compared with the previous period.
@@ -121,8 +121,9 @@ Earlier releases are in the [changelog](CHANGELOG.md).
 ### People, automation and appearance
 
 - **People and roles:** with Cloudflare Access, add people as admins, managers or users, each with their own password and the permissions you tick. Pause someone until a date, sign them out everywhere, and let them reset a forgotten password by email. An optional Cloudflare Turnstile check guards the password pages.
+- **Two-factor sign-in and passkeys:** anyone can add an authenticator app, so the login asks for a 6-digit code after the password, and gets ten one-time recovery codes for a lost phone. A passkey (fingerprint, face or device PIN) signs in on its own. Admins can require two-factor sign-in for everyone and reset it for someone who lost their phone. Works without Access too.
 - **API at `/api`:** personal API keys for scripts, Zapier or Make and an [iOS Shortcut](docs/ios-shortcut.md). A key does only what it was given, can expire, and stops working when it's revoked or its owner loses access. The admin has a searchable API reference, and `/api/openapi.json` describes every endpoint.
-- **AI assistants:** an MCP server at `/api/mcp` lets Claude Code, Cursor or VS Code create links, read statistics and check revenue with your API key and its permissions. Or install the skill: `npx skills add jntegz/shorthop`.
+- **AI assistants:** an MCP server at `/api/mcp` lets Claude Code, Cursor or VS Code create links, read statistics and check revenue with your API key and its permissions. On Workers Paid, **Code Mode** at `/api/mcp/code` lets the assistant write one script for a whole task (find, filter, change a batch), run in a sandbox without internet that can only call your API with the same key. Or install the skill: `npx skills add jntegz/shorthop`.
 - **Webhooks:** signed events for links created, changed or deleted, clicks, destinations down or back, click milestones, payments and traffic spikes, with retries and a delivery log.
 - **Quick capture:** a "Shorten this page" bookmarklet, and Shorthop in your phone's share sheet once you install the admin as an app.
 - **Light, dark and your colour:** the admin follows your system or a switch next to Log out, and each person picks their own accent colour, saved in their browser.
@@ -248,6 +249,7 @@ On Free, the daily requests are a hard cap for the whole account: once they're u
 - **Admin:** Cloudflare Access (verified in the Worker, not only at the edge) plus a password, by default. Password-only sign-in is possible, but only with the exact setting `ADMIN_AUTH="password"`; any other gap in the configuration keeps the admin closed. See [SECURITY.md](SECURITY.md).
 - **People:** owners (`ADMIN_EMAIL`) use the admin password; everyone else has their own, chosen from a one-time invite link (24 hours) or a reset link (1 hour, rate-limited, emailed only to their Access address). Every API route has a permission rule, checked in the Worker, and a route without one is refused. Without Access there's only the owner.
 - **Password login:** at least 9 characters (the setup generates a 32-character one by default), PBKDF2-SHA256, a signed `__Host-` session cookie bound to the signed-in identity, lockouts per network that double with each lockout, and a global brake. Shorthop's database holds no IP addresses, only a keyed hash of the network.
+- **Two-factor sign-in:** TOTP (RFC 6238) with the secret AES-GCM encrypted, recovery codes stored only as SHA-256, passkeys (WebAuthn, user verification required) stored only as public keys. No session exists before the second step passes, after invite and reset links too. Wrong codes lock per person, failed passkeys per network. Changes need a sign-in from the last 15 minutes and end the person's other sessions.
 - **API:** personal API keys, stored only as a SHA-256 hash and limited to what their owner may do; failed attempts lock the network. The older `API_TOKEN` secret still works: by default it reads links and statistics and creates links, but can't change or delete them or read webhooks, shares and customer data (`API_TOKEN_SCOPE`).
 - **Secrets:** stored as Wrangler secrets. The setup sends them to Cloudflare through stdin and never writes them to disk. The admin never displays them. A Deploy to Cloudflare install keeps its generated session secret and visitor salt in D1 until you set your own.
 - **Redirects:** targets must be `https://` and can't point back at the shortener.
@@ -317,7 +319,7 @@ npm run types            # then regenerate worker-configuration.d.ts
 | `VISITOR_SALT` | secret | Mixed into the visitor hash, together with a random salt per day that's deleted once the day is over. Without it, one is generated and kept in D1 |
 | `ADMIN_PASSWORD_HASH` | secret | PBKDF2 hash of the owners' password |
 | `ADMIN_PASSWORD` | secret | The owners' password in plain text, at least 9 characters: what the Deploy to Cloudflare button sets. Used only without `ADMIN_PASSWORD_HASH` |
-| `SESSION_SECRET` | secret | Signs admin sessions, link-password cookies and webhook secrets; rotating it logs everyone out and makes webhook secrets unreadable. Without it, one is generated and kept in D1 |
+| `SESSION_SECRET` | secret | Signs admin sessions and link-password cookies. To log everyone out, use Settings → Security → **Log out everyone** instead of a new value: without `ENCRYPTION_KEY` it also encrypts authenticator-app secrets and stored webhook, share and payment secrets, which a new value makes unreadable. Without it, one is generated and kept in D1 |
 | `CF_ANALYTICS_TOKEN` | secret | Optional: API token with Account Analytics Read, for stats |
 | `TURNSTILE_SECRET` | secret | Optional: the Turnstile widget's secret key, for the bot check on the login and forgot-password pages |
 | `RESEND_API_KEY`, `EMAILIT_API_KEY`, `POSTMARK_API_KEY`, `SENDGRID_API_KEY`, `MAILGUN_API_KEY` | secret | Each provider's own API key. An older `DIGEST_API_KEY` still works, for the provider named in `DIGEST_PROVIDER` only |
@@ -341,6 +343,8 @@ npm run types            # then regenerate worker-configuration.d.ts
 | `/` | 302 to `FALLBACK_URL` (or to `/_admin/` on a separate admin host) |
 | `/_admin` | 301 to `/_admin/` |
 | `/_admin/login`, `/_admin/logout` | The password step: a server-rendered form, lockouts, signed session cookie |
+| `/_admin/login/2fa`, `/_admin/login/2fa-setup` | The second step after the password (or setting it up when it's required): a code from the app or a recovery code, lockout per person |
+| `/_admin/login/passkey`, `/_admin/login/passkey/options`, `/_admin/login/passkey.js` | Passkey sign-in: same-origin JSON, and the login pages' one script (named by its full URL in the CSP, only on pages that offer a passkey) |
 | `/_admin/invite/<token>`, `/_admin/reset/<token>` | One-time links: an invited person chooses their password, or someone resets a forgotten one |
 | `/_admin/forgot` | "Forgot your password?": emails a reset link to the Access address (not shown without Access) |
 | `/_admin/bot-check` | Turning on the optional Turnstile check, after a test passes |
@@ -348,6 +352,7 @@ npm run types            # then regenerate worker-configuration.d.ts
 | `/_admin/assets/*`, `/robots.txt`, `/favicon.ico` | Static assets, served without running the Worker |
 | `/_admin/api/*` | The API for the admin app: CSRF and same-origin checks, identity and session |
 | `/api/mcp` | The MCP server for AI assistants: JSON-RPC over HTTP, each tool calling the API with the caller's key |
+| `/api/mcp/code` | Code Mode: the same JSON-RPC, two tools (`search` and `execute`); the assistant's JavaScript runs in a Dynamic Worker without internet. Needs the `LOADER` binding (Workers Paid) |
 | `/api/openapi.json` | The API described as OpenAPI 3.0 |
 | `/api/*` | The same API with a personal API key, or the `API_TOKEN` secret (reads links and statistics and creates links, unless `API_TOKEN_SCOPE` is `full`) |
 | `/health` | `ok` |
@@ -366,6 +371,9 @@ src/shared/                slug rules, domains, UTM handling, schemas, API types
 src/worker/index.ts        entry: request dispatch and cron handlers
 src/worker/redirect.ts     the click path
 src/worker/auth.ts         Access JWT, sign-in mode, session, API key and token checks
+src/worker/login.ts        the sign-in pages: password, second step, passkeys, invite and reset links
+src/worker/two-factor.ts   two-factor sign-in: authenticator apps (totp.ts), recovery codes, the workspace rule
+src/worker/passkeys.ts     passkeys (WebAuthn): adding one, signing in with one
 src/worker/permissions.ts  the permission rule for every API route
 src/worker/users.ts        people, roles and personal API keys
 src/worker/secrets.ts      session secret and visitor salt generated in D1 when unset
@@ -375,7 +383,7 @@ src/worker/webhooks.ts     signed webhook events, retries and the delivery log
 src/worker/click-cap.ts    the click-limit Durable Object
 src/worker/health.ts       System status, setup checks and alert emails
 src/worker/version.ts      the running version and the newest release (System status)
-src/worker/mcp.ts          the MCP server; openapi.ts: the API catalog and openapi.json
+src/worker/mcp.ts          the MCP server and the JSON-RPC envelope it shares with Code Mode (mcp-code.ts); openapi.ts: the API catalog and openapi.json
 src/worker/backup.ts       full backups and the weekly copy to R2
 src/worker/safety.ts       the unsafe-destination lookup at Cloudflare's security DNS
 src/worker/import/         reading links from Bitly, Rebrandly, Short.io and Dub
@@ -426,7 +434,7 @@ Yes. On the link's page, create a shared statistics page and send its address. T
 If it lets you add a script to the page head, yes: HTML, Next.js, WordPress, Shopify, Webflow, Framer, Wix, Squarespace, Ghost and others. The site's Settings & setup page shows the steps for each, and tells you live when the first visit arrives.
 
 **Can I use it with my AI assistant?**
-Yes. Settings → API, MCP & webhooks has the setup for Claude Code, Cursor and VS Code: they connect to `/api/mcp` with a personal API key and can do whatever that key is allowed to. For agents that use Agent Skills, `npx skills add jntegz/shorthop` installs Shorthop's.
+Yes. Settings → API, MCP & webhooks has the setup for Claude Code, Cursor and VS Code: they connect to `/api/mcp` with a personal API key and can do whatever that key is allowed to. On Workers Paid, Code Mode (`/api/mcp/code`) is the other choice there, for tasks over many links. For agents that use Agent Skills, `npx skills add jntegz/shorthop` installs Shorthop's.
 
 **What if Cloudflare flags one of my destinations?**
 New and changed destinations, including the ones routing rules send visitors to, are checked at Cloudflare's security DNS. Imports are checked as they arrive, as far as the request's share of lookups goes, and the rest in the next half-hourly runs. A flagged one shows visitors a warning page with a "Continue anyway" link instead of redirecting, and the link is marked in the admin. If you know the site is fine, choose **I trust this destination** in the link form. `SAFETY_DNS = "off"` turns the lookups off.

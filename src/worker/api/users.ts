@@ -12,11 +12,19 @@ import { adminAuthMode } from "../auth";
 import { nowSec } from "../db";
 import { validate, type AppEnv } from "../hono";
 import { peopleMailStatus, sendPersonMail, withMailSettings } from "../mailer";
+import { clearFailuresStmt } from "../session";
+import { sendTwoFactorNotice } from "../two-factor";
 import { getUser, INVITE_TTL_SEC, isPaused, mergeManagedPermissions, ownerEmails, randomToken, sha256Hex, userActor, utcText, type UserRow } from "../users";
 
 const PASSWORD_ONLY = "Turn on Cloudflare Access to add people with their own permissions: without it, everyone who signs in is the owner.";
 
-function personOf(row: UserRow, actor: Actor, now: number, keys: number): PersonDTO {
+/** What the people list shows beside the row: API keys, and whether they have two-factor sign-in. */
+interface Extras {
+  keys: number;
+  twoFactor: boolean;
+}
+
+function personOf(row: UserRow, actor: Actor, now: number, { keys, twoFactor }: Extras): PersonDTO {
   const paused = isPaused(row, now);
   const status = paused ? "paused" : row.password_hash ? "active" : row.invite_expires !== null && row.invite_expires > now ? "invited" : "expired";
   return {
@@ -33,11 +41,12 @@ function personOf(row: UserRow, actor: Actor, now: number, keys: number): Person
     createdAt: row.created_at,
     createdBy: row.created_by,
     keys,
+    twoFactor,
     manageable: canManage(actor, row),
   };
 }
 
-function ownerOf(email: string, lastLoginAt: number | null, keys: number): PersonDTO {
+function ownerOf(email: string, lastLoginAt: number | null, { keys, twoFactor }: Extras): PersonDTO {
   return {
     email,
     name: "",
@@ -52,13 +61,17 @@ function ownerOf(email: string, lastLoginAt: number | null, keys: number): Perso
     createdAt: null,
     createdBy: null,
     keys,
+    twoFactor,
     manageable: false,
   };
 }
 
-async function keyCount(db: D1Database, email: string): Promise<number> {
-  const row = await db.prepare("SELECT COUNT(*) AS n FROM api_keys WHERE owner = ?").bind(email).first<{ n: number }>();
-  return row?.n ?? 0;
+async function extrasOf(db: D1Database, email: string): Promise<Extras> {
+  const row = await db
+    .prepare("SELECT (SELECT COUNT(*) FROM api_keys WHERE owner = ?1) AS keys, EXISTS (SELECT 1 FROM auth_factors WHERE email = ?1) AS two_factor")
+    .bind(email)
+    .first<{ keys: number; two_factor: number }>();
+  return { keys: row?.keys ?? 0, twoFactor: Boolean(row?.two_factor) };
 }
 
 /** A new one-time invite: the token goes in the link, only its hash is stored. */
@@ -132,20 +145,23 @@ export const usersApi = new Hono<AppEnv>()
   .get("/", async (c) => {
     const actor = c.get("actor");
     const now = nowSec();
-    const [users, keys, logins] = await c.env.DB.batch<Record<string, unknown>>([
+    const [users, keys, logins, factors] = await c.env.DB.batch<Record<string, unknown>>([
       c.env.DB.prepare("SELECT * FROM users ORDER BY created_at, email"),
       c.env.DB.prepare("SELECT owner, COUNT(*) AS n FROM api_keys GROUP BY owner"),
       c.env.DB.prepare("SELECT email, MAX(ts) AS at FROM login_events WHERE ok = 1 AND email IS NOT NULL GROUP BY email"),
+      c.env.DB.prepare("SELECT DISTINCT email FROM auth_factors"),
     ]);
     const keysBy = new Map((keys?.results ?? []).map((r) => [String(r.owner), Number(r.n)]));
+    const withFactor = new Set((factors?.results ?? []).map((r) => String(r.email)));
+    const extras = (email: string): Extras => ({ keys: keysBy.get(email) ?? 0, twoFactor: withFactor.has(email) });
     const loginBy = new Map((logins?.results ?? []).map((r) => [String(r.email), Number(r.at)]));
     const owners = ownerEmails(c.env);
     const result: PeopleDTO = {
       people: [
-        ...owners.map((e) => ownerOf(e, loginBy.get(e) ?? null, keysBy.get(e) ?? 0)),
+        ...owners.map((e) => ownerOf(e, loginBy.get(e) ?? null, extras(e))),
         ...((users?.results ?? []) as unknown as UserRow[])
           .filter((u) => !owners.includes(u.email))
-          .map((u) => personOf(u, actor, now, keysBy.get(u.email) ?? 0)),
+          .map((u) => personOf(u, actor, now, extras(u.email))),
       ],
       assignableRoles: assignableRoles(actor),
       emailProblem: peopleMailStatus(await withMailSettings(c.env)).problem,
@@ -178,7 +194,7 @@ export const usersApi = new Hono<AppEnv>()
     const row = (await getUser(c.env.DB, body.email))!;
     console.log(JSON.stringify({ message: "person added", email: row.email, role: row.role, by: actor.email }));
     const result: InviteDTO = {
-      person: personOf(row, actor, now, 0),
+      person: personOf(row, actor, now, { keys: 0, twoFactor: false }),
       inviteUrl: invite.url,
       inviteExpiresAt: invite.expires,
       ...(await emailInvite(c.env, row, actor, invite, body.sendEmail)),
@@ -218,7 +234,7 @@ export const usersApi = new Hono<AppEnv>()
     if (!res.meta.changes) return c.json({ error: CHANGED }, 409);
     const row = (await getUser(c.env.DB, email))!;
     console.log(JSON.stringify({ message: "person changed", email, role, permissions, by: actor.email }));
-    return c.json({ person: personOf(row, actor, now, await keyCount(c.env.DB, email)) });
+    return c.json({ person: personOf(row, actor, now, await extrasOf(c.env.DB, email)) });
   })
 
   .delete("/:email", validate("param", personParamSchema), async (c) => {
@@ -228,10 +244,14 @@ export const usersApi = new Hono<AppEnv>()
     if (!target) return c.json({ error: "Not found" }, 404);
     if (!canManage(actor, target)) return c.json({ error: target.email === actor.email ? "You can't remove yourself. Ask an admin." : "You can't remove this person." }, 403);
 
-    // Their keys go in the same batch, only if the row really went.
+    // Their keys and two-factor sign-in go in the same batch, only if the row really went.
+    const gone = "NOT EXISTS (SELECT 1 FROM users WHERE email = ?1)";
     const [removed, , keys] = await c.env.DB.batch([
       c.env.DB.prepare(`DELETE FROM users WHERE email = ?1${actor.role === "admin" ? "" : " AND role = 'user'"}`).bind(email),
       ...revokeKeysStmts(c.env.DB, email, nowSec(), true),
+      c.env.DB.prepare(`DELETE FROM auth_factors WHERE email = ?1 AND ${gone}`).bind(email),
+      c.env.DB.prepare(`DELETE FROM recovery_codes WHERE email = ?1 AND ${gone}`).bind(email),
+      c.env.DB.prepare(`DELETE FROM auth_challenges WHERE email = ?1 AND ${gone}`).bind(email),
     ]);
     if (!removed?.meta.changes) return c.json({ error: CHANGED }, 409);
     console.log(JSON.stringify({ message: "person removed", email, by: actor.email }));
@@ -251,7 +271,10 @@ export const usersApi = new Hono<AppEnv>()
 
   // A new invite link: clears their password and ends their sessions, so it
   // doubles as "reset password". Their API keys stop working until they choose
-  // a new one. Older links stop working, reset links too.
+  // a new one. Older links stop working, reset links too. Their passkeys go as
+  // well: each signs in without the password, so one added by someone who had
+  // their session would outlive the reset. An authenticator app stays (it needs
+  // the new password too).
   .post("/:email/invite", validate("param", personParamSchema), validate("json", reinviteSchema), async (c) => {
     const actor = c.get("actor");
     const { email } = c.req.valid("param");
@@ -263,17 +286,23 @@ export const usersApi = new Hono<AppEnv>()
 
     const now = nowSec();
     const invite = await newInvite(c, now);
-    const res = await c.env.DB.prepare(
-      `UPDATE users SET password_hash = NULL, invite_hash = ?1, invite_expires = ?2, reset_hash = NULL, reset_expires = NULL, session_epoch = ?3, updated_at = ?4
-       WHERE email = ?5${actor.role === "admin" ? "" : " AND role = 'user'"}`,
-    )
-      .bind(invite.hash, invite.expires, crypto.randomUUID(), now, email)
-      .run();
-    if (!res.meta.changes) return c.json({ error: CHANGED }, 409);
+    // The passkeys go only with this very reset (its invite hash), never after a refused one.
+    const reset = "EXISTS (SELECT 1 FROM users WHERE email = ?1 AND password_hash IS NULL AND invite_hash = ?2)";
+    const [res] = await c.env.DB.batch([
+      c.env.DB.prepare(
+        `UPDATE users SET password_hash = NULL, invite_hash = ?1, invite_expires = ?2, reset_hash = NULL, reset_expires = NULL, session_epoch = ?3, updated_at = ?4
+         WHERE email = ?5${actor.role === "admin" ? "" : " AND role = 'user'"}`,
+      ).bind(invite.hash, invite.expires, crypto.randomUUID(), now, email),
+      c.env.DB.prepare(`DELETE FROM auth_factors WHERE email = ?1 AND kind = 'passkey' AND ${reset}`).bind(email, invite.hash),
+      c.env.DB.prepare(`DELETE FROM auth_challenges WHERE email = ?1 AND purpose LIKE 'passkey-%' AND ${reset}`).bind(email, invite.hash),
+      // Recovery codes recover a method: without one left, they have nothing to recover.
+      c.env.DB.prepare(`DELETE FROM recovery_codes WHERE email = ?1 AND NOT EXISTS (SELECT 1 FROM auth_factors WHERE email = ?1) AND ${reset}`).bind(email, invite.hash),
+    ]);
+    if (!res?.meta.changes) return c.json({ error: CHANGED }, 409);
     const row = (await getUser(c.env.DB, email))!;
     console.log(JSON.stringify({ message: "invite created", email, by: actor.email }));
     const result: InviteDTO = {
-      person: personOf(row, actor, now, await keyCount(c.env.DB, email)),
+      person: personOf(row, actor, now, await extrasOf(c.env.DB, email)),
       inviteUrl: invite.url,
       inviteExpiresAt: invite.expires,
       ...(await emailInvite(c.env, target, actor, invite, sendEmail)),
@@ -303,7 +332,7 @@ export const usersApi = new Hono<AppEnv>()
     if (!res.meta.changes) return c.json({ error: CHANGED }, 409);
     const row = (await getUser(c.env.DB, email))!;
     console.log(JSON.stringify({ message: "person paused", email, until, by: actor.email }));
-    return c.json({ person: personOf(row, actor, now, await keyCount(c.env.DB, email)) });
+    return c.json({ person: personOf(row, actor, now, await extrasOf(c.env.DB, email)) });
   })
 
   .post("/:email/resume", validate("param", personParamSchema), async (c) => {
@@ -322,7 +351,7 @@ export const usersApi = new Hono<AppEnv>()
     if (!res.meta.changes) return c.json({ error: CHANGED }, 409);
     const row = (await getUser(c.env.DB, email))!;
     console.log(JSON.stringify({ message: "person resumed", email, by: actor.email }));
-    return c.json({ person: personOf(row, actor, now, await keyCount(c.env.DB, email)) });
+    return c.json({ person: personOf(row, actor, now, await extrasOf(c.env.DB, email)) });
   })
 
   // Ends every session they have; their password and API keys stay.
@@ -341,5 +370,39 @@ export const usersApi = new Hono<AppEnv>()
     if (!res.meta.changes) return c.json({ error: CHANGED }, 409);
     const row = (await getUser(c.env.DB, email))!;
     console.log(JSON.stringify({ message: "person signed out", email, by: actor.email }));
-    return c.json({ person: personOf(row, actor, now, await keyCount(c.env.DB, email)) });
+    return c.json({ person: personOf(row, actor, now, await extrasOf(c.env.DB, email)) });
+  })
+
+  // For a lost phone: removes their authenticator, passkeys and recovery codes
+  // and ends their sessions. Their password stays; at their next login they
+  // set two-factor sign-in up again if it's required. Owners can't be reset
+  // here (managedTarget): they use a recovery code, or docs/SETUP.md.
+  .post("/:email/two-factor/reset", validate("param", personParamSchema), async (c) => {
+    const actor = c.get("actor");
+    const { email } = c.req.valid("param");
+    const target = await managedTarget(c, email, "reset two-factor sign-in for");
+    if ("error" in target) return c.json({ error: target.error }, target.status);
+
+    const now = nowSec();
+    const epoch = crypto.randomUUID();
+    // The deletes only with this very update (its new epoch): if someone promoted them meanwhile,
+    // a manager's update matches nothing and their methods stay.
+    const didReset = "EXISTS (SELECT 1 FROM users WHERE email = ?1 AND session_epoch = ?2)";
+    const [res] = await c.env.DB.batch([
+      c.env.DB.prepare(`UPDATE users SET session_epoch = ?1, updated_at = ?2 WHERE email = ?3${actor.role === "admin" ? "" : " AND role = 'user'"}`).bind(epoch, now, email),
+      c.env.DB.prepare(`DELETE FROM auth_factors WHERE email = ?1 AND ${didReset}`).bind(email, epoch),
+      c.env.DB.prepare(`DELETE FROM recovery_codes WHERE email = ?1 AND ${didReset}`).bind(email, epoch),
+      c.env.DB.prepare(`DELETE FROM auth_challenges WHERE email = ?1 AND ${didReset}`).bind(email, epoch),
+      clearFailuresStmt(c.env.DB, `mfa:${email}`),
+    ]);
+    if (!res?.meta.changes) return c.json({ error: CHANGED }, 409);
+    const row = (await getUser(c.env.DB, email))!;
+    console.log(JSON.stringify({ message: "two-factor sign-in reset", email, by: actor.email }));
+    const by = actor.name ? `${actor.name} (${actor.email})` : actor.email;
+    try {
+      c.executionCtx.waitUntil(sendTwoFactorNotice(c.env, email, { kind: "reset", by }));
+    } catch {
+      await sendTwoFactorNotice(c.env, email, { kind: "reset", by });
+    }
+    return c.json({ person: personOf(row, actor, now, await extrasOf(c.env.DB, email)) });
   });

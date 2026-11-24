@@ -934,7 +934,7 @@ describe("free-form fields", () => {
   });
 
   it("applies a site's excluded paths to the real address, and to what reports show", async () => {
-    const token = "Zx8Kq2Lm9Np4Rt7Vw1Yb5Cd3Fg6Hj0Ks";
+    const token = "Zx8Kq2Lm9Np4Rt7Vw1Yb5Cd3Fg6Hj0Ks"; // gitleaks:allow
     for (const rule of [`/reset/${token}`, "/reset/*", "/reset/[redacted]"]) {
       await env.DB.exec("DELETE FROM web_sessions");
       const site = await createSite({ name: rule, domains: ["shop.example.com"], excludePaths: [rule] });

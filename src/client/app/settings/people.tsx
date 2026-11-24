@@ -2,7 +2,7 @@
 // managers).
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Ellipsis, KeyRound, LogOut, Pause, Pencil, Play, ShieldCheck, Trash2, UserPlus, UserRound } from "lucide-react";
+import { Ellipsis, KeyRound, LogOut, Pause, Pencil, Play, ShieldCheck, ShieldOff, Trash2, UserPlus, UserRound } from "lucide-react";
 import { useId, useState, type FormEvent } from "react";
 import { toast } from "sonner";
 import { PERMISSION_INFO, PERMISSION_PRESETS, PERMISSIONS, ROLE_INFO, type Permission, type Role } from "../../../shared/permissions";
@@ -52,6 +52,7 @@ export function PeopleSection({ me }: { me: MeDTO }) {
   const [removing, setRemoving] = useState<PersonDTO | null>(null);
   const [pausing, setPausing] = useState<PersonDTO | null>(null);
   const [revokingKeys, setRevokingKeys] = useState<PersonDTO | null>(null);
+  const [resetting2fa, setResetting2fa] = useState<PersonDTO | null>(null);
 
   // With email that reaches people, a new link is also emailed to them.
   const canEmail = Boolean(q.data) && !q.data?.emailProblem;
@@ -85,7 +86,16 @@ export function PeopleSection({ me }: { me: MeDTO }) {
     },
     onError: toastError,
   });
-  const busy = (p: PersonDTO) => [reinvite, resume, signOut].some((m) => m.isPending && m.variables?.email === p.email);
+  const reset2fa = useMutation({
+    mutationFn: (p: PersonDTO) => call(api.users[":email"]["two-factor"].reset.$post({ param: { email: encodeURIComponent(p.email) } })),
+    onSuccess: (_r, p) => {
+      void qc.invalidateQueries({ queryKey: keys.people });
+      setResetting2fa(null);
+      toast.success(`Two-factor sign-in reset for ${p.name || p.email}`, { description: "Their sessions ended. They sign in with their password and set it up again." });
+    },
+    onError: toastError,
+  });
+  const busy = (p: PersonDTO) => [reinvite, resume, signOut, reset2fa].some((m) => m.isPending && m.variables?.email === p.email);
 
   const remove = useMutation({
     mutationFn: (p: PersonDTO) => call(api.users[":email"].$delete({ param: { email: encodeURIComponent(p.email) } })),
@@ -108,6 +118,7 @@ export function PeopleSection({ me }: { me: MeDTO }) {
       onSelect: () => reinvite.mutate(p),
     },
     ...(p.keys ? [{ label: `Revoke ${p.keys === 1 ? "API key" : `${p.keys} API keys`}…`, icon: KeyRound, onSelect: () => setRevokingKeys(p) }] : []),
+    ...(p.twoFactor ? [{ label: "Reset two-factor sign-in…", icon: ShieldOff, onSelect: () => setResetting2fa(p) }] : []),
     "separator",
     { label: "Remove…", icon: Trash2, danger: true, onSelect: () => setRemoving(p) },
   ];
@@ -145,6 +156,7 @@ export function PeopleSection({ me }: { me: MeDTO }) {
                       <span className="settings-a-name">{p.name || p.email}</span>
                       <span className="settings-a-role">{roleLabel(p)}</span>
                       {p.email === me.email ? <Badge>You</Badge> : null}
+                      {p.twoFactor ? <Badge tone="good">2FA</Badge> : null}
                     </p>
                     {p.name ? <p className="settings-a-item-sub settings-a-ellipsis">{p.email}</p> : null}
                     <p className="settings-a-item-sub">
@@ -184,7 +196,7 @@ export function PeopleSection({ me }: { me: MeDTO }) {
           <h3 className="settings-a-h3">Pause or remove someone</h3>
           <p className="settings-a-prose">
             In a person's <Ellipsis className="settings-a-inline-icon" aria-label="more" /> menu: <strong>Pause access</strong> stops their sign-in and API keys until a date or until you resume them, and keeps everything.{" "}
-            <strong>Sign out everywhere</strong> ends their sessions but keeps their password. <strong>Reset password</strong> also stops their API keys until they choose a new one. <strong>Revoke API keys</strong> ends those keys for good, whatever else you do. <strong>Remove</strong> deletes them and their API keys; then take them out of the Access policy too.
+            <strong>Sign out everywhere</strong> ends their sessions but keeps their password. <strong>Reset password</strong> also removes their passkeys and stops their API keys until they choose a new one. <strong>Revoke API keys</strong> ends those keys for good, whatever else you do. <strong>Remove</strong> deletes them and their API keys; then take them out of the Access policy too.
           </p>
         </div>
       </div>
@@ -213,6 +225,21 @@ export function PeopleSection({ me }: { me: MeDTO }) {
             <Button onClick={() => setRevokingKeys(null)}>Cancel</Button>
             <Button variant="danger" onClick={() => revokingKeys && revokeKeys.mutate(revokingKeys)} loading={revokeKeys.isPending}>
               Revoke keys
+            </Button>
+          </>
+        }
+      />
+      <Dialog
+        open={resetting2fa !== null}
+        onOpenChange={(o) => !o && setResetting2fa(null)}
+        title={`Reset two-factor sign-in for ${resetting2fa?.name || resetting2fa?.email || ""}?`}
+        description="For a lost phone: their authenticator app, passkeys and recovery codes are removed and their sessions end. Their password stays. Do this only when you're sure it's them asking."
+        size="sm"
+        footer={
+          <>
+            <Button onClick={() => setResetting2fa(null)}>Cancel</Button>
+            <Button variant="danger" onClick={() => resetting2fa && reset2fa.mutate(resetting2fa)} loading={reset2fa.isPending}>
+              Reset
             </Button>
           </>
         }
@@ -446,6 +473,12 @@ function InviteDialog({ invite, onClose }: { invite: InviteDTO | null; onClose: 
             </Notice>
           ) : invite.emailProblem ? (
             <Notice tone="warn">Not emailed: {invite.emailProblem} Copy the link below and send it yourself.</Notice>
+          ) : null}
+          {invite.person.keys > 0 ? (
+            <Notice tone="warn">
+              Their {invite.person.keys === 1 ? "API key works" : `${invite.person.keys} API keys work`} again once they choose a password. If someone else may have used this account, revoke{" "}
+              {invite.person.keys === 1 ? "it" : "them"} too: their <Ellipsis className="settings-a-inline-icon" aria-label="more" /> menu → Revoke API keys.
+            </Notice>
           ) : null}
           <SecretField value={invite.inviteUrl} copied="Invite link copied" label="Invite link" />
           <ol className="settings-a-steps">

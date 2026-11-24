@@ -75,6 +75,9 @@ export const RULES: Record<string, Rule> = {
   // MCP for AI assistants: any signed-in key; each tool's own route then checks its permission.
   "POST /mcp": signedIn,
   "GET /mcp": signedIn,
+  // Code Mode: whatever its code asks for goes through these rules again, route by route.
+  "POST /mcp/code": signedIn,
+  "GET /mcp/code": signedIn,
   "GET /openapi.json": signedIn,
   "GET /backup": session("admin"),
   "GET /backup/:table": session("admin"),
@@ -156,9 +159,10 @@ export const RULES: Record<string, Rule> = {
   "GET /settings/digest/preview": need({ all: ["settings.manage", "stats.view"] }),
   "POST /settings/digest/test": need("settings.manage"),
   // Which email secrets are set, and whether security email goes out at all: never for a key or token that may sit in a script.
+  // Changing it is for admins: turned off, it silences the two-factor, lockout and reset notices of everyone, owners included.
   "GET /settings/mail": session("settings.manage"),
-  "PUT /settings/mail": session("settings.manage"),
-  "DELETE /settings/mail": session("settings.manage"),
+  "PUT /settings/mail": session("admin"),
+  "DELETE /settings/mail": session("admin"),
   "GET /settings/domains/check": need("settings.manage"),
   // Deletes a domain's links and stats: admins in the admin only, never a leaked key.
   "POST /settings/domains/purge": session("admin"),
@@ -167,10 +171,20 @@ export const RULES: Record<string, Rule> = {
   "GET /settings/turnstile": session("admin"),
   "PUT /settings/turnstile": session("admin"),
   "DELETE /settings/turnstile": session("admin"),
+  "PUT /settings/two-factor": session("admin"),
 
   // The signed-in person, people and API keys.
   "GET /me": signedIn,
   "POST /me/password": session("self-non-owner"),
+  // Your own two-factor sign-in: a session only, never a key.
+  "GET /me/security": session("signed-in"),
+  "POST /me/totp/setup": session("signed-in"),
+  "POST /me/totp/confirm": session("signed-in"),
+  "POST /me/passkeys/options": session("signed-in"),
+  "POST /me/passkeys": session("signed-in"),
+  "PATCH /me/factors/:id": session("signed-in"),
+  "DELETE /me/factors/:id": session("signed-in"),
+  "POST /me/recovery-codes": session("signed-in"),
   "GET /users": session("people"),
   "POST /users": session("people"),
   "PATCH /users/:email": session("people"),
@@ -180,6 +194,7 @@ export const RULES: Record<string, Rule> = {
   "POST /users/:email/resume": session("people"),
   "POST /users/:email/sign-out": session("people"),
   "POST /users/:email/revoke-keys": session("people"),
+  "POST /users/:email/two-factor/reset": session("people"),
   "GET /keys": session("api.use"),
   "POST /keys": session("api.use"),
   "DELETE /keys/:id": session("api.use"),
@@ -230,12 +245,15 @@ export const RULES: Record<string, Rule> = {
   "POST /sites/:id/identify": need("sites.manage"),
 };
 
+/** The writes the API token may make by default (import also refuses overwrite mode). */
+export const TOKEN_WRITES: ReadonlySet<string> = new Set(["POST /links", "POST /import", "POST /settings/digest/test"]);
+
 /**
  * What the API_TOKEN secret may read unless API_TOKEN_SCOPE is "full": links,
  * statistics and the workspace basics. A list, so a new route stays closed until
  * it is added here. Never add a route that returns a value granting further
  * access (webhook addresses, share addresses, payment connections) or customer
- * data. Its writes are in src/worker/app.ts.
+ * data. Its writes are TOKEN_WRITES; src/worker/app.ts applies both.
  */
 export const TOKEN_READS: ReadonlySet<string> = new Set([
   "GET /me",

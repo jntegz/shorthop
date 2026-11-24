@@ -24,8 +24,11 @@
     { "name": "LOGIN_LIMITER", "namespace_id": "1002", "simple": { "limit": 5, "period": 60 } },
     { "name": "LINK_PASSWORD_LIMITER", "namespace_id": "1003", "simple": { "limit": 10, "period": 60 } },
     { "name": "PUBLIC_LIMITER", "namespace_id": "1004", "simple": { "limit": 120, "period": 60 } },
-    { "name": "COLLECT_LIMITER", "namespace_id": "1005", "simple": { "limit": 300, "period": 60 } }
+    { "name": "COLLECT_LIMITER", "namespace_id": "1005", "simple": { "limit": 300, "period": 60 } },
+    { "name": "CODE_LIMITER", "namespace_id": "1006", "simple": { "limit": 30, "period": 60 } }
   ],
+  // Code Mode's sandbox: Miniflare runs real Dynamic Workers (test/mcp-code.test.ts).
+  "worker_loaders": [{ "binding": "LOADER" }],
   "durable_objects": { "bindings": [{ "name": "CLICK_CAPS", "class_name": "ClickCap" }] },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ClickCap"] }],
   "send_email": [

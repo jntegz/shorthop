@@ -139,6 +139,9 @@ interface KeyLookup {
   user_paused_until: number | null;
   user_password_hash: string | null;
   user_invite_hash: string | null;
+  /** The workspace requires two-factor sign-in ("1"), and whether the key's owner has a method. */
+  require_2fa: string | null;
+  has_factor: number;
 }
 
 /**
@@ -154,12 +157,18 @@ export async function findApiKey(env: Env, presented: string, now: number): Prom
     `SELECT k.id, k.owner, k.name, k.permissions, k.expires_at, k.last_used_at,
             u.email AS user_email, u.name AS user_name, u.role AS user_role, u.permissions AS user_permissions,
             u.paused_at AS user_paused_at, u.paused_until AS user_paused_until,
-            u.password_hash AS user_password_hash, u.invite_hash AS user_invite_hash
+            u.password_hash AS user_password_hash, u.invite_hash AS user_invite_hash,
+            (SELECT value FROM settings WHERE key = 'require_2fa') AS require_2fa,
+            EXISTS (SELECT 1 FROM auth_factors f WHERE f.email = k.owner) AS has_factor
      FROM api_keys k LEFT JOIN users u ON u.email = k.owner WHERE k.hash = ?`,
   )
     .bind(await sha256Hex(presented))
     .first<KeyLookup>();
   if (!row || (row.expires_at !== null && row.expires_at <= now)) return null;
+  // "Require two-factor sign-in" (REQUIRE_2FA_KEY in two-factor.ts) ends the sessions of people
+  // without a method; their keys wait too, until they set one up, so a key made with a stolen
+  // password doesn't outlive the rule.
+  if (row.require_2fa === "1" && !Number(row.has_factor)) return null;
 
   let person: Actor;
   if (isOwner(env, row.owner)) person = ownerActor(row.owner);

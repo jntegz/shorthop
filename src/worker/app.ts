@@ -27,7 +27,7 @@ import { usersApi } from "./api/users";
 import { fullTokenScope, TOKEN_SCOPE_ERROR, verifyAdmin, verifyBearer, type AuthResult, type WaitUntil } from "./auth";
 import { PREVIEW_IMAGE_MAX_BYTES } from "../shared/preview";
 import type { AppEnv } from "./hono";
-import { authorize, routeKey, TOKEN_READS } from "./permissions";
+import { authorize, routeKey, TOKEN_READS, TOKEN_WRITES } from "./permissions";
 import { redactSecrets, safePath } from "./redact";
 
 /** Room for a preview image upload and its form encoding. */
@@ -50,9 +50,6 @@ export const api = new Hono<AppEnv>()
   .route("/keys", keysApi)
   .route("/sites", sitesApi)
   .route("/", mcpApi);
-
-/** The writes the API token may make by default (import also refuses overwrite mode). */
-const TOKEN_WRITES = new Set(["POST /links", "POST /import", "POST /settings/digest/test"]);
 
 /**
  * Keeps the API_TOKEN secret to the reads in TOKEN_READS and to creating unless

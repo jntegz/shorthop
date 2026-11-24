@@ -6,3 +6,8 @@ d4a64280722d1a5f0726634d31fe320f078b6424:test/qr.test.ts:generic-api-key:22
 # test/mailer.test.ts: fake Resend keys ("re_key_…", "re_secret_…").
 9dbb48cd12ad483fd5f88aad564031cd590cb313:test/mailer.test.ts:generic-api-key:148
 9dbb48cd12ad483fd5f88aad564031cd590cb313:test/mailer.test.ts:generic-api-key:154
+# test/stored-secrets.test.ts and test/links-ops.test.ts: the made-up ENCRYPTION_KEY "an-encryption-key-…".
+6d9662701bd9b472ab8a6715bbfa99c6771448a8:test/stored-secrets.test.ts:generic-api-key:13
+7414e9b649b68e4570f938212194e97fa0f1f493:test/links-ops.test.ts:generic-api-key:587
+# test/privacy-fixes.test.ts: a made-up token for the log scrubber.
+7414e9b649b68e4570f938212194e97fa0f1f493:test/privacy-fixes.test.ts:generic-api-key:937

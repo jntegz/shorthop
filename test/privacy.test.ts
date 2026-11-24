@@ -394,4 +394,24 @@ describe("erasure and matching, after the security review", () => {
     expect((await adminCall("manager@example.com", `/sites/${site.id}`, { method: "PATCH", body: { customerRetentionMonths: 12 } })).status).toBe(403);
     expect((await adminCall("manager@example.com", `/sites/${site.id}`, { method: "PATCH", body: { name: "Renamed" } })).status).toBe(200);
   });
+
+  it("deletes a site with customers' records only for people who may see them", async () => {
+    await addUser("manager@example.com", "user", ["sites.manage", "stats.view"]);
+    await addUser("both@example.com", "user", ["sites.manage", "revenue.view", "stats.view"]);
+    // Traffic only: Manage websites is enough.
+    const traffic = await createSite({ name: "Blog", domains: ["blog.example.com"] });
+    expect((await adminCall("manager@example.com", `/sites/${traffic.id}`, { method: "DELETE" })).status).toBe(200);
+
+    const shop = await createSite();
+    await pay(shop, { id: "p-1", email: "a@example.com" });
+    const refused = await adminCall("manager@example.com", `/sites/${shop.id}`, { method: "DELETE" });
+    expect(refused.status).toBe(403);
+    expect(await row("SELECT COUNT(*) AS n FROM payments WHERE site_id = ?", shop.id)).toEqual({ n: 1 });
+    expect((await adminCall("both@example.com", `/sites/${shop.id}`, { method: "DELETE" })).status).toBe(200);
+
+    // Erasures of visitors alone leave only the ledger, which deleting would lose too.
+    const erased = await createSite({ name: "Erased", domains: ["erased.example.com"] });
+    await env.DB.prepare("INSERT INTO erasure_ledger (site_id, kind, hash, key_id, created_at, expires_at) VALUES (?1, 'visitor', 'h', 'k', 1, 9999999999)").bind(erased.id).run();
+    expect((await adminCall("manager@example.com", `/sites/${erased.id}`, { method: "DELETE" })).status).toBe(403);
+  });
 });

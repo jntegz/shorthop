@@ -24,7 +24,17 @@ import { PIXEL_PREFIX, TRACKING_BEACON_PATH } from "../shared/tracking";
 import { handleBeacon, handlePixel, scheduledTracking } from "./tracking";
 
 /** Server-rendered password pages (src/worker/login.ts). */
-const LOGIN_PATHS = new Set(["/_admin/login", "/_admin/logout", "/_admin/forgot", "/_admin/bot-check"]);
+const LOGIN_PATHS = new Set([
+  "/_admin/login",
+  "/_admin/login/2fa",
+  "/_admin/login/2fa-setup",
+  "/_admin/login/passkey",
+  "/_admin/login/passkey/options",
+  "/_admin/login/passkey.js",
+  "/_admin/logout",
+  "/_admin/forgot",
+  "/_admin/bot-check",
+]);
 
 // The click-limit counter (a Durable Object class must be exported here).
 export { ClickCap } from "./click-cap";

@@ -10,7 +10,7 @@ import { decryptSecret, encryptSecret } from "../src/worker/webhooks";
 import { fromBase64Url, toBase64Url } from "../src/shared/password";
 import { resetData } from "./helpers";
 
-const KEY = "an-encryption-key-0123456789abcdef-0123";
+const KEY = "an-encryption-key-0123456789abcdef-0123"; // gitleaks:allow
 const withKey = { ...env, ENCRYPTION_KEY: KEY } as Env;
 
 beforeEach(async () => {

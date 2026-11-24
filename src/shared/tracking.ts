@@ -273,13 +273,6 @@ export interface TrackedClicksDTO {
   canSeeIp: boolean;
 }
 
-/** "203.0.113.***" or "2001:db8:85a3:***": enough to tell networks apart at a glance, not the address. */
-export function maskIp(ip: string): string {
-  if (ip.includes(":")) return `${ip.split(":").slice(0, 3).join(":")}:***`;
-  const parts = ip.split(".");
-  return parts.length === 4 ? `${parts.slice(0, 3).join(".")}.***` : "***";
-}
-
 /** Most clicks one page of the click log returns. */
 export const MAX_CLICKS_PAGE = 500;
 

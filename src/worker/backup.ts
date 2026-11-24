@@ -41,7 +41,7 @@ export const BACKUP_TABLES = {
   settings: {
     order: "key",
     where:
-      "key NOT IN ('session_epoch', 'generated_session_secret', 'generated_visitor_salt') AND substr(key, 1, 13) != 'visitor_salt:' AND substr(key, 1, 16) != 'revoked_session:'",
+      "key NOT IN ('session_epoch', 'generated_session_secret', 'generated_visitor_salt') AND substr(key, 1, 13) != 'visitor_salt:' AND substr(key, 1, 16) != 'revoked_session:' AND substr(key, 1, 12) != 'owner_epoch:'",
   },
   users: { order: "email", secret: ["password_hash", "session_epoch", "invite_hash", "reset_hash"] },
   api_keys: { order: "id", secret: ["hash"] },
@@ -77,7 +77,8 @@ export type BackupTable = keyof typeof BACKUP_TABLES;
 export const BACKUP_TABLE_NAMES = Object.keys(BACKUP_TABLES) as BackupTable[];
 
 /** Tables kept out of backups on purpose (checked by the test, like the columns). */
-export const NOT_BACKED_UP = ["auth_failures", "login_events", "webhook_deliveries", "payment_events", "payment_claims", "payment_links", "payment_anomalies", "d1_migrations", "_cf_KV", "sqlite_sequence"] as const;
+// Two-factor sign-in is all secrets (authenticator keys, passkeys, recovery code hashes): after a restore, people set it up again.
+export const NOT_BACKED_UP = ["auth_failures", "login_events", "auth_factors", "recovery_codes", "auth_challenges", "webhook_deliveries", "payment_events", "payment_claims", "payment_links", "payment_anomalies", "d1_migrations", "_cf_KV", "sqlite_sequence"] as const;
 
 export const BACKUP_PAGE = 1000;
 

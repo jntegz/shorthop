@@ -1,6 +1,6 @@
 {
   "name": "shorthop",
-  "version": "2.0.3",
+  "version": "2.0.4",
   "description": "Short links, website analytics and revenue attribution on your own domain, in one Cloudflare Worker you own.",
   "license": "MIT",
   "author": "Jan Tegze (https://jantegze.com)",
@@ -107,7 +107,10 @@
     "seed:dev": "tsx scripts/seed-dev.ts"
   },
   "dependencies": {
+    "@cloudflare/codemode": "^0.5.6",
     "@hono/zod-validator": "^0.9.1",
+    "@simplewebauthn/browser": "^14.0.0",
+    "@simplewebauthn/server": "^14.1.0",
     "@tanstack/react-query": "^5.104.4",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

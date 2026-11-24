@@ -121,6 +121,7 @@ export const keys = {
   // Under "settings", so saving a setting also refreshes the workspace basics.
   me: ["settings", "me"] as const,
   people: ["people"] as const,
+  twoFactor: ["two-factor"] as const,
   apiKeys: (all: boolean) => ["api-keys", all] as const,
   health: ["settings", "health"] as const,
   version: ["settings", "version"] as const,

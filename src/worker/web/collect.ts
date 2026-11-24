@@ -31,6 +31,14 @@ import { clickTokenUsable, verifyClickToken, type ClickToken, type VerifiedClick
 
 export const COLLECT_PATH = "/_t/e";
 const MAX_BODY = 8 * 1024;
+
+/**
+ * A provider id a return page may claim: the random, prefixed ids the tracker
+ * reads (claims() in src/tracker/tracker.js), nothing else. Anyone can post to
+ * this endpoint, so an id that counts up (an order number, a numeric customer
+ * id) would let them claim purchases that aren't theirs.
+ */
+export const CLAIM_REF_RE = /^(cs_|ch_|ord_|pay_|sub_|txn_|in_|pi_)[A-Za-z0-9_]{4,190}$/;
 /** How much of a path the excluded-path rules look at. */
 const MAX_MATCHED_PATH = 2000;
 
@@ -343,7 +351,7 @@ export async function handleCollect(request: Request, env: Env, ctx: ExecutionCo
 
   // A return page after checkout names the provider's ids: tie them to this visit.
   if (kind === "pageview" && !privacySignal && Array.isArray(p.k) && p.k.length) {
-    const refs = p.k.filter((r): r is string => typeof r === "string" && /^[A-Za-z0-9_:.-]{4,200}$/.test(r)).slice(0, 5);
+    const refs = p.k.filter((r): r is string => typeof r === "string" && CLAIM_REF_RE.test(r)).slice(0, 5);
     // Anyone can send refs: claimRefs keeps them to payments close in time, and they never say who the buyer is.
     if (refs.length) {
       ctx.waitUntil(

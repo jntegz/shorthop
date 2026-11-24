@@ -13,7 +13,7 @@ import { api, call, keys } from "../../api";
 import { num } from "../../lib/format";
 import { useCan, useMe } from "../../lib/me";
 import { ErrorState, Skeleton, SkeletonText, Tabs } from "../ui";
-import { AccountSection, AppearanceSection, BotCheckSection, PasswordOnlyPeople, PeopleSection, SecuritySection } from "./access";
+import { AccountSection, AppearanceSection, BotCheckSection, PasswordOnlyPeople, PeopleSection, SecuritySection, TwoFactorSection } from "./access";
 import { BackupSection, CloudflareSection, DomainsSection, ExportsSection, PublishingSection } from "./general";
 import { ApiKeysSection, ApiSection, WebhooksSection } from "./integrations";
 import { DeadLinkSection, NotFoundSection } from "./pages";
@@ -63,6 +63,7 @@ const TAB_OF: Record<string, SettingsTab> = {
   mcp: "integrations",
   webhooks: "integrations",
   account: "access",
+  "two-factor": "access",
   appearance: "access",
   people: "access",
   security: "access",
@@ -220,6 +221,7 @@ export function SettingsPage() {
               {t === "access" ? (
                 <>
                   <AccountSection me={me} />
+                  <TwoFactorSection me={me} />
                   <AppearanceSection />
                   {me.authMode === "password" ? <PasswordOnlyPeople /> : admin || me.role === "manager" ? <PeopleSection me={me} /> : null}
                   {admin && s?.security ? <SecuritySection me={me} security={s.security} /> : null}

@@ -5,6 +5,15 @@ export const SESSION_COOKIE = "__Host-sh_admin";
 /** Session lifetime: 12 hours. */
 export const SESSION_TTL_SEC = 12 * 60 * 60;
 
+/** The short cookie between the password and the second step (src/worker/session.ts). */
+export const MFA_COOKIE = "__Host-sh_mfa";
+/** How long the second step waits after the right password. */
+export const MFA_TTL_SEC = 5 * 60;
+/** Changing two-factor sign-in needs a sign-in at most this old. */
+export const REAUTH_WINDOW_SEC = 15 * 60;
+/** One-time recovery codes made at a time. */
+export const RECOVERY_CODE_COUNT = 10;
+
 /** Failed attempts per network within WINDOW_SEC before it is locked. */
 export const MAX_FAILS = 5;
 export const WINDOW_SEC = 15 * 60;

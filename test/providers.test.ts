@@ -155,6 +155,9 @@ describe("PayPal", () => {
     // Not PayPal's: refused before anything is asked of PayPal.
     const forged = (extra: Record<string, string>) => call(`${ORIGIN}/_pay/paypal/${conn.id}`, { method: "POST", headers: { ...transmission, "PAYPAL-TRANSMISSION-SIG": "good", ...extra }, body });
     expect((await forged({ "PAYPAL-CERT-URL": "https://evil.example/cert" })).status).toBe(401);
+    // A captured delivery can't be replayed weeks later (PayPal signs only a CRC32 of the body).
+    expect((await forged({ "PAYPAL-TRANSMISSION-TIME": new Date(Date.now() - 10 * 86400_000).toISOString() })).status).toBe(401);
+    expect((await forged({ "PAYPAL-TRANSMISSION-TIME": "not a time" })).status).toBe(401);
     expect((await call(`${ORIGIN}/_pay/paypal/${conn.id}`, { method: "POST", headers: { "PAYPAL-TRANSMISSION-SIG": "good" }, body })).status).toBe(401);
     expect(verified).toEqual([]);
     expect((await send("bad")).status).toBe(401);

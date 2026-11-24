@@ -123,52 +123,52 @@ async function sendStripe(conn: ConnectionDTO, body: string): Promise<Response> 
 describe("what a browser claims about a payment", () => {
   it("doesn't reach a payment older than a day, on any path", async () => {
     const site = await createSite();
-    expect((await pay(site, { id: "sale-old", email: "buyer@example.com", occurredAt: now() - 3 * DAY })).status).toBe(201);
-    const claimer = await visit(site, { k: ["sale-old"] });
+    expect((await pay(site, { id: "pay_saleold", email: "buyer@example.com", occurredAt: now() - 3 * DAY })).status).toBe(201);
+    const claimer = await visit(site, { k: ["pay_saleold"] });
 
     // The sweep on the claim itself, the rematch button, a server identify, a later event of the same sale.
     await call(`${API}/sites/${site.id}/rematch`, { method: "POST", headers });
     await call(`${API}/sites/${site.id}/identify`, json({ ref: claimer, email: "someone@example.com" }));
-    await pay(site, { id: "sale-old", email: "buyer@example.com", occurredAt: now() - 3 * DAY });
+    await pay(site, { id: "pay_saleold", email: "buyer@example.com", occurredAt: now() - 3 * DAY });
 
-    expect(await paymentRow("api:charge:sale-old")).toMatchObject({ session_id: null, matched_by: null });
+    expect(await paymentRow("api:charge:pay_saleold")).toMatchObject({ session_id: null, matched_by: null });
     expect(await emailOf(site, await visitorOf(claimer))).toBe("someone@example.com");
   });
 
   it("matches a timely return page, but never says who the buyer is", async () => {
     const site = await createSite();
-    await pay(site, { id: "sale-new", email: "buyer@example.com", occurredAt: now() - 120 });
-    const claimer = await visit(site, { k: ["sale-new"] });
-    expect(await paymentRow("api:charge:sale-new")).toMatchObject({ session_id: claimer, matched_by: "claim", confidence: "low" });
+    await pay(site, { id: "pay_salenew", email: "buyer@example.com", occurredAt: now() - 120 });
+    const claimer = await visit(site, { k: ["pay_salenew"] });
+    expect(await paymentRow("api:charge:pay_salenew")).toMatchObject({ session_id: claimer, matched_by: "claim", confidence: "low" });
     const visitor = await visitorOf(claimer);
     expect(await emailOf(site, visitor)).toBeNull();
     // A rights request for the buyer doesn't take in whoever claimed the payment.
     const person = await resolvePerson(env.DB, site, { email: "buyer@example.com" });
-    expect(person.paymentIds).toContain("api:charge:sale-new");
+    expect(person.paymentIds).toContain("api:charge:pay_salenew");
     expect(person.visitorIds).not.toContain(visitor);
   });
 
   it("lets the buyer's own return page replace one planted before the sale", async () => {
     const site = await createSite();
-    const planted = await visit(site, { k: ["sale-squat"] }, "198.51.100.1");
+    const planted = await visit(site, { k: ["pay_salesquat"] }, "198.51.100.1");
     // Planted a while ago, and again shortly before the sale.
-    await env.DB.prepare("UPDATE payment_claims SET claimed_at = ?1 WHERE ref = 'sale-squat'").bind(now() - 2 * DAY).run();
-    await pay(site, { id: "sale-squat", email: "buyer@example.com", occurredAt: now() - 60 });
-    expect((await paymentRow("api:charge:sale-squat"))!.session_id).toBeNull();
+    await env.DB.prepare("UPDATE payment_claims SET claimed_at = ?1 WHERE ref = 'pay_salesquat'").bind(now() - 2 * DAY).run();
+    await pay(site, { id: "pay_salesquat", email: "buyer@example.com", occurredAt: now() - 60 });
+    expect((await paymentRow("api:charge:pay_salesquat"))!.session_id).toBeNull();
 
-    const genuine = await visit(site, { k: ["sale-squat"] }, "198.51.100.2");
+    const genuine = await visit(site, { k: ["pay_salesquat"] }, "198.51.100.2");
     expect(genuine).not.toBe(planted);
-    expect(await paymentRow("api:charge:sale-squat")).toMatchObject({ session_id: genuine, matched_by: "claim", confidence: "low" });
-    expect(await row("SELECT session_id, source FROM payment_claims WHERE ref = 'sale-squat'")).toEqual({ session_id: genuine, source: "browser" });
+    expect(await paymentRow("api:charge:pay_salesquat")).toMatchObject({ session_id: genuine, matched_by: "claim", confidence: "low" });
+    expect(await row("SELECT session_id, source FROM payment_claims WHERE ref = 'pay_salesquat'")).toEqual({ session_id: genuine, source: "browser" });
     expect(await emailOf(site, await visitorOf(planted))).toBeNull();
   });
 
   it("doesn't count a claim made long before the payment", async () => {
     const site = await createSite();
-    await visit(site, { k: ["sale-early"] });
-    await env.DB.prepare("UPDATE payment_claims SET claimed_at = ?1 WHERE ref = 'sale-early'").bind(now() - 2 * 3600).run();
-    await pay(site, { id: "sale-early", email: "b@example.com", occurredAt: now() });
-    expect((await paymentRow("api:charge:sale-early"))!.matched_by).toBeNull();
+    await visit(site, { k: ["pay_saleearly"] });
+    await env.DB.prepare("UPDATE payment_claims SET claimed_at = ?1 WHERE ref = 'pay_saleearly'").bind(now() - 2 * 3600).run();
+    await pay(site, { id: "pay_saleearly", email: "b@example.com", occurredAt: now() });
+    expect((await paymentRow("api:charge:pay_saleearly"))!.matched_by).toBeNull();
   });
 
   it("treats claims from before this version like a browser's", async () => {
@@ -252,9 +252,9 @@ describe("what a browser claims about a payment", () => {
 
   it("doesn't name the customer through a renewal of a claimed payment", async () => {
     const site = await createSite();
-    await pay(site, { id: "first", customerId: "cus_1", occurredAt: now() - 60 });
-    const claimer = await visit(site, { k: ["first"] });
-    await env.DB.prepare("UPDATE payments SET confidence = 'high' WHERE id = 'api:charge:first'").run(); // As an older version stored it.
+    await pay(site, { id: "pay_first", customerId: "cus_1", occurredAt: now() - 60 });
+    const claimer = await visit(site, { k: ["pay_first"] });
+    await env.DB.prepare("UPDATE payments SET confidence = 'high' WHERE id = 'api:charge:pay_first'").run(); // As an older version stored it.
     await pay(site, { id: "second", customerId: "cus_1", email: "paying@example.com" });
     expect((await paymentRow("api:charge:second"))!.matched_by).toBe("customer");
     expect(await emailOf(site, await visitorOf(claimer))).toBeNull();
@@ -1242,7 +1242,7 @@ describe("the collector's budget counts rows", () => {
 
   it("charges what an event wrote, return-page references included", async () => {
     const site = await createSite();
-    const res = await collect(site, { k: ["ref-aaaa", "ref-bbbb", "ref-cccc", "ref-dddd", "ref-eeee"] }, "198.51.100.40", SITE_ORIGIN, { WORKERS_PLAN: "free" });
+    const res = await collect(site, { k: ["pay_aaaa", "pay_bbbb", "pay_cccc", "pay_dddd", "pay_eeee"] }, "198.51.100.40", SITE_ORIGIN, { WORKERS_PLAN: "free" });
     expect(res.status).toBe(200);
     expect(await row("SELECT COUNT(*) AS n FROM payment_claims")).toEqual({ n: 5 });
     // Nothing is in D1 until a flush: a charge that alone can't reach one shows what the event left waiting.
@@ -1277,7 +1277,7 @@ describe("the collector's budget counts rows", () => {
 
   it("limits how many references one visit can store, and keeps the visit", async () => {
     const site = await createSite();
-    for (let i = 0; i < 4; i++) expect((await collect(site, { k: [1, 2, 3, 4, 5].map((n) => `claim-${i}-${n}`) })).status).toBe(200);
+    for (let i = 0; i < 4; i++) expect((await collect(site, { k: [1, 2, 3, 4, 5].map((n) => `pay_claim${i}x${n}`) })).status).toBe(200);
     expect(await row("SELECT COUNT(*) AS n FROM payment_claims")).toEqual({ n: 10 });
     expect(await row("SELECT pageviews FROM web_sessions")).toEqual({ pageviews: 4 });
   });

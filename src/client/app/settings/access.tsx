@@ -16,11 +16,15 @@ import { ACCENTS, saveAccent, savedAccent } from "../../lib/accent";
 import { countryName, flag, num, when } from "../../lib/format";
 import { SETTINGS_HELP } from "../../lib/help";
 import { saveTheme, useTheme, type Theme } from "../../lib/theme";
-import { Badge, Button, Dialog, ErrorState, Input, Notice, Section, Segmented } from "../ui";
+import { Badge, Button, Dialog, ErrorState, Input, Notice, Section, Segmented, Switch } from "../ui";
 import { ExternalLink, Fact, Facts, HelpTip, RowsLoading, toastError } from "./parts";
 import { permissionSummary, roleLabel } from "./people";
 
 export { PeopleSection, permissionSummary } from "./people";
+export { TwoFactorSection } from "./two-factor";
+
+/** How a login was completed, beyond the password alone. */
+const METHOD_LABEL = { "password+totp": "with a code", "password+recovery": "with a recovery code", passkey: "with a passkey" } as const;
 
 const MIN_PASSWORD = 12;
 const TURNSTILE_DASHBOARD = "https://dash.cloudflare.com/?to=/:account/turnstile";
@@ -200,7 +204,23 @@ export function PasswordOnlyPeople() {
 
 /** Admins, when the settings carry security data. Owns "Log out everyone" and its confirm. */
 export function SecuritySection({ me, security }: { me: MeDTO; security: SecurityDTO }) {
+  const qc = useQueryClient();
   const [confirmRevoke, setConfirmRevoke] = useState(false);
+  const rule = useMutation({
+    mutationFn: (required: boolean) => call(api.settings["two-factor"].$put({ json: { required } })),
+    onSuccess: (r) => {
+      void qc.invalidateQueries({ queryKey: keys.settings });
+      void qc.invalidateQueries({ queryKey: keys.twoFactor });
+      toast.success(r.require2fa ? "Two-factor sign-in is required" : "Two-factor sign-in is optional", {
+        description: r.require2fa
+          ? r.peopleWithout2fa
+            ? `${r.peopleWithout2fa} ${r.peopleWithout2fa === 1 ? "person sets" : "people set"} it up at their next login.`
+            : "Everyone already has it."
+          : "Nobody's methods were removed.",
+      });
+    },
+    onError: toastError,
+  });
   const revoke = useMutation({
     mutationFn: () => call(api.settings.sessions.revoke.$post()),
     onSuccess: () => window.location.assign("/_admin/login"),
@@ -244,6 +264,20 @@ export function SecuritySection({ me, security }: { me: MeDTO; security: Securit
               </Fact>
             ) : null}
           </Facts>
+          <div className="settings-a-rule">
+            <Switch
+              label="Require two-factor sign-in for everyone"
+              description={
+                s.peopleWithout2fa
+                  ? `${s.peopleWithout2fa} ${s.peopleWithout2fa === 1 ? "person who can sign in doesn't" : "people who can sign in don't"} have it yet${s.require2fa ? " and will set it up at their next login" : ""}.`
+                  : "Everyone who can sign in has it."
+              }
+              checked={s.require2fa}
+              onCheckedChange={(v) => rule.mutate(v)}
+              disabled={!me.passwordConfigured || rule.isPending}
+            />
+            <HelpTip help={SETTINGS_HELP.requireTwoFactor} />
+          </div>
           {s.mode === "password" && s.sharedSignIns.length ? (
             <p className="settings-a-quiet">If that isn't just you on different devices, the password is shared: history tells sessions apart, but not people. Turn on Access to give each person their own sign-in.</p>
           ) : null}
@@ -263,6 +297,7 @@ export function SecuritySection({ me, security }: { me: MeDTO; security: Securit
                   <span className="settings-a-login-when">{when(e.at)}</span>
                   <span className="settings-a-login-where">{e.country ? `${flag(e.country)} ${countryName(e.country)}` : "Unknown"}</span>
                   {e.email && e.email !== "admin" ? <span className="settings-a-login-who settings-a-ellipsis">{e.email}</span> : null}
+                  {e.method && e.method !== "password" ? <span className="settings-a-quiet">{METHOD_LABEL[e.method]}</span> : null}
                 </li>
               ))}
             </ul>

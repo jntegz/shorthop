@@ -584,7 +584,7 @@ describe("stored secrets in System status", () => {
     const checks = (await systemHealth(button)).checks;
     expect(checks.find((c) => c.id === "encryption")).toMatchObject({ status: "warn" });
     expect(checks.find((c) => c.id === "encryption")?.advisory).toBeUndefined();
-    button.ENCRYPTION_KEY = "an-encryption-key-0123456789abcdef-0123";
+    button.ENCRYPTION_KEY = "an-encryption-key-0123456789abcdef-0123"; // gitleaks:allow
     const after = (await systemHealth(button)).checks;
     expect(after.find((c) => c.id === "encryption")).toBeUndefined();
     expect(after.find((c) => c.id === "generatedsecrets")).toMatchObject({ status: "warn", advisory: true });

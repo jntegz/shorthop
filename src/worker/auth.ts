@@ -12,7 +12,7 @@ import { nowSec } from "./db";
 import { isLocalHost } from "./domains";
 import { planLimits } from "./plan";
 import { chargeAttempt, ipBucket, lock, loginConfig, parseSessionCookie, sessionState } from "./session";
-import { actorLabel, findApiKey, isPaused, OWNER_EPOCH, ownerActor, ownerEmails, PASSWORD_IDENTITY, pausedReason, sha256Hex, touchApiKeyStmt, userActor } from "./users";
+import { actorLabel, findApiKey, isPaused, ownerActor, ownerEmails, PASSWORD_IDENTITY, pausedReason, sha256Hex, touchApiKeyStmt, userActor } from "./users";
 
 type AuthFailure = { ok: false; status: 401 | 403 | 429 | 500; reason: string; code?: "login_required" | "not_allowed" | "paused" };
 
@@ -124,8 +124,10 @@ async function verifyAccess(request: Request, env: Env): Promise<AccessResult> {
 /**
  * The password session for an identity, with one D1 round trip: the global
  * epoch, whether this session was logged out, and the person's row unless
- * they're an owner. Roles, permissions and pauses are read on every request,
- * so changes apply at once. On localhost with the dev bypass, the password is
+ * they're an owner (then their own epoch). Roles, permissions and pauses are
+ * read on every request, so changes apply at once. When two-factor sign-in is
+ * required, a session of someone who has none ends, even one from before the
+ * rule: they set it up at their next login. On localhost with the dev bypass, the password is
  * still required when ADMIN_PASSWORD_HASH is set, so the login can be tested.
  */
 export async function verifySession(request: Request, env: Env, access: { email: string; owner: boolean }): Promise<AuthResult> {
@@ -136,17 +138,17 @@ export async function verifySession(request: Request, env: Env, access: { email:
 
   if (access.owner) {
     if (!cfg) return unconfigured ?? { ok: true, actor: ownerActor(access.email), identity: access.email };
-    if (!cookie || cookie.user !== OWNER_EPOCH) return LOGIN_REQUIRED;
-    const { epoch, revoked } = await sessionState(env.DB, cookie.mac, null);
-    if (revoked || cookie.global !== epoch) return LOGIN_REQUIRED;
+    if (!cookie) return LOGIN_REQUIRED;
+    const { epoch, revoked, ownerEpoch, needsTwoFactor } = await sessionState(env.DB, cookie.mac, access.email, true);
+    if (revoked || cookie.global !== epoch || cookie.user !== ownerEpoch || needsTwoFactor) return LOGIN_REQUIRED;
     return { ok: true, actor: ownerActor(access.email), identity: await sessionIdentity(access.email, cookie.mac), sessionExp: cookie.exp };
   }
 
-  const { epoch, revoked, user } = await sessionState(env.DB, cookie?.mac ?? null, access.email);
+  const { epoch, revoked, user, needsTwoFactor } = await sessionState(env.DB, cookie?.mac ?? null, access.email, false);
   if (!user) return NOT_ALLOWED;
   if (isPaused(user, nowSec())) return { ok: false, status: 403, reason: pausedReason(user), code: "paused" };
   if (!cfg) return unconfigured ?? { ok: true, actor: userActor(user), identity: user.email };
-  if (!cookie || revoked || cookie.global !== epoch || cookie.user !== user.session_epoch) return LOGIN_REQUIRED;
+  if (!cookie || revoked || cookie.global !== epoch || cookie.user !== user.session_epoch || needsTwoFactor) return LOGIN_REQUIRED;
   return { ok: true, actor: userActor(user), identity: user.email, sessionExp: cookie.exp };
 }
 

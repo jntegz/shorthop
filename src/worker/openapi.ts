@@ -126,6 +126,10 @@ export const CATALOG: Record<string, Route> = {
   "GET /webhooks/:id/deliveries": { tag: "Webhooks", summary: "The last deliveries (only of events you may see; without links.edit, payloads leave out where password-protected links go)" },
   "POST /webhooks/deliveries/:delivery/redeliver": { tag: "Webhooks", summary: "Send a delivery again (needs the permission of its event)" },
   "POST /mcp": { tag: "AI assistants", summary: "Model Context Protocol server (JSON-RPC): tools to create links and read statistics" },
+  "POST /mcp/code": {
+    tag: "AI assistants",
+    summary: "Code Mode MCP server: two tools, search (the API spec) and execute (JavaScript that calls this API in a sandbox, with the same key). Needs the Worker Loader binding (Workers Paid)",
+  },
 
   "GET /sites": { tag: "Websites", summary: "Tracked websites with visitors and revenue" },
   "POST /sites": { tag: "Websites", summary: "Add a website", body: createSiteSchema },
@@ -163,11 +167,20 @@ export const CATALOG: Record<string, Route> = {
 export const INTERNAL = new Set([
   "PUT /tracking/policy",
   "GET /mcp",
+  "GET /mcp/code",
   "GET /openapi.json",
   "POST /import/pull",
   "GET /backup",
   "GET /backup/:table",
   "POST /me/password",
+  "GET /me/security",
+  "POST /me/totp/setup",
+  "POST /me/totp/confirm",
+  "POST /me/passkeys/options",
+  "POST /me/passkeys",
+  "PATCH /me/factors/:id",
+  "DELETE /me/factors/:id",
+  "POST /me/recovery-codes",
   "GET /settings",
   "PUT /settings",
   "GET /settings/not-found",
@@ -193,6 +206,7 @@ export const INTERNAL = new Set([
   "GET /settings/turnstile",
   "PUT /settings/turnstile",
   "DELETE /settings/turnstile",
+  "PUT /settings/two-factor",
   "GET /users",
   "POST /users",
   "PATCH /users/:email",
@@ -202,6 +216,7 @@ export const INTERNAL = new Set([
   "POST /users/:email/resume",
   "POST /users/:email/sign-out",
   "POST /users/:email/revoke-keys",
+  "POST /users/:email/two-factor/reset",
   "GET /keys",
   "POST /keys",
   "DELETE /keys/:id",
@@ -247,10 +262,11 @@ function permissionText(key: string): string {
   return ` Needs: ${text}.`;
 }
 
-/** The OpenAPI document for this workspace's API at `origin`. */
-export function openApiDocument(origin: string): Record<string, unknown> {
+/** The OpenAPI document for this workspace's API at `origin`; `include` keeps only some routes ("METHOD /path" keys). */
+export function openApiDocument(origin: string, include: (key: string) => boolean = () => true): Record<string, unknown> {
   const paths: Record<string, Record<string, unknown>> = {};
   for (const [key, route] of Object.entries(CATALOG)) {
+    if (!include(key)) continue;
     const [method, rawPath] = key.split(" ") as [string, string];
     const path = rawPath.replace(/:([a-z]+)/gi, "{$1}");
     const params = [...rawPath.matchAll(/:([a-z]+)/gi)].map((m) => ({ name: m[1], in: "path", required: true, schema: { type: "string" } }));

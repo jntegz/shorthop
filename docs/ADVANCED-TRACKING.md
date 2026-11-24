@@ -105,7 +105,7 @@ Apple Mail Privacy Protection loads images when the email arrives, so an open fr
 ## Notifications and webhooks
 
 - **Email** to `DIGEST_TO` through your email setup, for people only (never bots, previews or scanners): time, visit number, place, network and host name, the IP in IP mode, device, referrer and flags, with a link to the click log. Clicks and opens are counted separately. "First" and "every" are claimed with one atomic write, so two clicks at once can't both send.
-- **Webhook `link.tracked_click`:** every person's click and open, through the webhook outbox with retries. It carries location, network (host name as its domain only, VPN name, flags), device, visit number and `ip_masked` (`203.0.113.***`), never a full IP address. Subscribing needs See click logs.
+- **Webhook `link.tracked_click`:** every person's click and open, through the webhook outbox with retries. It carries location, network (host name as its domain only, VPN name, flags), device, visit number and no IP address, not even masked (`ip_recorded` says whether one was stored). Subscribing needs See click logs.
 
 ## Retention and housekeeping
 
@@ -181,7 +181,7 @@ Publishing follows the rest of Shorthop: the tracking routes publish the row D1 
 ## Accepted limits
 
 - **"Without IP" is pseudonymous, not anonymous.** Whoever holds `ENCRYPTION_KEY` / `SESSION_SECRET` and the database could try all 2^32 IPv4 addresses against `visitor`, since the user agent is stored. People using the admin can't.
-- **D1 write budget.** Tracked links and the pixel can be requested in bulk to spend it. The public rate limiter slows one client; a WAF rate-limit rule on the zone is the real protection.
+- **D1 write budget.** Tracked links and the pixel can be requested in bulk to spend it. Past `PUBLIC_LIMITER`'s rate, one network's clicks still redirect but aren't logged (and send no webhooks), and its pixel opens aren't recorded; many networks together still can, so a WAF rate-limit rule on the zone is the real protection.
 - **Browser details hide the referrer from the destination.** The short page in between sends `Referrer-Policy: no-referrer`, so the destination's own analytics count those visits as direct. Shorthop's own click log still records the full referrer, and `?s=` / UTM tags still reach the destination.
 - **Changing `ENCRYPTION_KEY`** makes stored IP addresses unreadable. They are short-lived, so they aren't re-encrypted.
 - **Hints, not proof.** A VPN that isn't on the public list looks like an ordinary network; an office network can look like hosting; mobile networks can place a city far away.

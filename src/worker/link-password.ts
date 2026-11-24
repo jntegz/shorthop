@@ -15,7 +15,7 @@ import {
 } from "../shared/protection";
 import { readCapped } from "./body";
 import { nowSec } from "./db";
-import { chargeAttempt, clearFailuresStmt, ipBucket, limiterKey, lock } from "./session";
+import { chargeAttempt, clearFailuresStmt, ipBucket, limiterKey, lock, type AttemptState } from "./session";
 
 const COOKIE = "sh_access";
 
@@ -96,6 +96,12 @@ export async function checkPasswordForm(
   env: Env,
   { limitKey, lockKey, hash }: { limitKey: string; lockKey: string; hash: string },
 ): Promise<{ ok: true } | { ok: false; reason: "wrong" | "limited" | "bad_request" }> {
+  // Only the page's own form: another site could otherwise post from a visitor's browser
+  // (form posts need no CORS) and use up their network's tries and lock them out.
+  const fetchSite = request.headers.get("Sec-Fetch-Site");
+  if (fetchSite && fetchSite !== "same-origin" && fetchSite !== "none") return { ok: false, reason: "bad_request" };
+  const origin = request.headers.get("Origin");
+  if (origin && origin !== new URL(request.url).origin) return { ok: false, reason: "bad_request" };
   const ip = request.headers.get("CF-Connecting-IP");
   if (ip) {
     try {
@@ -121,6 +127,8 @@ export async function checkPasswordForm(
   const now = nowSec();
   let state;
   let braked = false;
+  /** The link's own count across networks, when its brake is off. */
+  let linkState: AttemptState | null = null;
   try {
     // One read first: what would be refused anyway costs no D1 write, so hammering a lock or a brake adds nothing.
     const { results } = await env.DB.prepare("SELECT key, fails, window_start, locked_until FROM auth_failures WHERE key IN (?1, ?2, ?3)")
@@ -149,6 +157,15 @@ export async function checkPasswordForm(
       if (state.fails > 1) return { ok: false, reason: "limited" };
       const all = await chargeAttempt(env.DB, brakedKey, now, LINK_PASSWORD_WINDOW_SEC);
       if (all.fails > LINK_PASSWORD_BRAKE_TOTAL) return { ok: false, reason: "limited" };
+    } else {
+      // The link's count too, before the check: a burst from many networks that all read
+      // "no brake" above would otherwise each get a guess before the brake is written.
+      linkState = await chargeAttempt(env.DB, lockKey, now, LINK_PASSWORD_WINDOW_SEC);
+      if (linkState.lockedUntil > now) return { ok: false, reason: "limited" };
+      if (linkState.fails > LINK_PASSWORD_MAX_FAILS) {
+        await lock(env.DB, lockKey, now, linkState.lockouts, LINK_PASSWORD_LOCK_MAX_SEC);
+        return { ok: false, reason: "limited" };
+      }
     }
   } catch (err) {
     console.error(JSON.stringify({ message: "link password counter failed", key: lockKey, error: String(err) }));
@@ -158,8 +175,7 @@ export async function checkPasswordForm(
   if (!(await checkLinkPassword(password, hash))) {
     try {
       if (state.fails >= LINK_PASSWORD_NETWORK_MAX_FAILS) await lock(env.DB, netKey, now, state.lockouts, LINK_PASSWORD_LOCK_MAX_SEC);
-      const all = await chargeAttempt(env.DB, lockKey, now, LINK_PASSWORD_WINDOW_SEC);
-      if (all.lockedUntil <= now && all.fails >= LINK_PASSWORD_MAX_FAILS) await lock(env.DB, lockKey, now, all.lockouts, LINK_PASSWORD_LOCK_MAX_SEC);
+      if (linkState && linkState.fails >= LINK_PASSWORD_MAX_FAILS) await lock(env.DB, lockKey, now, linkState.lockouts, LINK_PASSWORD_LOCK_MAX_SEC);
     } catch (err) {
       console.error(JSON.stringify({ message: "link password counter failed", key: lockKey, error: String(err) }));
     }

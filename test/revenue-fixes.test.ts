@@ -464,7 +464,7 @@ describe("provider edge cases", () => {
     const res = await call(`${ORIGIN}/_pay/paypal/${conn.id}`, { method: "POST", headers: {
         "PAYPAL-TRANSMISSION-SIG": "sig",
         "PAYPAL-TRANSMISSION-ID": "t1",
-        "PAYPAL-TRANSMISSION-TIME": "2026-11-13T10:00:00Z",
+        "PAYPAL-TRANSMISSION-TIME": new Date().toISOString(),
         "PAYPAL-CERT-URL": "https://api.sandbox.paypal.com/v1/notifications/certs/CERT-1",
         "PAYPAL-AUTH-ALGO": "SHA256withRSA",
       },

@@ -16,7 +16,7 @@ export const WEBHOOK_EVENTS = [
   {
     type: "link.tracked_click",
     label: "Tracked click",
-    description: "Each person's click on a link with Advanced tracking: location, network (Tor, VPN hints), device, referrer and visit number. The IP address only masked.",
+    description: "Each person's click on a link with Advanced tracking: location, network (Tor, VPN hints), device, referrer and visit number. No IP address.",
   },
   { type: "site.payment", label: "Website payment", description: "A payment, renewal, refund or dispute on a tracked website, with the visit it's credited to." },
   { type: "site.traffic_spike", label: "Website traffic spike", description: "A source sent at least 4x its usual hourly visits to a tracked website (checked hourly). At most three per site and run; the first says how many other sources spiked." },

@@ -167,7 +167,8 @@ describe("reset links and other changes", () => {
   it("doesn't clear the network's wrong-password count when a reset link is used", async () => {
     await addUser(ANNA, "user", [], { password: PASSWORD });
     expect((await login(ANNA, "not-the-password-at-all")).status).toBe(401);
-    const counted = await env.DB.prepare("SELECT key, fails FROM auth_failures WHERE key NOT LIKE 'reset%' AND key NOT LIKE 'token:%' AND key NOT LIKE '*%'").all<{ key: string; fails: number }>();
+    // The network's count (not the person's own, login:<email>, which only caps the people's brake).
+    const counted = await env.DB.prepare("SELECT key, fails FROM auth_failures WHERE key NOT LIKE 'reset%' AND key NOT LIKE 'token:%' AND key NOT LIKE '*%' AND key NOT LIKE 'login:%'").all<{ key: string; fails: number }>();
     expect(counted.results).toHaveLength(1);
 
     const mail = mailbox();

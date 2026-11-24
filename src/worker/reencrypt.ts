@@ -12,6 +12,7 @@ const COLUMNS: { table: string; column: string; purpose: SecretPurpose }[] = [
   { table: "stat_shares", column: "secret_enc", purpose: "share" },
   { table: "payment_connections", column: "webhook_secret", purpose: "connection:webhook_secret" },
   { table: "payment_connections", column: "api_key", purpose: "connection:api_key" },
+  { table: "auth_factors", column: "secret_enc", purpose: "totp" },
 ];
 
 /** Re-encrypts up to `limit` values per column; returns how many changed. */

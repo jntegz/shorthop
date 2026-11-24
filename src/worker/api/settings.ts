@@ -2,12 +2,13 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { HOSTNAME_RE } from "../../shared/domains";
 import { NOT_FOUND_IMAGE_MAX_BYTES } from "../../shared/not-found";
-import { deadLinkSchema, mailSettingsSchema, notFoundSchema, purgeDomainSchema, settingsSchema, turnstileSchema } from "../../shared/schemas";
+import { can } from "../../shared/permissions";
+import { deadLinkSchema, mailSettingsSchema, notFoundSchema, purgeDomainSchema, settingsSchema, turnstileSchema, twoFactorRuleSchema } from "../../shared/schemas";
 import { validateUtmTemplate } from "../../shared/target";
 import type { MailSetupDTO, PurgeDomainDTO, SettingsDTO, TurnstileDTO } from "../../shared/types";
 import { aeAvailable } from "../ae";
 import { readCapped } from "../body";
-import { accessConfigured, adminAuthMode, fullTokenScope } from "../auth";
+import { accessConfigured, adminAuthMode, fullTokenScope, seesMisses } from "../auth";
 import { getDefaultUtm, getSetting, nowSec, setSettingStmt, statsSince } from "../db";
 import { getDeadLinkPage, saveDeadLinkSettings } from "../dead-link";
 import { digestData, renderDigest, runDigest } from "../digest";
@@ -22,6 +23,13 @@ import { deleteNotFoundImage, getNotFoundPage, notFoundImage, saveNotFoundImage,
 import { pendingRollup } from "../rollup";
 import { clearSessionCookie, loginConfig, revokeAllSessions, securitySummary } from "../session";
 import { saveTurnstileStmt, turnstileSecret, turnstileSettings } from "../turnstile";
+import { peopleWithoutTwoFactor, setTwoFactorRequiredStmt, twoFactorRequired } from "../two-factor";
+
+/** The two-factor rule for Settings → Security, and who doesn't have it yet. */
+async function twoFactorRule(env: Env): Promise<{ require2fa: boolean; peopleWithout2fa: number }> {
+  const [require2fa, peopleWithout2fa] = await Promise.all([twoFactorRequired(env.DB), peopleWithoutTwoFactor(env)]);
+  return { require2fa, peopleWithout2fa };
+}
 import { appVersion } from "../version";
 
 const DIGEST_TEST_KEY = "digest_test_at";
@@ -48,7 +56,7 @@ export const settingsApi = new Hono<AppEnv>()
       getSetting(c.env.DB, "last_rolled"),
       pendingRollup(c.env),
       getSetting(c.env.DB, "last_digest_week"),
-      admin ? securitySummary(c.env.DB, nowSec()) : null,
+      admin ? Promise.all([securitySummary(c.env.DB, nowSec()), twoFactorRule(c.env)]).then(([summary, rule]) => ({ ...summary, ...rule })) : null,
       c.env.DB.prepare("SELECT domain, COUNT(*) AS n FROM links GROUP BY domain").all<{ domain: string; n: number }>(),
       demoStatus(c.env.DB),
       statsSince(c.env.DB),
@@ -159,7 +167,16 @@ export const settingsApi = new Hono<AppEnv>()
   .post("/health/test-alert", async (c) => c.json(await checkAndAlert(c.env, new Date(), true)))
 
   .get("/digest/preview", async (c) => {
-    const data = await digestData(c.env);
+    // The digest lists each website's revenue, missed visits and broken destinations:
+    // each part only for people who may see it elsewhere in the admin.
+    const actor = c.get("actor");
+    const raw = await digestData(c.env);
+    const data = {
+      ...raw,
+      websites: can(actor, "revenue.view") ? raw.websites : [],
+      misses: seesMisses(actor, c.env) ? raw.misses : [],
+      notWorking: can(actor, "health.manage") ? raw.notWorking : [],
+    };
     const { primary } = domainsOf(c.env);
     return c.json({ ...renderDigest(data, new URL(c.req.url).origin, primary), week: data.week });
   })
@@ -218,7 +235,16 @@ export const settingsApi = new Hono<AppEnv>()
   .get(
     "/domains/check",
     validate("query", z.object({ domain: z.string().trim().toLowerCase().regex(HOSTNAME_RE, "Enter a domain such as links.example.com") })),
-    async (c) => c.json(await checkDomain(c.env, c.req.valid("query").domain)),
+    async (c) => {
+      // Each check makes DNS and HTTPS requests: per person, on the public limiter's budget.
+      try {
+        const { success } = await c.env.PUBLIC_LIMITER.limit({ key: `domain-check:${c.get("identity")}` });
+        if (!success) return c.json({ error: "Too many domain checks in a minute. Try again shortly." }, 429);
+      } catch (err) {
+        console.error(JSON.stringify({ message: "domain check rate limiter failed", error: String(err) }));
+      }
+      return c.json(await checkDomain(c.env, c.req.valid("query").domain));
+    },
   )
 
   .post("/domains/purge", validate("json", purgeDomainSchema), async (c) => {
@@ -243,6 +269,20 @@ export const settingsApi = new Hono<AppEnv>()
     console.log(JSON.stringify({ message: "admin sessions revoked", email: actor.email }));
     c.header("Set-Cookie", clearSessionCookie());
     return c.json({ revoked: true });
+  })
+
+  // "Require two-factor sign-in for everyone". Nobody is signed out at once: a session
+  // without a method ends at its next request, and they set it up at their next login.
+  .put("/two-factor", validate("json", twoFactorRuleSchema), async (c) => {
+    const { required } = c.req.valid("json");
+    if (required && !loginConfig(c.env)) return c.json({ error: "Two-factor sign-in needs the admin password login first." }, 400);
+    // Sessions without a method end as soon as it's on: this one too, so it comes first.
+    if (required && !(await c.env.DB.prepare("SELECT 1 FROM auth_factors WHERE email = ?").bind(c.get("actor").email).first())) {
+      return c.json({ error: "Set up two-factor sign-in for yourself first (Settings → Access & security → Two-factor sign-in), then require it.", code: "own_2fa_missing" }, 409);
+    }
+    await setTwoFactorRequiredStmt(c.env.DB, required).run();
+    console.log(JSON.stringify({ message: required ? "two-factor sign-in required" : "two-factor sign-in optional", by: c.get("identity") }));
+    return c.json(await twoFactorRule(c.env));
   })
 
   // The optional Turnstile bot check. Saving a site key keeps it off: it turns

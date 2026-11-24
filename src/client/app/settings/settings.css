@@ -1693,3 +1693,44 @@ details[open] > summary > .settings-a-chevron {
     width: 4.25rem;
   }
 }
+
+/* Two-factor sign-in (two-factor.tsx) and the rule in Security. */
+.settings-a-qr {
+  display: block;
+  width: 192px;
+  height: 192px;
+  margin: 0 auto;
+  border-radius: var(--ui-r-md);
+}
+.settings-a-details {
+  color: var(--ui-ink-2);
+  font-size: var(--ui-t-sm);
+}
+.settings-a-details summary {
+  cursor: pointer;
+}
+.settings-a-key {
+  margin: var(--ui-s-2) 0 0;
+  padding: 8px 12px;
+  border: 1px solid var(--ui-line-control);
+  border-radius: var(--ui-r-md);
+  background: var(--ui-panel);
+  letter-spacing: 0.04em;
+}
+.settings-a-codes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px var(--ui-s-4);
+  margin: 0;
+  padding: 12px 16px;
+  list-style: none;
+  border: 1px solid var(--ui-line-control);
+  border-radius: var(--ui-r-md);
+  background: var(--ui-panel);
+  font-size: 14px;
+}
+.settings-a-rule {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--ui-s-2);
+}

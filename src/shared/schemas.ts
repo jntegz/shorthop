@@ -486,6 +486,38 @@ export const passwordChangeSchema = z.object({
   next: z.string().min(12, "Use at least 12 characters").max(1024),
 });
 
+/** Two-factor sign-in: the first code from a new authenticator app. */
+export const totpConfirmSchema = z.object({
+  code: z.string().trim().min(1, "Enter the code from the app").max(32),
+  name: z.string().trim().max(60).optional(),
+});
+
+/** Renaming one of your sign-in methods. */
+export const factorNameSchema = z.object({ name: z.string().trim().min(1, "Give it a name").max(60) });
+
+export const factorParamSchema = z.object({ id: z.string().regex(/^[A-Za-z0-9_-]{8,64}$/) });
+
+/** A WebAuthn answer from the browser, as JSON (base64url fields). The server library checks the rest. */
+const webauthnResponse = z
+  .object({
+    id: z.string().min(1).max(1400),
+    rawId: z.string().min(1).max(1400),
+    type: z.literal("public-key"),
+    response: z.record(z.string(), z.unknown()),
+    clientExtensionResults: z.record(z.string(), z.unknown()).default({}),
+    authenticatorAttachment: z.string().max(40).optional(),
+  })
+  .loose();
+
+/** Adding a passkey in Settings. */
+export const passkeyRegisterSchema = z.object({ response: webauthnResponse, name: z.string().trim().max(60).optional() });
+
+/** Signing in with a passkey on the login page. */
+export const passkeyLoginSchema = z.object({ response: webauthnResponse, next: z.string().max(2048).optional() });
+
+/** Settings → Security: require two-factor sign-in for everyone. */
+export const twoFactorRuleSchema = z.object({ required: z.boolean() });
+
 /** Link page → Share: a new read-only statistics page. */
 export const createShareSchema = z.object({
   /** Unix seconds; null or absent keeps it until revoked. */

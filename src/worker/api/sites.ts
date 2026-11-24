@@ -47,7 +47,7 @@ import { recreditSite } from "../revenue/attribute";
 import { reconvertSite, refreshFx, unconvertedCount } from "../revenue/fx";
 import { planLimits } from "../plan";
 import { importPage } from "../revenue/backfill";
-import { checkConnection, connectionChanges, connectionSecrets, connectionView, settingsOf } from "../revenue/connections";
+import { checkConnection, connectionChanges, connectionDTO, connectionSecrets, connectionView, settingsOf } from "../revenue/connections";
 import { applyEvent, storePayment, type ConnectionRow } from "../revenue/ingest";
 import { confirmPaymentVisitor, liveSession, rematchSite } from "../revenue/match";
 import { announcePayments } from "../revenue/notify";
@@ -73,6 +73,14 @@ function hideMoney<T extends object>(row: T): T {
 }
 
 const seesMoney = (actor: Actor) => can(actor, "revenue.view");
+
+/**
+ * A connection as this person may see it. The webhook address of a provider
+ * that authenticates by a token in it (Gumroad) carries that token, which lets
+ * anyone send it payments: only for people who see revenue.
+ */
+const viewFor = (c: Context<AppEnv>, row: ConnectionRow) =>
+  seesMoney(c.get("actor")) ? connectionView(c.env, row, webhookOrigin(c.env, c.req.raw)) : Promise.resolve(connectionDTO(row, webhookOrigin(c.env, c.req.raw)));
 
 const importSchema = z.object({ days: z.number().int().min(1).max(3 * 365).default(365), cursor: z.string().max(2000).nullish() });
 
@@ -175,6 +183,17 @@ export const sitesApi = new Hono<AppEnv>()
   })
 
   .delete("/:id", validate("param", siteParamSchema), async (c) => {
+    // Deleting removes customers' payments and details, the log of their privacy requests and
+    // the erasure ledger, for good: like changing retention, only for people who may see them.
+    if (!seesMoney(c.get("actor"))) {
+      const held = await c.env.DB.prepare(
+        `SELECT EXISTS (SELECT 1 FROM payments WHERE site_id = ?1) OR EXISTS (SELECT 1 FROM subscriptions WHERE site_id = ?1)
+           OR EXISTS (SELECT 1 FROM privacy_requests WHERE site_id = ?1) OR EXISTS (SELECT 1 FROM erasure_ledger WHERE site_id = ?1) AS n`,
+      )
+        .bind(c.req.valid("param").id)
+        .first<{ n: number }>();
+      if (held?.n) return c.json({ error: "This site has payments or customer records. Deleting it needs the See revenue permission.", code: "forbidden" }, 403);
+    }
     const deleted = await deleteSite(c.env.DB, c.req.valid("param").id);
     if (!deleted) return c.json({ error: "Site not found" }, 404);
     console.log(JSON.stringify({ message: "site deleted", site: c.req.valid("param").id, by: c.get("identity") }));
@@ -237,7 +256,7 @@ export const sitesApi = new Hono<AppEnv>()
       return c.json({ list: q.list, available: aeAvailable(c.env), rows: seesMoney(c.get("actor")) ? rows : rows.map(hideMoney) });
     } catch (err) {
       console.error(JSON.stringify({ message: "site events query failed", site: site.id, error: String(err) }));
-      return c.json({ list: q.list, available: false, error: String(err).slice(0, 300), rows: [] });
+      return c.json({ list: q.list, available: false, error: "Analytics Engine query failed", rows: [] });
     }
   })
 
@@ -249,7 +268,7 @@ export const sitesApi = new Hono<AppEnv>()
       return c.json({ available: aeAvailable(c.env), rows: await goalProps(c.env, site, q.name, windowOf(site, q)) });
     } catch (err) {
       console.error(JSON.stringify({ message: "goal properties query failed", site: site.id, error: String(err) }));
-      return c.json({ available: false, error: String(err).slice(0, 300), rows: [] as GoalPropRow[] });
+      return c.json({ available: false, error: "Analytics Engine query failed", rows: [] as GoalPropRow[] });
     }
   })
 
@@ -269,7 +288,7 @@ export const sitesApi = new Hono<AppEnv>()
       return c.json(await pageSpeed(c.env, site, windowOf(site, c.req.valid("query"))));
     } catch (err) {
       console.error(JSON.stringify({ message: "site page speed query failed", site: site.id, error: String(err) }));
-      return c.json({ available: false, error: String(err).slice(0, 300), overall: null, pages: [] } satisfies PageSpeedDTO);
+      return c.json({ available: false, error: "Analytics Engine query failed", overall: null, pages: [] } satisfies PageSpeedDTO);
     }
   })
 
@@ -282,7 +301,7 @@ export const sitesApi = new Hono<AppEnv>()
       return c.json(seesMoney(c.get("actor")) ? report : { ...report, buyers: [], others: [] });
     } catch (err) {
       console.error(JSON.stringify({ message: "site engagement query failed", site: site.id, error: String(err) }));
-      return c.json({ available: false, error: String(err).slice(0, 300), all: [], buyers: [], others: [] });
+      return c.json({ available: false, error: "Analytics Engine query failed", all: [], buyers: [], others: [] });
     }
   })
 
@@ -458,7 +477,7 @@ export const sitesApi = new Hono<AppEnv>()
 
   .get("/:id/connections", validate("param", siteParamSchema), async (c) => {
     const { results } = await c.env.DB.prepare("SELECT * FROM payment_connections WHERE site_id = ?1 ORDER BY created_at").bind(c.req.valid("param").id).all<ConnectionRow>();
-    return c.json({ connections: await Promise.all(results.map((r) => connectionView(c.env, r, webhookOrigin(c.env, c.req.raw)))) });
+    return c.json({ connections: await Promise.all(results.map((r) => viewFor(c, r))) });
   })
 
   .post("/:id/connections", validate("param", siteParamSchema), validate("json", connectionSchema), async (c) => {
@@ -476,7 +495,7 @@ export const sitesApi = new Hono<AppEnv>()
       .bind(...values)
       .run();
     const row = await c.env.DB.prepare("SELECT * FROM payment_connections WHERE id = ?1").bind(connId).first<ConnectionRow>();
-    return c.json(await connectionView(c.env, row!, webhookOrigin(c.env, c.req.raw)), 201);
+    return c.json(await viewFor(c, row!), 201);
   })
 
   .patch("/:id/connections/:conn", validate("param", siteConnParamSchema), validate("json", connectionUpdateSchema), async (c) => {
@@ -498,7 +517,7 @@ export const sitesApi = new Hono<AppEnv>()
         .run();
     }
     const row = await c.env.DB.prepare("SELECT * FROM payment_connections WHERE id = ?1").bind(conn).first<ConnectionRow>();
-    return c.json(await connectionView(c.env, row!, webhookOrigin(c.env, c.req.raw)));
+    return c.json(await viewFor(c, row!));
   })
 
   .post("/:id/connections/:conn/check", validate("param", siteConnParamSchema), async (c) => {
@@ -587,9 +606,10 @@ export const sitesApi = new Hono<AppEnv>()
       const elsewhere = await c.env.DB.prepare("SELECT 1 FROM payments WHERE id = ?1 AND site_id != ?2").bind(`api:${body.kind}:${body.id}`, site.id).first();
       if (elsewhere) return c.json({ error: "This payment id already belongs to another site.", code: "conflict" }, 409);
     }
-    const row = id ? await c.env.DB.prepare("SELECT id, session_id, matched_by, unmatched_reason FROM payments WHERE id = ?1").bind(id).first() : null;
+    const row = id ? await c.env.DB.prepare("SELECT id, session_id, matched_by, unmatched_reason FROM payments WHERE id = ?1 AND site_id = ?2").bind(id, site.id).first() : null;
     if (id) c.executionCtx.waitUntil(announcePayments(c.env, site, [id], c.executionCtx));
-    return c.json({ payment: row }, 201);
+    // How it matched says whether that email or customer is a known visitor: customer data, for revenue.view only.
+    return c.json({ payment: seesMoney(c.get("actor")) ? row : row && { id: (row as { id: string }).id } }, 201);
   })
 
   .post("/:id/identify", validate("param", siteParamSchema), validate("json", apiIdentifySchema), async (c) => {

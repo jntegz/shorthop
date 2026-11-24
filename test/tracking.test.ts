@@ -254,7 +254,7 @@ describe("advanced tracking", () => {
     expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM tracked_clicks").first<{ n: number }>()).toEqual({ n: 0 });
   });
 
-  it("queues a webhook for people's clicks only, with the IP address masked", async () => {
+  it("queues a webhook for people's clicks only, with no part of the IP address", async () => {
     await env.DB.prepare("INSERT INTO webhooks (url, secret, events, active, created_at, updated_at) VALUES ('https://hooks.example.com/x', 'v2:s:x:y', ?1, 1, 1, 1)").bind(JSON.stringify(["link.tracked_click"])).run();
     await createLink("hook");
     await setTracking("hook", { mode: "ip", acknowledged: true });
@@ -262,8 +262,10 @@ describe("advanced tracking", () => {
     await hit(visit("/hook", { ip: "203.0.113.45" }));
     const { results } = await env.DB.prepare("SELECT payload FROM webhook_deliveries WHERE event_type = 'link.tracked_click'").all<{ payload: string }>();
     expect(results).toHaveLength(1);
-    expect(results[0]!.payload).toContain('"ip_masked":"203.0.113.***"');
-    expect(results[0]!.payload).not.toContain("203.0.113.45");
+    expect(results[0]!.payload).toContain('"ip_recorded":true');
+    // Not even its /24: the event needs only See click logs, which is "without IP addresses".
+    expect(results[0]!.payload).not.toContain("203.0.113");
+    expect(results[0]!.payload).not.toContain("ip_masked");
   });
 
 });
@@ -340,6 +342,21 @@ describe("advanced tracking: security", () => {
     expect(pixel.status).toBe(200);
     expect(pixel.headers.get("Content-Type")).toBe("image/gif");
     expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM tracked_clicks").first<{ n: number }>()).toEqual({ n: 0 });
+  });
+
+  it("brakes tracked clicks per network: past the rate they still redirect, but aren't logged", async () => {
+    await createLink("loop");
+    await setTracking("loop", { mode: "details" });
+    const keys: string[] = [];
+    const refused = { PUBLIC_LIMITER: { limit: async ({ key }: { key: string }) => (keys.push(key), { success: false }) } } as unknown as Partial<Env>;
+    const res = await call(visit("/loop"), undefined, { CLICKS, ...refused });
+    expect(res.status).toBe(302);
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM tracked_clicks").first<{ n: number }>()).toEqual({ n: 0 });
+    // Its own scope, so share pages and the pixel don't spend the same budget.
+    expect(keys.some((k) => k.startsWith("track:"))).toBe(true);
+    // Under the rate, the click is logged as before.
+    expect((await hit(visit("/loop"))).status).toBe(302);
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM tracked_clicks").first<{ n: number }>()).toEqual({ n: 1 });
   });
 
   it("never hands IP addresses to an AI assistant (MCP)", async () => {

@@ -31,9 +31,12 @@ import { limiterKey } from "./session";
 // after which SESSION_SECRET can be rotated without losing them.
 
 /** What a stored secret is for. */
-export type SecretPurpose = "webhook" | "share" | "connection:webhook_secret" | "connection:api_key" | "tracking:ip";
+export type SecretPurpose = "webhook" | "share" | "connection:webhook_secret" | "connection:api_key" | "tracking:ip" | "totp";
 
 async function deriveKey(material: string, salt: string, info: string): Promise<CryptoKey> {
+  // Never from nothing: a key derived from an empty secret is one anyone can compute. Encrypting
+  // then fails, and decrypting gives null.
+  if (!material) throw new Error("No key for stored secrets: SESSION_SECRET (or ENCRYPTION_KEY) is missing");
   const base = await crypto.subtle.importKey("raw", new TextEncoder().encode(material), "HKDF", false, ["deriveKey"]);
   return crypto.subtle.deriveKey(
     { name: "HKDF", hash: "SHA-256", salt: new TextEncoder().encode(salt), info: new TextEncoder().encode(info) },

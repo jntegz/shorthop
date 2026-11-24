@@ -449,6 +449,21 @@ describe("matching without a reference", () => {
     expect((await sitePayments(site))[0]).toMatchObject({ matchedBy: "claim", session: { id: ref } });
   });
 
+  it("refuses claims of ids anyone could count through", async () => {
+    const site = await createSite();
+    // A payment with only a numeric customer id and an order number to match on.
+    expect((await call(`${API}/sites/${site.id}/payments`, json({ id: "o-1043", amount: 10, currency: "USD", customerId: "1043" }))).status).toBe(201);
+    await pageview(site, `${SITE_ORIGIN}/thanks`, { k: ["1043", "order_number:1043", "o-1043"] });
+    expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM payment_claims WHERE site_id = ?").bind(site.id).first<{ n: number }>())?.n).toBe(0);
+    expect((await sitePayments(site))[0]).toMatchObject({ matchedBy: null });
+  });
+
+  it("accepts exactly the ids the tracker reads from a return page", async () => {
+    const { CLAIM_REF_RE } = await import("../src/worker/web/collect");
+    const tracker = (await import("../src/tracker/tracker.js?raw")).default as string;
+    expect(tracker).toContain(CLAIM_REF_RE.source);
+  });
+
   it("matches by a server-identified email, and by checkout timing", async () => {
     const site = await createSite();
     const ref = await pageview(site);

@@ -34,6 +34,19 @@ Generated from the server's own catalog (`scripts/skill-reference.ts`). Base URL
 | `GET /export/links.csv` | Links as CSV, optionally filtered | any permission |
 | `GET /export/links.json` | Every link with its settings, as import rows (never passwords; click counts need stats.view) | any permission |
 
+## Advanced tracking
+
+| Endpoint | What it does | Permission |
+|---|---|---|
+| `PUT /links/{domain}/{slug}/tracking` | Switch a link's click log on (mode details or ip), change it, or send null to switch it off. ip needs clicks.ip and acknowledged: true (the GDPR warning). The workspace's rules (GET /tracking/policy) apply: a purpose may be required, and IP, browser details, the pixel and long retention may be refused | links.edit and clicks.view |
+| `GET /tracking/policy` | The workspace's rules: whether tracking, IP addresses, browser details and the pixel are allowed, the longest retention, and whether a purpose is required | any key |
+| `GET /links/{domain}/{slug}/clicks` | A tracked link's click log, newest first: location, network flags, device, browser details. IP addresses only with clicks.ip | clicks.view |
+| `GET /links/{domain}/{slug}/clicks.csv` | The click log as CSV | clicks.view |
+| `DELETE /links/{domain}/{slug}/clicks` | Delete a link's whole click log | links.edit and clicks.view |
+| `DELETE /links/{domain}/{slug}/clicks/{id}` | Delete one tracked click | links.edit and clicks.view |
+| `POST /clicks/by-ip` | Every tracked click from one IP address, on any link (a person's access request) | clicks.view and clicks.ip |
+| `POST /clicks/by-ip/erase` | Erase every tracked click from one IP address (a person's erasure request) | clicks.view and clicks.ip and links.edit |
+
 ## Sharing
 
 | Endpoint | What it does | Permission |
@@ -98,12 +111,12 @@ Generated from the server's own catalog (`scripts/skill-reference.ts`). Base URL
 | Endpoint | What it does | Permission |
 |---|---|---|
 | `GET /webhooks` | Webhooks and their delivery status | settings.manage |
-| `POST /webhooks` | Add a webhook; fields is full (the default) or minimal, which leaves out customer emails and visit details (site.payment needs revenue.view; link.clicked, link.milestone and site.traffic_spike need stats.view; link.health_changed needs health.manage) | settings.manage |
-| `PUT /webhooks/{id}` | Change a webhook (needs the permissions of the events it has, of deliveries still waiting, and of those it gets) | settings.manage |
+| `POST /webhooks` | Add a webhook; fields is full (the default) or minimal, which leaves out customer emails and visit details (site.payment needs revenue.view; link.clicked, link.milestone and site.traffic_spike need stats.view; link.health_changed needs health.manage). Without links.edit, the webhook isn't sent where password-protected links go | settings.manage |
+| `PUT /webhooks/{id}` | Change a webhook (needs the permissions of the events it has, of deliveries still waiting, and of those it gets). Changing the address without links.edit stops it receiving where password-protected links go; saving with links.edit lifts that | settings.manage |
 | `POST /webhooks/{id}/rotate` | Make a new signing secret (needs the permissions of the webhook's events) | settings.manage |
 | `DELETE /webhooks/{id}` | Delete a webhook | settings.manage |
 | `POST /webhooks/{id}/test` | Send a test event | settings.manage |
-| `GET /webhooks/{id}/deliveries` | The last deliveries (only of events you may see) | settings.manage |
+| `GET /webhooks/{id}/deliveries` | The last deliveries (only of events you may see; without links.edit, payloads leave out where password-protected links go) | settings.manage |
 | `POST /webhooks/deliveries/{delivery}/redeliver` | Send a delivery again (needs the permission of its event) | settings.manage |
 
 ## AI assistants
@@ -111,6 +124,7 @@ Generated from the server's own catalog (`scripts/skill-reference.ts`). Base URL
 | Endpoint | What it does | Permission |
 |---|---|---|
 | `POST /mcp` | Model Context Protocol server (JSON-RPC): tools to create links and read statistics | any key |
+| `POST /mcp/code` | Code Mode MCP server: two tools, search (the API spec) and execute (JavaScript that calls this API in a sandbox, with the same key). Needs the Worker Loader binding (Workers Paid) | any key |
 
 ## Websites
 

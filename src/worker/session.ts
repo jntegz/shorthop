@@ -13,13 +13,15 @@ import {
   LOCK_BASE_SEC,
   LOCK_MAX_SEC,
   LOGIN_EVENT_RETENTION_SEC,
+  MFA_COOKIE,
+  MFA_TTL_SEC,
   SESSION_COOKIE,
   SESSION_TTL_SEC,
   WINDOW_SEC,
 } from "../shared/login-policy";
 import { derivePassword, fromBase64Url, MAX_PASSWORD_LENGTH, MIN_ADMIN_PASSWORD_LENGTH, parsePasswordHash, toBase64Url, type PasswordHash } from "../shared/password";
 import { getSetting, setSettingStmt } from "./db";
-import type { UserRow } from "./users";
+import { OWNER_EPOCH, type UserRow } from "./users";
 
 export interface LoginConfig {
   /** The owners' password: the ADMIN_PASSWORD_HASH hash, or the ADMIN_PASSWORD secret itself. */
@@ -105,7 +107,20 @@ export async function revokeAllSessions(db: D1Database): Promise<void> {
   await setSettingStmt(db, "session_epoch", crypto.randomUUID()).run();
 }
 
-/** The two epochs a session is bound to: global, and the person's own (OWNER_EPOCH for owners). */
+/**
+ * The settings key of one owner's own epoch (owners have no users row). Set
+ * when their two-factor sign-in changes, to end only their other sessions;
+ * without one it is OWNER_EPOCH, so sessions made before it existed stay valid.
+ */
+export const ownerEpochKey = (identity: string) => `owner_epoch:${identity}`;
+
+/** Both epochs of an owner's session, in one D1 read. */
+export async function ownerEpochs(db: D1Database, identity: string): Promise<SessionEpochs> {
+  const { results } = await db.prepare("SELECT key, value FROM settings WHERE key IN ('session_epoch', ?)").bind(ownerEpochKey(identity)).all<{ key: string; value: string }>();
+  return { global: results.find((r) => r.key === "session_epoch")?.value ?? "0", user: results.find((r) => r.key !== "session_epoch")?.value ?? OWNER_EPOCH };
+}
+
+/** The two epochs a session is bound to: global, and the person's own (an owner's from ownerEpochKey). */
 export interface SessionEpochs {
   global: string;
   user: string;
@@ -118,11 +133,16 @@ const REVOKED_PREFIX = "revoked_session:";
 const sessionPayload = (cfg: LoginConfig, exp: number, e: SessionEpochs, email: string) =>
   `${VERSION}|${exp}|${e.global}|${e.user}|${cfg.fingerprint}|${email}`;
 
-export async function issueSessionCookie(cfg: LoginConfig, email: string, epochs: SessionEpochs, now: number): Promise<{ cookie: string; exp: number }> {
-  const exp = now + SESSION_TTL_SEC;
+/**
+ * A new session cookie. `keepExp` reissues one for new epochs without moving
+ * its end, so the time it was signed in (exp - SESSION_TTL_SEC) stays true for
+ * the checks that need a recent sign-in.
+ */
+export async function issueSessionCookie(cfg: LoginConfig, email: string, epochs: SessionEpochs, now: number, keepExp?: number): Promise<{ cookie: string; exp: number }> {
+  const exp = keepExp && keepExp > now && keepExp <= now + SESSION_TTL_SEC ? keepExp : now + SESSION_TTL_SEC;
   const mac = toBase64Url(await sign(cfg.secret, sessionPayload(cfg, exp, epochs, email)));
   return {
-    cookie: `${SESSION_COOKIE}=${VERSION}.${exp}.${epochs.global}.${epochs.user}.${mac}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${SESSION_TTL_SEC}`,
+    cookie: `${SESSION_COOKIE}=${VERSION}.${exp}.${epochs.global}.${epochs.user}.${mac}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${exp - now}`,
     exp,
   };
 }
@@ -166,27 +186,77 @@ export async function parseSessionCookie(
   return valid ? { exp, mac: macRaw, ...epochs } : null;
 }
 
+export interface SessionState {
+  epoch: string;
+  revoked: boolean;
+  /** An owner's own epoch (ownerEpochKey), OWNER_EPOCH when none is stored. */
+  ownerEpoch: string;
+  /** Someone other than an owner: their users row. */
+  user: UserRow | null;
+  /** Two-factor sign-in is required for everyone and this identity has no method yet. */
+  needsTwoFactor: boolean;
+}
+
 /**
  * What a session is checked against, in one D1 round trip: the global epoch,
- * whether this session was logged out (`mac`, when there is a cookie) and,
- * for someone other than an owner, their users row.
+ * whether this session was logged out (`mac`, when there is a cookie), the
+ * owner's own epoch or, for someone else, their users row, and whether the
+ * workspace requires two-factor sign-in they don't have.
  */
-export async function sessionState(db: D1Database, mac: string | null, email: string | null): Promise<{ epoch: string; revoked: boolean; user: UserRow | null }> {
-  const [settings, user] = await db.batch<Record<string, unknown>>([
-    db.prepare("SELECT key, value FROM settings WHERE key IN ('session_epoch', ?)").bind(mac ? REVOKED_PREFIX + mac : "session_epoch"),
-    ...(email ? [db.prepare("SELECT * FROM users WHERE email = ?").bind(email)] : []),
+export async function sessionState(db: D1Database, mac: string | null, identity: string, owner: boolean): Promise<SessionState> {
+  const [settings, factors, user] = await db.batch<Record<string, unknown>>([
+    db.prepare("SELECT key, value FROM settings WHERE key IN ('session_epoch', 'require_2fa', ?1, ?2)").bind(mac ? REVOKED_PREFIX + mac : "session_epoch", owner ? ownerEpochKey(identity) : "session_epoch"),
+    db.prepare("SELECT EXISTS (SELECT 1 FROM auth_factors WHERE email = ?) AS n").bind(identity),
+    ...(owner ? [] : [db.prepare("SELECT * FROM users WHERE email = ?").bind(identity)]),
   ]);
   const rows = (settings?.results ?? []) as { key: string; value: string }[];
+  const required = rows.some((r) => r.key === "require_2fa" && r.value === "1");
   return {
     epoch: rows.find((r) => r.key === "session_epoch")?.value ?? "0",
     revoked: rows.some((r) => r.key.startsWith(REVOKED_PREFIX)),
+    ownerEpoch: rows.find((r) => r.key.startsWith("owner_epoch:"))?.value ?? OWNER_EPOCH,
     user: (user?.results[0] as UserRow | undefined) ?? null,
+    needsTwoFactor: required && !Number(factors?.results[0]?.n ?? 0),
   };
 }
 
 /** Ends one session (logging out), leaving the others signed in. */
 export async function revokeSession(db: D1Database, session: { exp: number; mac: string }): Promise<void> {
   await setSettingStmt(db, REVOKED_PREFIX + session.mac, String(session.exp)).run();
+}
+
+// --- The second step ------------------------------------------------------------
+// After the right password, someone with two-factor sign-in gets this short
+// cookie instead of a session: proof that the password step passed, for this
+// identity, these epochs and this owners' password. Only the second step's
+// pages read it.
+
+const MFA_VERSION = "m1";
+const mfaPayload = (cfg: LoginConfig, exp: number, e: SessionEpochs, email: string) => `${MFA_VERSION}|${exp}|${e.global}|${e.user}|${cfg.fingerprint}|${email}`;
+
+export async function issueMfaCookie(cfg: LoginConfig, email: string, epochs: SessionEpochs, now: number): Promise<string> {
+  const exp = now + MFA_TTL_SEC;
+  const mac = toBase64Url(await sign(cfg.secret, mfaPayload(cfg, exp, epochs, email)));
+  return `${MFA_COOKIE}=${MFA_VERSION}.${exp}.${epochs.global}.${epochs.user}.${mac}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${MFA_TTL_SEC}`;
+}
+
+export function clearMfaCookie(): string {
+  return `${MFA_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0`;
+}
+
+/** The pending second step, if its cookie is valid for this identity. The caller compares the epochs. */
+export async function parseMfaCookie(request: Request, cfg: LoginConfig, email: string, now: number): Promise<({ exp: number } & SessionEpochs) | null> {
+  const raw = cookieValue(request.headers.get("Cookie"), MFA_COOKIE);
+  if (!raw) return null;
+  const [version, expRaw, global, user, macRaw, ...rest] = raw.split(".");
+  if (version !== MFA_VERSION || !expRaw || !global || !user || !macRaw || rest.length) return null;
+  const exp = Number(expRaw);
+  if (!Number.isInteger(exp) || exp <= now || exp > now + MFA_TTL_SEC) return null;
+  const mac = fromBase64Url(macRaw);
+  if (!mac || toBase64Url(mac) !== macRaw) return null;
+  const epochs = { global, user };
+  const valid = await crypto.subtle.verify("HMAC", await hmacKey(cfg.secret), mac, encoder.encode(mfaPayload(cfg, exp, epochs, email)));
+  return valid ? { exp, ...epochs } : null;
 }
 
 // --- Client networks ----------------------------------------------------------
@@ -323,15 +393,26 @@ export async function recordGlobalFailure(db: D1Database, now: number, owner: bo
   }
 }
 
-export function loginEventStmt(db: D1Database, ok: boolean, ipHashHex: string, country: string, now: number, email: string): D1PreparedStatement {
-  return db.prepare("INSERT INTO login_events (ts, ok, ip_hash, country, email) VALUES (?, ?, ?, ?, ?)").bind(now, ok ? 1 : 0, ipHashHex, country, email);
+/** How a login was completed (or, when it failed, what was tried). */
+export type LoginMethod = "password" | "password+totp" | "password+recovery" | "passkey";
+
+/**
+ * One login event. Write a successful one only when a session is issued:
+ * knownNetwork trusts networks with one, so a network that only knew the
+ * password must not get one.
+ */
+export function loginEventStmt(db: D1Database, ok: boolean, ipHashHex: string, country: string, now: number, email: string, method: LoginMethod = "password"): D1PreparedStatement {
+  return db
+    .prepare("INSERT INTO login_events (ts, ok, ip_hash, country, email, method) VALUES (?, ?, ?, ?, ?, ?)")
+    .bind(now, ok ? 1 : 0, ipHashHex, country, email, method);
 }
 
-/** Daily cleanup: old login events and lockout rows nobody has touched for two days. */
+/** Daily cleanup: old login events, lockout rows nobody has touched for two days, expired sign-in challenges. */
 export async function pruneLoginState(db: D1Database, now: number): Promise<void> {
   await db.batch([
     db.prepare("DELETE FROM login_events WHERE ts < ?").bind(now - LOGIN_EVENT_RETENTION_SEC),
     db.prepare("DELETE FROM auth_failures WHERE locked_until <= ?1 AND updated_at < ?2").bind(now, now - 2 * 86400),
+    db.prepare("DELETE FROM auth_challenges WHERE expires_at <= ?").bind(now),
     // The prefix range uses the settings primary key; values are expiry times.
     db.prepare("DELETE FROM settings WHERE key >= ?1 AND key < ?2 AND CAST(value AS INTEGER) <= ?3").bind(REVOKED_PREFIX, `${REVOKED_PREFIX}~`, now),
   ]);
@@ -341,16 +422,16 @@ export interface SecuritySummary {
   failedLogins24h: number;
   lockedNetworks: number;
   globalLockedUntil: number | null;
-  recent: { at: number; ok: boolean; country: string; email: string | null }[];
+  recent: { at: number; ok: boolean; country: string; email: string | null; method: LoginMethod | null }[];
   sharedSignIns: { email: string; networks: number }[];
 }
 
 export async function securitySummary(db: D1Database, now: number): Promise<SecuritySummary> {
   const [failed, locked, global, recent, shared] = await db.batch<Record<string, number | string>>([
     db.prepare("SELECT COUNT(*) AS n FROM login_events WHERE ok = 0 AND ts >= ?").bind(now - 86400),
-    db.prepare("SELECT COUNT(*) AS n FROM auth_failures WHERE key NOT LIKE '*%' AND key NOT LIKE 'api:%' AND key NOT LIKE 'pw:%' AND key NOT LIKE 'link:%' AND key NOT LIKE 'share:%' AND locked_until > ?1").bind(now),
+    db.prepare("SELECT COUNT(*) AS n FROM auth_failures WHERE key NOT LIKE '*%' AND key NOT LIKE 'api:%' AND key NOT LIKE 'pw:%' AND key NOT LIKE 'link:%' AND key NOT LIKE 'share:%' AND key NOT LIKE 'login:%' AND key NOT LIKE 'mfa:%' AND key NOT LIKE 'passkey:%' AND locked_until > ?1").bind(now),
     db.prepare("SELECT locked_until FROM auth_failures WHERE key = ?1 AND locked_until > ?2").bind(GLOBAL_KEY, now),
-    db.prepare("SELECT ts, ok, country, email FROM login_events ORDER BY ts DESC LIMIT 10"),
+    db.prepare("SELECT ts, ok, country, email, method FROM login_events ORDER BY ts DESC LIMIT 10"),
     db
       .prepare("SELECT email, COUNT(DISTINCT ip_hash) AS n FROM login_events WHERE ok = 1 AND email IS NOT NULL AND ts >= ?1 GROUP BY email HAVING n > 1 ORDER BY n DESC LIMIT 5")
       .bind(now - KNOWN_NETWORK_SEC),
@@ -360,7 +441,7 @@ export async function securitySummary(db: D1Database, now: number): Promise<Secu
     failedLogins24h: Number(failed?.results[0]?.n ?? 0),
     lockedNetworks: Number(locked?.results[0]?.n ?? 0),
     globalLockedUntil: until > 0 ? until : null,
-    recent: (recent?.results ?? []).map((r) => ({ at: Number(r.ts), ok: Number(r.ok) === 1, country: String(r.country ?? ""), email: r.email ? String(r.email) : null })),
+    recent: (recent?.results ?? []).map((r) => ({ at: Number(r.ts), ok: Number(r.ok) === 1, country: String(r.country ?? ""), email: r.email ? String(r.email) : null, method: r.method ? (String(r.method) as LoginMethod) : null })),
     sharedSignIns: (shared?.results ?? []).map((r) => ({ email: String(r.email), networks: Number(r.n) })),
   };
 }

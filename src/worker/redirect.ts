@@ -58,6 +58,24 @@ export async function publicLimit(request: Request, env: Env): Promise<Response 
   return new Response("Too many requests", { status: 429, headers: { "Retry-After": "60", "Cache-Control": "no-store" } });
 }
 
+/**
+ * Whether this click of a link with Advanced tracking is recorded. Each one is
+ * a D1 row, lookups and a webhook delivery per subscriber, so one network's
+ * clicks past PUBLIC_LIMITER's rate (its own "track" scope) still redirect but
+ * aren't logged: a loop on a tracked link can't spend the day's D1 writes or
+ * flood the receivers. A missing binding or a limiter error records it.
+ */
+export async function trackedClickAllowed(request: Request, env: Env): Promise<boolean> {
+  const ip = request.headers.get("CF-Connecting-IP");
+  if (!ip || !env.PUBLIC_LIMITER) return true;
+  try {
+    return (await env.PUBLIC_LIMITER.limit({ key: await limiterKey(env, "track", ip) })).success;
+  } catch (err) {
+    console.error(JSON.stringify({ message: "tracked click limiter failed", error: String(err) }));
+    return true;
+  }
+}
+
 /** Extracts the slug from a path: decoded once, one trailing "/" ignored. */
 function slugFromPath(pathname: string): string | null {
   let raw = pathname.slice(1);
@@ -226,7 +244,11 @@ export async function handleRedirect(request: Request, env: Env, ctx: ExecutionC
   const hit = (route?: string): string => {
     const id = newClickId();
     ctx.waitUntil(logHit(request, env, url, { domain, slug, kind: "hit", sourceTag: own.sourceTag, qr: own.qr, route }));
-    if (link?.tk) ctx.waitUntil(recordTrackedClick(request, env, url, { domain, slug, link, id, sourceTag: own.sourceTag, qr: own.qr }, ctx));
+    if (link?.tk) {
+      ctx.waitUntil(
+        trackedClickAllowed(request, env).then((ok) => (ok ? recordTrackedClick(request, env, url, { domain, slug, link, id, sourceTag: own.sourceTag, qr: own.qr }, ctx) : undefined)),
+      );
+    }
     return id;
   };
   if (link && link.a !== 1 && link.o && !expired) {

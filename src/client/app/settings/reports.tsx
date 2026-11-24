@@ -8,7 +8,7 @@ import { toast } from "sonner";
 import type { SettingsDTO } from "../../../shared/types";
 import { api, call, keys } from "../../api";
 import { SETTINGS_HELP } from "../../lib/help";
-import { useCan } from "../../lib/me";
+import { useCan, useMe } from "../../lib/me";
 import { Badge, Button, Dialog, Notice } from "../ui";
 import { Fact, Facts } from "./parts";
 import { SettingsSection, span } from "./common";
@@ -57,6 +57,8 @@ export function StatisticsSection({ s }: { s: SettingsDTO }) {
 
 export function DigestSection({ s }: { s: SettingsDTO }) {
   const can = useCan();
+  // Choosing the email service is for admins (it also carries the security notices).
+  const admin = useMe().data?.role === "admin";
   const [preview, setPreview] = useState<{ subject: string; html: string } | null>(null);
   const [mailSetup, setMailSetup] = useState(false);
 
@@ -94,9 +96,11 @@ export function DigestSection({ s }: { s: SettingsDTO }) {
         </Facts>
         {s.digestProblem ? <Notice tone="danger">{s.digestProblem}</Notice> : null}
         <div className="settings-actions">
-          <Button variant={s.digestProblem ? "primary" : "secondary"} icon={Settings2} onClick={() => setMailSetup(true)}>
-            Set up email
-          </Button>
+          {admin ? (
+            <Button variant={s.digestProblem ? "primary" : "secondary"} icon={Settings2} onClick={() => setMailSetup(true)}>
+              Set up email
+            </Button>
+          ) : null}
           {can("stats.view") ? (
             <Button onClick={() => loadPreview.mutate()} loading={loadPreview.isPending}>
               Preview
@@ -108,7 +112,7 @@ export function DigestSection({ s }: { s: SettingsDTO }) {
         </div>
       </div>
 
-      <MailSetupDialog open={mailSetup} onOpenChange={setMailSetup} />
+      {admin ? <MailSetupDialog open={mailSetup} onOpenChange={setMailSetup} /> : null}
 
       <Dialog open={preview !== null} onOpenChange={(o) => !o && setPreview(null)} size="lg" title={preview?.subject ?? "Digest preview"}>
         {preview ? <iframe title="Digest preview" sandbox="" srcDoc={preview.html} className="settings-frame settings-frame-mail" /> : null}

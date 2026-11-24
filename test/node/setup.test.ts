@@ -129,7 +129,8 @@ describe("configs from older versions", () => {
     const old = renderConfig(REAL)
       .replace(JSON.stringify(ROLLUP_CRON), JSON.stringify("15 1 * * *"))
       .replace(/,\n\s*\/\/ Website analytics events from[^\n]*\n[^\n]*"WEB"[^\n]*/, "")
-      .replace(/,\n\s*\/\/ Shared statistics pages[\s\S]*?COLLECT_LIMITER[^\n]*/, "");
+      // Through the end of the list: CODE_LIMITER (optional, newer still) follows COLLECT_LIMITER.
+      .replace(/,\n\s*\/\/ Shared statistics pages[\s\S]*?CODE_LIMITER[^\n]*/, "");
     const problems = outdatedProblems(old);
     assert.equal(problems.length, 4, problems.join("\n"));
     assert.match(problems.join(" "), /15 \* \* \* \*.*PUBLIC_LIMITER.*COLLECT_LIMITER.*WEB/);

@@ -12,8 +12,11 @@
 // people. Results that carry them are labelled as untrusted, but a label does
 // not stop a model from following what they say: what limits the damage is the
 // key's permissions and the approvals in the assistant's own client.
+//
+// Code Mode (POST /api/mcp/code, src/worker/mcp-code.ts) shares the JSON-RPC
+// envelope (handleMcp) and the way to the API (dispatch).
 
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { HOSTNAME_RE } from "../shared/domains";
 import type { Actor } from "../shared/permissions";
 import { SITE_ID_RE } from "../shared/sites";
@@ -240,14 +243,7 @@ export const TOOLS: Tool[] = [
     readOnly: true,
     untrusted: true,
     call: (a) => ({ method: "GET", path: `${linkPath(a)}/clicks${query({ event: a.event ?? "click", limit: a.limit ?? 50 })}` }),
-    // IP addresses stay in the admin: an assistant's conversation isn't the place for them, whatever the key may see.
-    shape: (body) => {
-      const b = body as { clicks?: Record<string, unknown>[] } | null;
-      // The whole reverse DNS name can spell the address out ("ip-203-0-113-45.example.net"): only its domain.
-      return b && Array.isArray(b.clicks)
-        ? { ...b, clicks: b.clicks.map(({ ip: _ip, ...rest }) => ({ ...rest, hostname: typeof rest.hostname === "string" ? hostDomain(rest.hostname) : rest.hostname })) }
-        : body;
-    },
+    shape: (body) => withoutIps(body),
   },
   {
     name: "missed_links",
@@ -330,79 +326,157 @@ function describeTools(actor: Actor) {
   }));
 }
 
-export const mcpApi = new Hono<AppEnv>()
-  .post("/mcp", async (c) => {
-    // Browsers send Origin; a page on another site (or an opaque "null" origin) mustn't drive this server.
-    const origin = c.req.header("Origin");
-    if (origin && originHost(origin) !== new URL(c.req.url).host) return c.json(failure(null, -32600, "Origin not allowed"), 403);
-    let msg: Rpc;
-    try {
-      msg = (await c.req.json()) as Rpc;
-    } catch {
-      return c.json(failure(null, -32700, "Parse error"), 400);
-    }
-    if (Array.isArray(msg)) return c.json(failure(null, -32600, "Batches aren't supported"), 400);
-    // Notifications (no id) need no answer.
-    if (msg.id === undefined || msg.method?.startsWith("notifications/")) return c.body(null, 202);
+/**
+ * IP addresses stay in the admin: an assistant's conversation isn't the place
+ * for them, whatever the key may see. Nor does the whole reverse DNS name,
+ * which can spell the address out ("ip-203-0-113-45.example.net"): only its domain.
+ */
+export function withoutIps(body: unknown): unknown {
+  const b = body as { clicks?: Record<string, unknown>[] } | null;
+  return b && Array.isArray(b.clicks)
+    ? { ...b, clicks: b.clicks.map(({ ip: _ip, ...rest }) => ({ ...rest, hostname: typeof rest.hostname === "string" ? hostDomain(rest.hostname) : rest.hostname })) }
+    : body;
+}
 
-    switch (msg.method) {
-      case "initialize": {
-        const asked = s(msg.params?.protocolVersion);
-        return c.json(result(msg.id, { protocolVersion: VERSIONS.includes(asked) ? asked : VERSIONS[1], capabilities: { tools: { listChanged: false } }, serverInfo: SERVER, instructions: INSTRUCTIONS }));
-      }
-      case "server/discover":
-        return c.json(result(msg.id, { supportedVersions: VERSIONS, capabilities: { tools: { listChanged: false } }, serverInfo: SERVER, instructions: INSTRUCTIONS }));
-      case "ping":
-        return c.json(result(msg.id, {}));
-      case "tools/list":
-        return c.json(result(msg.id, { tools: describeTools(c.get("actor")) }));
-      case "tools/call": {
-        const tool = TOOLS.find((t) => t.name === s(msg.params?.name));
-        if (!tool) return c.json(failure(msg.id, -32602, `Unknown tool: ${s(msg.params?.name)}`));
-        const args = (msg.params?.arguments ?? {}) as Record<string, unknown>;
-        let req: ReturnType<Tool["call"]>;
-        try {
-          req = tool.call(args);
-        } catch (err) {
-          if (err instanceof BadArgument) return c.json(result(msg.id, { content: [{ type: "text", text: err.message }], isError: true }));
-          throw err;
-        }
-        // The same API, with the caller's key: its permissions decide.
-        const base = new URL(c.req.url);
-        const prefix = base.pathname.startsWith("/_admin/api") ? "/_admin/api" : "/api";
-        // Each tool stays on its own route: the address as sent must be the one it built.
-        const target = new URL(`${base.origin}${prefix}${req.path}`);
-        if (target.pathname !== `${prefix}${req.path.split("?")[0]}`) return c.json(result(msg.id, { content: [{ type: "text", text: "That address isn't valid." }], isError: true }));
-        // Everything the API's guards read (src/worker/auth.ts): the key, or the admin's
-        // Access token and session cookie, and the caller's address for the failure limiter.
-        const headers: Record<string, string> = { Origin: base.origin, ...(req.body === undefined ? {} : { "Content-Type": "application/json" }) };
-        for (const name of ["Authorization", "Cookie", "Cf-Access-Jwt-Assertion", "CF-Connecting-IP"]) {
-          const value = c.req.header(name);
-          if (value) headers[name] = value;
-        }
-        const res = await app.fetch(
-          new Request(target, {
-            method: req.method,
-            headers,
-            body: req.body === undefined ? undefined : JSON.stringify(req.body),
-          }),
-          c.env,
-          c.executionCtx,
-        );
-        const body = (await res.json().catch(() => ({}))) as unknown;
-        if (!res.ok) {
-          const error = s((body as { error?: unknown }).error) || `Request failed (${res.status})`;
-          return c.json(result(msg.id, { content: [{ type: "text", text: error }], isError: true }));
-        }
-        const shaped = tool.shape ? tool.shape(body, args) : body;
-        return c.json(result(msg.id, { content: [{ type: "text", text: JSON.stringify(shaped) }], structuredContent: shaped, ...(tool.untrusted ? { _meta: { "shorthop/untrusted": UNTRUSTED_NOTE } } : {}) }));
-      }
-      default:
-        return c.json(failure(msg.id, -32601, `Method not found: ${s(msg.method)}`));
+/** A tool's answer, as MCP's tools/call returns it. */
+export interface ToolResult {
+  content: { type: "text"; text: string }[];
+  structuredContent?: unknown;
+  isError?: boolean;
+  _meta?: Record<string, unknown>;
+}
+
+export const textResult = (text: string, isError = false): ToolResult => ({ content: [{ type: "text", text }], ...(isError ? { isError: true } : {}) });
+
+/** One MCP server on the shared JSON-RPC envelope: the standard tools at /mcp, Code Mode at /mcp/code. */
+export interface McpServer {
+  info: { name: string; title: string; version: string };
+  instructions: string;
+  /** tools/list, for this caller. */
+  tools: (c: Context<AppEnv>) => unknown[];
+  /** tools/call: a result, or null for an unknown tool. */
+  call: (c: Context<AppEnv>, name: string, args: Record<string, unknown>) => Promise<ToolResult | null>;
+}
+
+/**
+ * A path the API will route exactly as written. The URL parser turns "\" into
+ * "/" and resolves "..", also when it's percent-encoded, so a path that looked
+ * like an allowed route could land on another one: anything it would change is
+ * refused, as is a segment that decodes to a separator or a dot segment.
+ */
+export function safePath(path: string): boolean {
+  if (!path.startsWith("/") || path.length > 2048 || /[\\?#\s]/.test(path) || path.includes("//")) return false;
+  try {
+    if (new URL(path, "https://x.invalid").pathname !== path) return false;
+    return path
+      .slice(1)
+      .split("/")
+      .every((seg) => {
+        const d = decodeURIComponent(seg);
+        return d !== "" && d !== "." && d !== ".." && !/[/\\]/.test(d);
+      });
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Calls an API route as the caller: the same key, or the admin's Access token
+ * and session cookie, through the whole app, so its guards, permission rules,
+ * validation, history and webhooks apply exactly as for a script. Null when
+ * the address as sent wouldn't be the one asked for (the URL parser would
+ * resolve a ".." or a "\" in it to another route).
+ */
+export async function dispatch(c: Context<AppEnv>, req: { method: string; path: string; body?: unknown }): Promise<{ status: number; ok: boolean; body: unknown } | null> {
+  const base = new URL(c.req.url);
+  const prefix = base.pathname.startsWith("/_admin/api") ? "/_admin/api" : "/api";
+  const target = new URL(`${base.origin}${prefix}${req.path}`);
+  if (target.pathname !== `${prefix}${req.path.split("?")[0]}`) return null;
+  // Everything the API's guards read (src/worker/auth.ts): the key, or the admin's
+  // Access token and session cookie, and the caller's address for the failure limiter.
+  const headers: Record<string, string> = { Origin: base.origin, ...(req.body === undefined ? {} : { "Content-Type": "application/json" }) };
+  for (const name of ["Authorization", "Cookie", "Cf-Access-Jwt-Assertion", "CF-Connecting-IP"]) {
+    const value = c.req.header(name);
+    if (value) headers[name] = value;
+  }
+  const res = await app.fetch(new Request(target, { method: req.method, headers, body: req.body === undefined ? undefined : JSON.stringify(req.body) }), c.env, c.executionCtx);
+  const type = res.headers.get("Content-Type") ?? "";
+  const body = type.includes("json") ? ((await res.json().catch(() => ({}))) as unknown) : await res.text();
+  return { status: res.status, ok: res.ok, body };
+}
+
+/** The API's error message from a failed dispatch. */
+export const errorOf = (r: { status: number; body: unknown }) => s((r.body as { error?: unknown } | null)?.error) || `Request failed (${r.status})`;
+
+/** The tools at /api/mcp, one per task. */
+const STANDARD: McpServer = {
+  info: SERVER,
+  instructions: INSTRUCTIONS,
+  tools: (c) => describeTools(c.get("actor")),
+  async call(c, name, args) {
+    const tool = TOOLS.find((t) => t.name === name);
+    if (!tool) return null;
+    let req: ReturnType<Tool["call"]>;
+    try {
+      req = tool.call(args);
+    } catch (err) {
+      if (err instanceof BadArgument) return textResult(err.message, true);
+      throw err;
     }
-  })
+    // The same API, with the caller's key: its permissions decide. Each tool stays on its own route.
+    const res = await dispatch(c, req);
+    if (!res) return textResult("That address isn't valid.", true);
+    if (!res.ok) return textResult(errorOf(res), true);
+    const shaped = tool.shape ? tool.shape(res.body, args) : res.body;
+    return { content: [{ type: "text", text: JSON.stringify(shaped) }], structuredContent: shaped, ...(tool.untrusted ? { _meta: { "shorthop/untrusted": UNTRUSTED_NOTE } } : {}) };
+  },
+};
+
+/** The JSON-RPC envelope both servers share: stateless, one POST per message, no batches or streams. */
+export async function handleMcp(c: Context<AppEnv>, server: McpServer): Promise<Response> {
+  // Browsers send Origin; a page on another site (or an opaque "null" origin) mustn't drive this server.
+  const origin = c.req.header("Origin");
+  if (origin && originHost(origin) !== new URL(c.req.url).host) return c.json(failure(null, -32600, "Origin not allowed"), 403);
+  let msg: Rpc;
+  try {
+    msg = (await c.req.json()) as Rpc;
+  } catch {
+    return c.json(failure(null, -32700, "Parse error"), 400);
+  }
+  if (Array.isArray(msg)) return c.json(failure(null, -32600, "Batches aren't supported"), 400);
+  // Notifications (no id) need no answer.
+  if (msg.id === undefined || msg.method?.startsWith("notifications/")) return c.body(null, 202);
+
+  const capabilities = { tools: { listChanged: false } };
+  switch (msg.method) {
+    case "initialize": {
+      const asked = s(msg.params?.protocolVersion);
+      return c.json(result(msg.id, { protocolVersion: VERSIONS.includes(asked) ? asked : VERSIONS[1], capabilities, serverInfo: server.info, instructions: server.instructions }));
+    }
+    case "server/discover":
+      return c.json(result(msg.id, { supportedVersions: VERSIONS, capabilities, serverInfo: server.info, instructions: server.instructions }));
+    case "ping":
+      return c.json(result(msg.id, {}));
+    case "tools/list":
+      return c.json(result(msg.id, { tools: server.tools(c) }));
+    case "tools/call": {
+      const name = s(msg.params?.name);
+      const answer = await server.call(c, name, (msg.params?.arguments ?? {}) as Record<string, unknown>);
+      return c.json(answer ? result(msg.id, answer) : failure(msg.id, -32602, `Unknown tool: ${name}`));
+    }
+    default:
+      return c.json(failure(msg.id, -32601, `Method not found: ${s(msg.method)}`));
+  }
+}
+
+export const mcpApi = new Hono<AppEnv>()
+  .post("/mcp", (c) => handleMcp(c, STANDARD))
   // No server-sent stream: everything is answered in the POST.
   .get("/mcp", (c) => c.body(null, 405, { Allow: "POST" }))
+  // Code Mode: two tools, search and execute, instead of one per task (src/worker/mcp-code.ts).
+  // Loaded on first use, which also keeps the import one way (mcp-code.ts imports this file).
+  .post("/mcp/code", async (c) => handleMcp(c, (await import("./mcp-code")).CODE_MODE))
+  .get("/mcp/code", (c) => c.body(null, 405, { Allow: "POST" }))
 
   /** The API described as OpenAPI 3.0, for API tools, client generators and AI assistants. */
   .get("/openapi.json", (c) => c.json(openApiDocument(new URL(c.req.url).origin)));

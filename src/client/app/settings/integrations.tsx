@@ -8,8 +8,9 @@ import { Bookmark, Copy } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import { SETTINGS_HELP } from "../../lib/help";
+import { useMe } from "../../lib/me";
 import { copy } from "../../lib/utils";
-import { Badge, IconButton, Section, Segmented, Table, TD, TH } from "../ui";
+import { Badge, IconButton, Notice, Section, Segmented, Table, TD, TH } from "../ui";
 import { CodeBlock, Fact, Facts, HelpTip } from "./parts";
 
 export { ApiKeysSection } from "./api-keys";
@@ -214,21 +215,25 @@ function Bookmarklet({ origin }: { origin: string }) {
 }
 
 type Client = "claude" | "cursor" | "vscode";
+type Mode = "tools" | "code";
 
 /** Copy-ready settings for AI assistants that speak MCP, using a personal API key. */
 function AiAssistants({ base }: { base: string }) {
   const [client, setClient] = useState<Client>("claude");
-  const url = `${base}/mcp`;
+  const [mode, setMode] = useState<Mode>("tools");
+  const codeMode = useMe().data?.workspace.codeMode ?? false;
+  const url = mode === "code" ? `${base}/mcp/code` : `${base}/mcp`;
+  const name = mode === "code" ? "shorthop-code" : "shorthop";
   const config: Record<Client, { label: string; where: string; text: string }> = {
     claude: {
       label: "Claude Code",
       where: "Run in a terminal, with the key in SHORTHOP_KEY:",
-      text: `claude mcp add --transport http shorthop ${url} --header "Authorization: Bearer $SHORTHOP_KEY"`,
+      text: `claude mcp add --transport http ${name} ${url} --header "Authorization: Bearer $SHORTHOP_KEY"`,
     },
     cursor: {
       label: "Cursor",
       where: "Add to .cursor/mcp.json (or ~/.cursor/mcp.json), with the key in SHORTHOP_KEY:",
-      text: JSON.stringify({ mcpServers: { shorthop: { url, headers: { Authorization: "Bearer ${env:SHORTHOP_KEY}" } } } }, null, 2),
+      text: JSON.stringify({ mcpServers: { [name]: { url, headers: { Authorization: "Bearer ${env:SHORTHOP_KEY}" } } } }, null, 2),
     },
     vscode: {
       label: "VS Code",
@@ -236,7 +241,7 @@ function AiAssistants({ base }: { base: string }) {
       text: JSON.stringify(
         {
           inputs: [{ type: "promptString", id: "shorthop-key", description: "Shorthop API key", password: true }],
-          servers: { shorthop: { type: "http", url, headers: { Authorization: "Bearer ${input:shorthop-key}" } } },
+          servers: { [name]: { type: "http", url, headers: { Authorization: "Bearer ${input:shorthop-key}" } } },
         },
         null,
         2,
@@ -253,6 +258,24 @@ function AiAssistants({ base }: { base: string }) {
       <p className="settings-a-prose">
         Assistants can create links and read statistics and revenue with an API key. Give the key only what the assistant should do: a key with Statistics only can't change links.
       </p>
+      <Segmented<Mode>
+        label="Server"
+        size="sm"
+        value={mode}
+        onChange={setMode}
+        options={[
+          { value: "tools", label: "Standard tools" },
+          { value: "code", label: "Code Mode" },
+        ]}
+      />
+      <p className="settings-a-prose">
+        {mode === "tools"
+          ? "A tool for each task (create a link, link statistics…). The simplest choice, and it works on every Cloudflare plan."
+          : "Two tools: search reads the API's description, execute runs the assistant's JavaScript against the whole API in a sandbox without internet, with the same key. Better for tasks over many links, and it uses fewer tokens. Needs the Workers Paid plan and the LOADER binding (worker_loaders in wrangler.jsonc)."}
+      </p>
+      {mode === "code" && !codeMode ? (
+        <Notice tone="warn">Not turned on for this deployment: uncomment worker_loaders in wrangler.jsonc (Workers Paid), then deploy. Until then the assistant is told Code Mode isn't available.</Notice>
+      ) : null}
       <CodeBlock title={c.where} code={c.text} copied="Copied" />
     </div>
   );

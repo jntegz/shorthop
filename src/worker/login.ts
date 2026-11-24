@@ -5,11 +5,17 @@
 // own script, on the login and forgot-password pages). Owners (ADMIN_EMAIL, or everyone without Access) use the admin
 // password; everyone else chooses their own password from an invite link, and
 // can get a reset link by email.
+// /_admin/login/2fa and /_admin/login/2fa-setup: the second step, for people
+// with two-factor sign-in (or when an admin requires it). No session exists
+// until it passes, whichever way the password step was reached.
+// /_admin/login/passkey: a passkey instead of the password (and of the second
+// step), with one small same-origin script on the pages that offer it.
 
 import { Hono, type Context } from "hono";
 import { csrf } from "hono/csrf";
 import { escapeHtml } from "../shared/html";
 import {
+  GLOBAL_WINDOW_SEC,
   LOCK_BASE_SEC,
   MAX_FAILS,
   RESET_COOLDOWN_SEC,
@@ -19,33 +25,74 @@ import {
   RESET_TTL_SEC,
 } from "../shared/login-policy";
 import { hashPassword, MAX_PASSWORD_LENGTH, parsePasswordHash } from "../shared/password";
+import { passkeyLoginSchema } from "../shared/schemas";
 import { adminAuthMode, NOT_ALLOWED, PASSWORD_UNCONFIGURED, verifyAdmin, verifyIdentity, verifySession } from "./auth";
-import { readCapped } from "./body";
+import { readCapped, readTextCapped } from "./body";
 import { nowSec } from "./db";
 import { isLocalHost } from "./domains";
 import type { AppEnv } from "./hono";
 import { mailerStatus, peopleMailStatus, sendMail, sendPersonMail, withMailSettings } from "./mailer";
-import { botCheckPage, bouncePage, choosePasswordPage, forbiddenPage, forgotPage, loginPage, noticePage, type TurnstileWidget } from "./pages";
+import {
+  botCheckPage,
+  bouncePage,
+  choosePasswordPage,
+  forbiddenPage,
+  forgotPage,
+  loginPage,
+  noticePage,
+  PASSKEY_SCRIPT,
+  recoveryCodesPage,
+  twoFactorPage,
+  twoFactorSetupPage,
+  type TurnstileWidget,
+} from "./pages";
+import { PASSKEY_LOGIN_JS } from "./passkey-script";
+import { loginOptions, passkeyCount, relyingParty, verifyLogin } from "./passkeys";
+import { qrSvg } from "./qr-svg";
 import {
   chargeAttempt,
   clearFailuresStmt,
+  clearMfaCookie,
   clearSessionCookie,
   getEpoch,
   globalLockedUntil,
   ipHash,
+  issueMfaCookie,
   knownNetwork,
   issueSessionCookie,
   lock,
   loginConfig,
   loginEventStmt,
+  ownerEpochs,
+  parseMfaCookie,
   parseSessionCookie,
   recordGlobalFailure,
   revokeSession,
+  sessionState,
   verifyPassword,
   verifyPasswordHash,
+  type AttemptState,
+  type LoginConfig,
+  type LoginMethod,
+  type SessionEpochs,
 } from "./session";
+import { normalizeTotp } from "./totp";
 import { activeTurnstile, saveTurnstileStmt, TURNSTILE_FIELD, turnstileSecret, turnstileSettings, verifyTurnstile } from "./turnstile";
-import { getUser, INVITE_TOKEN_RE, isPaused, MIN_USER_PASSWORD, OWNER_EPOCH, pausedReason, personIterations, randomToken, sha256Hex, type UserRow } from "./users";
+import {
+  confirmTotpSetup,
+  newEpochStmt,
+  newRecoveryCodes,
+  normalizeRecovery,
+  pendingTotpSecret,
+  sendTwoFactorNotice,
+  startTotpSetup,
+  totpUri,
+  twoFactorStatus,
+  useRecoveryCode,
+  verifyTotp,
+  type TwoFactorStatus,
+} from "./two-factor";
+import { getUser, INVITE_TOKEN_RE, isPaused, MIN_USER_PASSWORD, pausedReason, personIterations, randomToken, sha256Hex, type UserRow } from "./users";
 
 const MAX_BODY_BYTES = 4096;
 const DEFAULT_NEXT = "/_admin/";
@@ -68,6 +115,13 @@ function seeOther(location: string, headers: Record<string, string> = {}): Respo
   return new Response(null, { status: 303, headers: { Location: location, "Cache-Control": "no-store", ...headers } });
 }
 
+/** A redirect that sets several cookies (a session, and the second step's cookie cleared). */
+function seeOtherWithCookies(location: string, cookies: string[]): Response {
+  const headers = new Headers({ Location: location, "Cache-Control": "no-store" });
+  for (const cookie of cookies) headers.append("Set-Cookie", cookie);
+  return new Response(null, { status: 303, headers });
+}
+
 /** 45 → "45 seconds", 60 → "1 minute", 86400 → "24 hours". */
 function waitText(sec: number): string {
   const s = Math.max(1, Math.ceil(sec));
@@ -84,6 +138,9 @@ async function readForm(c: Context<AppEnv>): Promise<URLSearchParams | Response>
   if (!raw) return new Response("Payload Too Large", { status: 413 });
   return new URLSearchParams(new TextDecoder().decode(raw));
 }
+
+/** A person's wrong passwords, across networks: only caps what they add to the people's brake. */
+const personKey = (email: string) => `login:${email}`;
 
 /** Burst brake per Cloudflare location. Best effort: the D1 counters are what count. */
 async function burstAllowed(env: Env, key: string): Promise<boolean> {
@@ -231,6 +288,158 @@ function passwordChangedEmail(email: string) {
   return { subject: "Your Shorthop password was changed", text, html: `<p>${escapeHtml(text)}</p>` };
 }
 
+// --- The second step ------------------------------------------------------------
+
+const SECOND_STEP = "/_admin/login/2fa";
+const SETUP_STEP = "/_admin/login/2fa-setup";
+
+/** Wrong codes count per person (whatever network they come from), like wrong passwords. */
+const mfaKey = (email: string) => `mfa:${email}`;
+
+/** The country Cloudflare saw the request from, for the login log. */
+const countryOf = (c: Context<AppEnv>) => String((c.req.raw.cf as IncomingRequestCfProperties | undefined)?.country ?? "");
+
+/**
+ * The password was right (at the login, or a new one from an invite or reset
+ * link). Without two-factor sign-in that's a session. With it, or when an admin
+ * requires it, only a short cookie for the second step: `done` runs either way.
+ * The successful login event is written only with the session, so knownNetwork
+ * never trusts a network that only knew the password.
+ */
+async function passwordPassed(
+  c: Context<AppEnv>,
+  p: { cfg: LoginConfig; email: string; epochs: SessionEpochs; next: string; ipKey: string; country: string; now: number; touchUser: boolean; done: D1PreparedStatement[] },
+): Promise<Response> {
+  const db = c.env.DB;
+  const tf = await twoFactorStatus(db, p.email);
+  if (tf.factors.length === 0 && !tf.required) {
+    const [{ cookie }] = await Promise.all([
+      issueSessionCookie(p.cfg, p.email, p.epochs, p.now),
+      db.batch([
+        ...p.done,
+        loginEventStmt(db, true, p.ipKey, p.country, p.now, p.email),
+        ...(p.touchUser ? [db.prepare("UPDATE users SET last_login_at = ? WHERE email = ?").bind(p.now, p.email)] : []),
+      ]),
+    ]);
+    console.log(JSON.stringify({ message: "admin login", email: p.email, method: "password", ipHash: p.ipKey, country: p.country }));
+    return seeOther(p.next, { "Set-Cookie": cookie });
+  }
+  const [mfa] = await Promise.all([issueMfaCookie(p.cfg, p.email, p.epochs, p.now), db.batch(p.done)]);
+  const step = tf.factors.length ? SECOND_STEP : SETUP_STEP;
+  return seeOther(`${step}?next=${encodeURIComponent(p.next)}`, { "Set-Cookie": mfa });
+}
+
+interface Pending {
+  email: string;
+  cfg: LoginConfig;
+  user: UserRow | null;
+  epochs: SessionEpochs;
+  next: string;
+  status: TwoFactorStatus;
+}
+
+/**
+ * Who is at the second step: the same identity whose password passed, with the
+ * epochs still current (no password change, sign-out or reset since). Anything
+ * else starts again at the password.
+ */
+async function pendingStep(c: Context<AppEnv>, nextRaw: string | null | undefined): Promise<Pending | Response> {
+  const env = c.env;
+  const req = c.req.raw;
+  const access = await verifyIdentity(req, env);
+  if (!access.ok) return forbiddenPage(access.reason);
+  const cfg = loginConfig(env);
+  if (!cfg) return forbiddenPage(PASSWORD_UNCONFIGURED);
+  const next = safeNext(nextRaw, new URL(req.url).origin);
+  const now = nowSec();
+  const restart = () => seeOther(`/_admin/login?next=${encodeURIComponent(next)}`, { "Set-Cookie": clearMfaCookie() });
+  const cookie = await parseMfaCookie(req, cfg, access.email, now);
+  if (!cookie) return restart();
+  let user: UserRow | null = null;
+  let epochs: SessionEpochs;
+  if (access.owner) {
+    epochs = await ownerEpochs(env.DB, access.email);
+  } else {
+    const state = await sessionState(env.DB, null, access.email, false);
+    if (!state.user) return forbiddenPage(NOT_ALLOWED.reason);
+    if (isPaused(state.user, now)) return pausedNotice(state.user);
+    user = state.user;
+    epochs = { global: state.epoch, user: state.user.session_epoch };
+  }
+  if (cookie.global !== epochs.global || cookie.user !== epochs.user) return restart();
+  return { email: access.email, cfg, user, epochs, next, status: await twoFactorStatus(env.DB, access.email) };
+}
+
+/** The session at last, with the second step's cookie cleared. */
+async function completeLogin(c: Context<AppEnv>, p: Pending, method: LoginMethod, ipKey: string, now: number): Promise<string[]> {
+  const db = c.env.DB;
+  const country = countryOf(c);
+  const [{ cookie }] = await Promise.all([
+    issueSessionCookie(p.cfg, p.email, p.epochs, now),
+    db.batch([
+      clearFailuresStmt(db, mfaKey(p.email)),
+      loginEventStmt(db, true, ipKey, country, now, p.email, method),
+      ...(p.user ? [db.prepare("UPDATE users SET last_login_at = ? WHERE email = ?").bind(now, p.email)] : []),
+    ]),
+  ]);
+  console.log(JSON.stringify({ message: "admin login", email: p.email, method, ipHash: ipKey, country }));
+  return [cookie, clearMfaCookie()];
+}
+
+/** Why a code wasn't checked or didn't work, for the page to show. */
+interface Refusal {
+  status: number;
+  error: string;
+  retryAfter?: number;
+}
+
+const lockedOut = (wait: number): Refusal => ({ status: 429, error: `Too many wrong codes. Try again in ${waitText(wait)}.`, retryAfter: wait });
+
+/** Counts a code attempt before it's checked, or refuses it while the person is locked out. */
+async function chargeCode(env: Env, email: string, ipKey: string, now: number): Promise<{ refusal: Refusal } | { state: AttemptState }> {
+  if (!(await burstAllowed(env, ipKey))) return { refusal: { status: 429, error: "Too many attempts. Wait a minute, then try again.", retryAfter: 60 } };
+  const state = await chargeAttempt(env.DB, mfaKey(email), now);
+  if (state.lockedUntil > now) return { refusal: lockedOut(state.lockedUntil - now) };
+  // Only reachable by parallel requests that were all counted before a lock was written.
+  if (state.fails > MAX_FAILS) return { refusal: lockedOut((await lock(env.DB, mfaKey(email), now, state.lockouts)) - now) };
+  return { state };
+}
+
+/**
+ * After a wrong code: a lock at the limit, otherwise how many tries are left.
+ * A lock means someone had the right password, so the person is told by email.
+ */
+async function wrongCode(c: Context<AppEnv>, email: string, state: AttemptState, now: number): Promise<Refusal> {
+  if (state.fails >= MAX_FAILS) {
+    const until = await lock(c.env.DB, mfaKey(email), now, state.lockouts);
+    afterResponse(c, sendTwoFactorNotice(c.env, email, { kind: "locked", until }));
+    return lockedOut(until - now);
+  }
+  const left = MAX_FAILS - state.fails;
+  return { status: 401, error: `That code didn't work. ${left} ${left === 1 ? "attempt" : "attempts"} left before a ${waitText(LOCK_BASE_SEC * 2 ** state.lockouts)} lock.` };
+}
+
+const hasTotp = (p: Pending) => p.status.factors.some((f) => f.kind === "totp");
+/** This origin when the person has a passkey (the page offers it), otherwise null. */
+const passkeyOn = (c: Context<AppEnv>, p: Pending) => (p.status.factors.some((f) => f.kind === "passkey") ? new URL(c.req.url).origin : null);
+
+/** The setup page for the secret waiting for its first code (a new one when there's none). */
+async function setupPage(c: Context<AppEnv>, p: Pending, now: number, refusal?: Refusal): Promise<Response> {
+  const host = new URL(c.req.url).hostname;
+  const waiting = await pendingTotpSecret(c.env, p.email, now, "totp-setup-login");
+  const { secret, uri } = waiting ? { secret: waiting, uri: totpUri(host, p.email, waiting) } : await startTotpSetup(c.env, p.email, host, now, "totp-setup-login");
+  return twoFactorSetupPage({ next: p.next, email: p.email, qr: qrSvg(uri, "QR code for your authenticator app"), secret, error: refusal?.error, status: refusal?.status ?? 200 });
+}
+
+/** Passkeys sign in without the password, so a new password from a reset removes them (with their challenges, and codes left with nothing to recover). */
+function forgetPasskeysStmts(db: D1Database, email: string): D1PreparedStatement[] {
+  return [
+    db.prepare("DELETE FROM auth_factors WHERE email = ?1 AND kind = 'passkey'").bind(email),
+    db.prepare("DELETE FROM auth_challenges WHERE email = ?1 AND purpose LIKE 'passkey-%'").bind(email),
+    db.prepare("DELETE FROM recovery_codes WHERE email = ?1 AND NOT EXISTS (SELECT 1 FROM auth_factors WHERE email = ?1)").bind(email),
+  ];
+}
+
 export const loginApp = new Hono<AppEnv>();
 
 // Cross-site form posts are rejected before anything is counted.
@@ -243,7 +452,12 @@ loginApp.get("/_admin/login", async (c) => {
   if (!access.ok) return forbiddenPage(access.reason);
   const next = safeNext(c.req.query("next"), url.origin);
   const session = await verifySession(req, c.env, access);
-  if (session.ok) return seeOther(next);
+  // ?reauth=1: sign in again on purpose, for changes that need a recent sign-in.
+  const reauth = c.req.query("reauth") === "1";
+  if (session.ok && !reauth) return seeOther(next);
+  const passkey = (await passkeyCount(c.env.DB, access.email)) > 0 ? url.origin : null;
+  const passwordOnly = adminAuthMode(c.env) === "password";
+  if (session.ok) return loginPage({ next, email: access.email, passwordOnly, status: 200, turnstile: await activeTurnstile(c.env), passkey });
   if (session.code === "paused") return noticePage("Access paused", "Your access is paused", session.reason, 403);
   if (session.code !== "login_required") return forbiddenPage(session.reason);
   if (!access.owner && !(await getUser(c.env.DB, access.email))?.password_hash) return choosePasswordFirst();
@@ -251,7 +465,7 @@ loginApp.get("/_admin/login", async (c) => {
     url.searchParams.set("b", "1");
     return bouncePage(`${url.pathname}${url.search}`);
   }
-  return loginPage({ next, email: access.email, passwordOnly: adminAuthMode(c.env) === "password", status: 200, turnstile: await activeTurnstile(c.env) });
+  return loginPage({ next, email: access.email, passwordOnly, status: 200, turnstile: await activeTurnstile(c.env), passkey });
 });
 
 loginApp.post("/_admin/login", async (c) => {
@@ -278,8 +492,9 @@ loginApp.post("/_admin/login", async (c) => {
   const country = String(cf?.country ?? "");
   const key = await ipHash(cfg, c.req.header("CF-Connecting-IP") ?? "unknown");
   let turnstile: TurnstileWidget = null;
+  const passkey = (await passkeyCount(env.DB, access.email)) > 0 ? url.origin : null;
   const render = (status: number, error: string, retryAfter?: number) =>
-    loginPage({ next, email: access.email, passwordOnly: adminAuthMode(env) === "password", error, status, retryAfter, turnstile });
+    loginPage({ next, email: access.email, passwordOnly: adminAuthMode(env) === "password", error, status, retryAfter, turnstile, passkey });
 
   if (!(await burstAllowed(env, key))) return render(429, "Too many attempts. Wait a minute, then try again.", 60);
   // A failed bot check isn't a password guess: not counted.
@@ -311,22 +526,21 @@ loginApp.post("/_admin/login", async (c) => {
   if (ok) {
     // A hash made for the other Workers plan is redone at the plan's cost, now that the password is known.
     const rehash = user && stored && stored.iterations !== personIterations(env) ? await hashPassword(password, personIterations(env)) : null;
-    const [{ cookie }] = await Promise.all([
-      getEpoch(env.DB).then((global) => issueSessionCookie(cfg, access.email, { global, user: user ? user.session_epoch : OWNER_EPOCH }, now)),
-      env.DB.batch([
-        clearFailuresStmt(env.DB, key),
-        loginEventStmt(env.DB, true, key, country, now, access.email),
-        ...(user ? [env.DB.prepare("UPDATE users SET last_login_at = ? WHERE email = ?").bind(now, user.email)] : []),
-        ...(user && rehash ? [env.DB.prepare("UPDATE users SET password_hash = ?1 WHERE email = ?2 AND password_hash = ?3").bind(rehash, user.email, user.password_hash)] : []),
-      ]),
-    ]);
-    console.log(JSON.stringify({ message: "admin login", email: access.email, ipHash: key, country }));
-    return seeOther(next, { "Set-Cookie": cookie });
+    const epochs = user ? { global: await getEpoch(env.DB), user: user.session_epoch } : await ownerEpochs(env.DB, access.email);
+    const done = [
+      clearFailuresStmt(env.DB, key),
+      ...(user ? [clearFailuresStmt(env.DB, personKey(user.email))] : []),
+      ...(user && rehash ? [env.DB.prepare("UPDATE users SET password_hash = ?1 WHERE email = ?2 AND password_hash = ?3").bind(rehash, user.email, user.password_hash)] : []),
+    ];
+    return passwordPassed(c, { cfg, email: access.email, epochs, next, ipKey: key, country, now, touchUser: Boolean(user), done });
   }
 
   // The event first: the global brake counts the networks failures came from.
   await loginEventStmt(env.DB, false, key, country, now, access.email).run();
-  await recordGlobalFailure(env.DB, now, access.owner);
+  // One person counts towards the people's brake at most MAX_FAILS times a window, whatever
+  // networks they use, so a single account can't keep everyone else's logins paused.
+  const mine = user ? await chargeAttempt(env.DB, personKey(user.email), now, GLOBAL_WINDOW_SEC) : null;
+  if (!mine || mine.fails <= MAX_FAILS) await recordGlobalFailure(env.DB, now, access.owner);
   console.warn(
     JSON.stringify({
       message: "admin login failed",
@@ -345,6 +559,209 @@ loginApp.post("/_admin/login", async (c) => {
   }
   const left = MAX_FAILS - state.fails;
   return render(401, `Wrong password. ${left} ${left === 1 ? "attempt" : "attempts"} left before a ${waitText(LOCK_BASE_SEC * 2 ** state.lockouts)} lock.`);
+});
+
+loginApp.get(SECOND_STEP, async (c) => {
+  const p = await pendingStep(c, c.req.query("next"));
+  if (p instanceof Response) return p;
+  if (!p.status.factors.length) return seeOther(`${SETUP_STEP}?next=${encodeURIComponent(p.next)}`);
+  return twoFactorPage({ next: p.next, email: p.email, status: 200, hasTotp: hasTotp(p), passkey: passkeyOn(c, p) });
+});
+
+loginApp.post(SECOND_STEP, async (c) => {
+  const form = await readForm(c);
+  if (form instanceof Response) return form;
+  const p = await pendingStep(c, form.get("next"));
+  if (p instanceof Response) return p;
+  if (!p.status.factors.length) return seeOther(`${SETUP_STEP}?next=${encodeURIComponent(p.next)}`);
+  const env = c.env;
+  const now = nowSec();
+  const ipKey = await ipHash(p.cfg, c.req.header("CF-Connecting-IP") ?? "unknown");
+  const totp = hasTotp(p);
+  const render = (r: Refusal) => twoFactorPage({ next: p.next, email: p.email, error: r.error, status: r.status, retryAfter: r.retryAfter, hasTotp: totp, passkey: passkeyOn(c, p) });
+  const charged = await chargeCode(env, p.email, ipKey, now);
+  if ("refusal" in charged) return render(charged.refusal);
+
+  const code = form.get("code") ?? "";
+  const recovery = normalizeTotp(code) === null && normalizeRecovery(code) !== null;
+  let left: number | null = null;
+  const ok = recovery ? (left = await useRecoveryCode(env.DB, p.email, code, now)) !== null : totp && (await verifyTotp(env, p.email, code, now));
+  const method: LoginMethod = recovery ? "password+recovery" : "password+totp";
+  if (ok) {
+    const cookies = await completeLogin(c, p, method, ipKey, now);
+    if (recovery) afterResponse(c, sendTwoFactorNotice(env, p.email, { kind: "recovery-used", left: left ?? 0 }));
+    return seeOtherWithCookies(p.next, cookies);
+  }
+  await loginEventStmt(env.DB, false, ipKey, countryOf(c), now, p.email, method).run();
+  console.warn(JSON.stringify({ message: "admin login second step failed", email: p.email, method, ipHash: ipKey, country: countryOf(c), fails: charged.state.fails }));
+  return render(await wrongCode(c, p.email, charged.state, now));
+});
+
+// Required, but not set up yet: an authenticator before the first session.
+loginApp.get(SETUP_STEP, async (c) => {
+  const p = await pendingStep(c, c.req.query("next"));
+  if (p instanceof Response) return p;
+  if (p.status.factors.length) return seeOther(`${SECOND_STEP}?next=${encodeURIComponent(p.next)}`);
+  const now = nowSec();
+  if (!p.status.required) {
+    // The rule was turned off since the password step: nothing more to ask.
+    const ipKey = await ipHash(p.cfg, c.req.header("CF-Connecting-IP") ?? "unknown");
+    return seeOtherWithCookies(p.next, await completeLogin(c, p, "password", ipKey, now));
+  }
+  return setupPage(c, p, now);
+});
+
+loginApp.post(SETUP_STEP, async (c) => {
+  const form = await readForm(c);
+  if (form instanceof Response) return form;
+  const p = await pendingStep(c, form.get("next"));
+  if (p instanceof Response) return p;
+  if (p.status.factors.length) return seeOther(`${SECOND_STEP}?next=${encodeURIComponent(p.next)}`);
+  const env = c.env;
+  const now = nowSec();
+  const ipKey = await ipHash(p.cfg, c.req.header("CF-Connecting-IP") ?? "unknown");
+  // A refusal shows the page again, with the secret it's waiting for.
+  const charged = await chargeCode(env, p.email, ipKey, now);
+  if ("refusal" in charged) return setupPage(c, p, now, charged.refusal);
+
+  const result = await confirmTotpSetup(env, p.email, form.get("code") ?? "", "Authenticator app", now, "totp-setup-login");
+  if (!result.ok) {
+    if (result.reason === "exists") return seeOther(`${SECOND_STEP}?next=${encodeURIComponent(p.next)}`);
+    if (result.reason === "expired") return setupPage(c, p, now, { status: 400, error: "That setup expired. Scan this new code and enter the code it shows." });
+    return setupPage(c, p, now, await wrongCode(c, p.email, charged.state, now));
+  }
+  const { codes, stmts } = await newRecoveryCodes(env.DB, p.email, now);
+  // A new personal epoch: sessions from before the second step existed end now.
+  const rotated = newEpochStmt(env.DB, p.email, p.user === null, now);
+  await env.DB.batch([...stmts, rotated.stmt]);
+  const cookies = await completeLogin(c, { ...p, epochs: { ...p.epochs, user: rotated.own } }, "password+totp", ipKey, now);
+  afterResponse(c, sendTwoFactorNotice(env, p.email, { kind: "added", factor: "An authenticator app" }));
+  console.log(JSON.stringify({ message: "two-factor sign-in set up", email: p.email, at: "login" }));
+  const page = recoveryCodesPage({ codes, next: p.next });
+  for (const cookie of cookies) page.headers.append("Set-Cookie", cookie);
+  return page;
+});
+
+// --- Passkeys ----------------------------------------------------------------------
+// The script asks for options, the browser asks the passkey, the script posts
+// the answer. JSON both ways, and only same-origin: the CSRF check covers
+// forms, so the Origin is checked here too.
+
+loginApp.get(PASSKEY_SCRIPT, () =>
+  new Response(PASSKEY_LOGIN_JS, {
+    headers: { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "public, max-age=300", "X-Content-Type-Options": "nosniff" },
+  }),
+);
+
+const MAX_JSON_BYTES = 16 * 1024;
+
+/** The posted JSON, or null when it isn't same-origin JSON of a sensible size (counted as it streams in). */
+async function readJson(c: Context<AppEnv>): Promise<unknown> {
+  if (c.req.header("Origin") !== new URL(c.req.url).origin) return null;
+  if (!/^application\/json\b/i.test(c.req.header("Content-Type") ?? "")) return null;
+  const text = await readTextCapped(c.req.raw, MAX_JSON_BYTES);
+  if (text === null) return null;
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+type PasskeyPerson = { email: string; cfg: LoginConfig; user: UserRow | null };
+
+/** Who may try a passkey: the identity, an owner or someone in People who isn't paused and has chosen a password. */
+async function passkeyPerson(c: Context<AppEnv>): Promise<PasskeyPerson | Response> {
+  const env = c.env;
+  const access = await verifyIdentity(c.req.raw, env);
+  if (!access.ok) return c.json({ error: access.reason }, access.status);
+  const cfg = loginConfig(env);
+  if (!cfg) return c.json({ error: PASSWORD_UNCONFIGURED }, 500);
+  if (access.owner) return { email: access.email, cfg, user: null };
+  const user = await getUser(env.DB, access.email);
+  if (!user) return c.json({ error: NOT_ALLOWED.reason }, 403);
+  if (isPaused(user, nowSec())) return c.json({ error: pausedReason(user) }, 403);
+  // Waiting on an invite or a reset by an admin: the new password comes first.
+  if (!user.password_hash) return c.json({ error: "Choose your password from the invite link first." }, 403);
+  return { email: access.email, cfg, user };
+}
+
+/**
+ * Wrong passkey answers count per network, never per person: the passkey
+ * pages ask for no password first, so anyone can post to them (in
+ * password-only mode everyone is the owner "admin"). Counted against the
+ * person, strangers could keep the owner's second step locked. An answer
+ * can't be guessed, so a per-person brake would protect nothing.
+ */
+export const passkeyKey = (ipKey: string) => `passkey:${ipKey}`;
+
+/** While this network's wrong passkey answers have locked it out, when that lifts. */
+async function passkeyLockedUntil(db: D1Database, ipKey: string, now: number): Promise<number> {
+  const row = await db.prepare("SELECT locked_until FROM auth_failures WHERE key = ?").bind(passkeyKey(ipKey)).first<{ locked_until: number }>();
+  return row && row.locked_until > now ? row.locked_until : 0;
+}
+
+loginApp.post("/_admin/login/passkey/options", async (c) => {
+  const who = await passkeyPerson(c);
+  if (who instanceof Response) return who;
+  if ((await readJson(c)) === null) return c.json({ error: "Bad request" }, 400);
+  const env = c.env;
+  const now = nowSec();
+  const ipKey = await ipHash(who.cfg, c.req.header("CF-Connecting-IP") ?? "unknown");
+  if (!(await burstAllowed(env, ipKey))) return c.json({ error: "Too many attempts. Wait a minute, then try again." }, 429);
+  const until = await passkeyLockedUntil(env.DB, ipKey, now);
+  if (until) return c.json({ error: `Too many failed attempts. Try again in ${waitText(until - now)}.` }, 429);
+  const options = await loginOptions(env.DB, who.email, relyingParty(c.req.url), now);
+  if (!options) return c.json({ error: "This account has no passkey. Use your password." }, 404);
+  return c.json({ options });
+});
+
+// A passkey stands in for the password and the second step together: it is
+// something you have, unlocked by something you are or know.
+loginApp.post("/_admin/login/passkey", async (c) => {
+  const who = await passkeyPerson(c);
+  if (who instanceof Response) return who;
+  const parsed = passkeyLoginSchema.safeParse(await readJson(c));
+  if (!parsed.success) return c.json({ error: "Bad request" }, 400);
+  const env = c.env;
+  const now = nowSec();
+  const country = countryOf(c);
+  const ipKey = await ipHash(who.cfg, c.req.header("CF-Connecting-IP") ?? "unknown");
+
+  // Counted before the check, per network (passkeyKey), so parallel answers can't go past the limit; a success clears it.
+  if (!(await burstAllowed(env, ipKey))) return c.json({ error: "Too many attempts. Wait a minute, then try again." }, 429);
+  const state = await chargeAttempt(env.DB, passkeyKey(ipKey), now);
+  if (state.lockedUntil > now) return c.json({ error: `Too many failed attempts. Try again in ${waitText(state.lockedUntil - now)}.` }, 429);
+  // Only reachable by parallel requests that were all counted before a lock was written.
+  if (state.fails > MAX_FAILS) {
+    const until = await lock(env.DB, passkeyKey(ipKey), now, state.lockouts);
+    return c.json({ error: `Too many failed attempts. Try again in ${waitText(until - now)}.` }, 429);
+  }
+
+  const next = safeNext(parsed.data.next, new URL(c.req.url).origin);
+  const result = await verifyLogin(env.DB, who.email, parsed.data.response as never, relyingParty(c.req.url), now);
+  if (!result.ok) {
+    if (state.fails >= MAX_FAILS) await lock(env.DB, passkeyKey(ipKey), now, state.lockouts);
+    await loginEventStmt(env.DB, false, ipKey, country, now, who.email, "passkey").run();
+    console.warn(JSON.stringify({ message: "admin login passkey failed", email: who.email, reason: result.reason, ipHash: ipKey, country }));
+    const error = result.reason === "expired" ? "That took too long. Try again." : "That passkey didn't work. Try again, or use your password.";
+    return c.json({ error }, 401);
+  }
+
+  const epochs = who.user ? { global: await getEpoch(env.DB), user: who.user.session_epoch } : await ownerEpochs(env.DB, who.email);
+  const [{ cookie }] = await Promise.all([
+    issueSessionCookie(who.cfg, who.email, epochs, now),
+    env.DB.batch([
+      clearFailuresStmt(env.DB, passkeyKey(ipKey)),
+      loginEventStmt(env.DB, true, ipKey, country, now, who.email, "passkey"),
+      ...(who.user ? [env.DB.prepare("UPDATE users SET last_login_at = ? WHERE email = ?").bind(now, who.email)] : []),
+    ]),
+  ]);
+  console.log(JSON.stringify({ message: "admin login", email: who.email, method: "passkey", ipHash: ipKey, country }));
+  c.header("Set-Cookie", cookie, { append: true });
+  c.header("Set-Cookie", clearMfaCookie(), { append: true });
+  c.header("Cache-Control", "no-store");
+  return c.json({ next });
 });
 
 // "Forgot your password?": only after Cloudflare Access, so the address is the
@@ -496,11 +913,20 @@ for (const kind of ["invite", "reset"] as const) {
       .first<{ email: string }>();
     if (!saved) return LINK_TEXT[kind].invalid();
 
-    const cf = c.req.raw.cf as IncomingRequestCfProperties | undefined;
-    const [{ cookie }] = await Promise.all([
-      getEpoch(env.DB).then((global) => issueSessionCookie(cfg, access.email, { global, user: epoch }, now)),
-      env.DB.batch([clearFailuresStmt(env.DB, tokenKey(key)), loginEventStmt(env.DB, true, key, String(cf?.country ?? ""), now, access.email)]),
-    ]);
+    // A new password doesn't skip two-factor sign-in: the second step comes next, as at any login.
+    // A reset by email also removes passkeys: each signs in without the password, so one added by
+    // whoever had the account would outlive it. An authenticator app stays (it needs the password too).
+    const response = await passwordPassed(c, {
+      cfg,
+      email: access.email,
+      epochs: { global: await getEpoch(env.DB), user: epoch },
+      next: DEFAULT_NEXT,
+      ipKey: key,
+      country: countryOf(c),
+      now,
+      touchUser: false,
+      done: [clearFailuresStmt(env.DB, tokenKey(key)), ...(kind === "reset" ? forgetPasskeysStmts(env.DB, access.email) : [])],
+    });
     if (kind === "reset") {
       afterResponse(
         c,
@@ -510,7 +936,7 @@ for (const kind of ["invite", "reset"] as const) {
       );
     }
     console.log(JSON.stringify({ message: kind === "invite" ? "invite accepted" : "password reset", email: access.email }));
-    return seeOther(DEFAULT_NEXT, { "Set-Cookie": cookie });
+    return response;
   });
 }
 
@@ -573,5 +999,5 @@ loginApp.post("/_admin/logout", async (c) => {
   // Ends the Access session too, except where Access isn't in front (local dev hosts, password-only mode).
   const host = new URL(c.req.url).hostname;
   const viaAccess = !isLocalHost(host) && adminAuthMode(c.env) !== "password";
-  return seeOther(viaAccess ? "/cdn-cgi/access/logout" : "/_admin/login", { "Set-Cookie": clearSessionCookie() });
+  return seeOtherWithCookies(viaAccess ? "/cdn-cgi/access/logout" : "/_admin/login", [clearSessionCookie(), clearMfaCookie()]);
 });

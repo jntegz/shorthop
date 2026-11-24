@@ -19,7 +19,7 @@ export const PERMISSION_INFO: Record<Permission, { label: string; description: s
   "revenue.view": { label: "See revenue", description: "Payments, revenue and customers of tracked websites, and revenue per short link." },
   "sites.manage": { label: "Manage websites", description: "Add tracked websites, change their settings and connect payment providers." },
   "health.manage": { label: "Link health & misses", description: "Check destinations and see and clear missed visits." },
-  "settings.manage": { label: "Workspace settings", description: "Every setting except people and security: domains, UTM, pages, email, webhooks." },
+  "settings.manage": { label: "Workspace settings", description: "Every setting except people and security: domains, UTM, pages, webhooks. Choosing the email service is for admins." },
   "api.use": { label: "Personal API keys", description: "Create API keys for scripts and tools. A key can only do what its owner can." },
 };
 
